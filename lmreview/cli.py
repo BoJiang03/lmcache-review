@@ -27,6 +27,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--limit", type=int, default=10)
     p.add_argument("--workers", type=int, default=4)
     p.add_argument("--effort", default="high", choices=EFFORTS)
+    p.add_argument("--pr", type=int, action="append", help="only these PRs (within --limit)")
 
     s = sub.add_parser("score", help="eval: grade replayed runs against human reviews (costs LLM quota)")
     s.add_argument("--version", default="v0")
@@ -42,7 +43,7 @@ def main(argv: list[str] | None = None) -> None:
             sys.exit(1)
     elif a.cmd == "replay":
         from .replay import replay
-        replay(a.version, a.split, a.limit, a.workers, a.effort)
+        replay(a.version, a.split, a.limit, a.workers, a.effort, a.pr)
     else:
         from .score import score
         print(score(a.version, a.workers, a.effort))

@@ -19,12 +19,21 @@ from .workspace import cached_pr, sample_workspace
 EST_COST = 1.3  # $/sample for a high-effort review, from earlier runs; used only for the estimate
 
 
-def load_samples(cfg: Config, split: str, limit: int | None, prs: list[int] | None = None,
+def _picked(s: dict, prs: list) -> bool:
+    """`prs` entries: a PR number (all its samples) or "PR:commit-prefix" (one sample)."""
+    for p in prs:
+        n, _, c = str(p).partition(":")
+        if s["pr"] == int(n) and s["commit"].startswith(c):
+            return True
+    return False
+
+
+def load_samples(cfg: Config, split: str, limit: int | None, prs: list | None = None,
                  area: str | None = None) -> list[dict]:
-    """Samples of `split` in a fixed random order (same subset every time), optionally only PRs `prs`
-    or PRs whose files touch `area`."""
+    """Samples of `split` in a fixed random order (same subset every time), optionally only `prs`
+    (PR numbers or "PR:commit") or PRs whose files touch `area`."""
     ss = [json.loads(l) for l in (cfg.data / "dataset" / "samples.jsonl").open()]
-    ss = [s for s in ss if s["split"] == split and (not prs or s["pr"] in prs)]
+    ss = [s for s in ss if s["split"] == split and (not prs or _picked(s, prs))]
     if area:
         meta = {p["pr"]: p for p in map(json.loads, (cfg.data / "dataset" / "prs.jsonl").open())}
         ss = [s for s in ss if area in meta[s["pr"]]["areas"]]
@@ -49,7 +58,7 @@ def replay_one(cfg: Config, s: dict, reviewer: str) -> tuple[str, float]:
 
 
 def replay(reviewer: str = DEFAULT_REVIEWER, split: str = "test", limit: int | None = 10, workers: int = 4,
-           max_cost: float = 15.0, prs: list[int] | None = None, area: str | None = None,
+           max_cost: float = 15.0, prs: list | None = None, area: str | None = None,
            cfg: Config | None = None) -> float:
     """Run `reviewer` over samples of `split` not run yet, stopping at `max_cost`. Returns $ spent."""
     cfg = cfg or Config()

@@ -31,7 +31,7 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("--reviewer", default=DEFAULT_REVIEWER)
     r.add_argument("--split", default="test", choices=["train", "test", "new"])
     r.add_argument("--limit", type=int, default=10, help="samples (0 = all)")
-    r.add_argument("--only-pr", type=int, action="append", help="only samples of these PRs")
+    r.add_argument("--only-pr", action="append", help="only these samples: PR number (all its commits) or PR:commit")
     r.add_argument("--area", help="only samples whose PR touches this area (e.g. vllm-integration)")
     r.add_argument("--workers", type=int, default=4)
     r.add_argument("--max-cost", type=float, default=15.0)

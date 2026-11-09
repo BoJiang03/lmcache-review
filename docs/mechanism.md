@@ -124,7 +124,7 @@
 | `lmreview sync` | 增量拉取最近更新过的 PR，重建样本。split：train / test / new（2026-11-01 之后创建的 PR，不用于蒸馏） | 免费 |
 | `lmreview review [PR]` | 带 PR 号：review 这个 PR 的当前版本。不带：在 `--split` 上跑 reviewer（`new` 就是新 PR 的隐藏运行） | 每个样本约 $1.3 |
 | `lmreview eval --reviewer R [--vs R0]` | 依次做：裁判判分 → 按 split 和领域统计 human 独有率 → 被动信号 → 逐条翻转比较。结果写到 `reports/eval_<R>.md` | 每个样本约 $0.4（裁判） |
-| `lmreview distill <out>` | 从 train 的人类评论中蒸馏：归因（可学 / 缺上下文 / 不算问题 / 被拒绝，附采纳情况和讨论串回复）→ 跨领域按关注点聚类 → 每组抽象成一条原则或知识。**默认用法是 `--misses-of R`，只从 R 漏掉的评论里学。** 写到 `rules/<out>.jsonl` 和 `rules/<out>.md`；`--max-cost 0` 只打印计划 | 每条评论约 $0.01 |
+| `lmreview distill <out>` | 从 train 的人类评论中蒸馏：归因（可学 / 缺上下文 / 不算问题 / 被拒绝，附采纳情况和讨论串回复）→ 跨领域按关注点聚类 → 每组抽象成一条原则或知识。**默认用法是 `--misses-of R`，只从 R 漏掉的评论里学。** 写到 `lmreview/rules/<out>.jsonl` 和 `.md`；`--max-cost 0` 只打印计划 | 每条评论约 $0.01 |
 | `lmreview eval --rules <name>` | 覆盖率：held-out（test）上的人类评论（`--misses-of R` 表示只看漏报）有多少能被规则库解释。先用它判断规则能不能复用，再决定要不要花钱做 reviewer 的 A/B 对比 | 每 30 条评论约 $0.2 |
 
 ```bash

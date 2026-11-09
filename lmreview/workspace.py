@@ -18,7 +18,7 @@ import uuid
 import subprocess
 from collections.abc import Iterator
 
-from .config import Config
+from .config import REPO_URLS, Config
 from .history import format_history
 
 TOOLS = "Read,Grep,Glob"
@@ -27,6 +27,16 @@ TOOLS = "Read,Grep,Glob"
 def git(repo: pathlib.Path, *a: str) -> str:
     """Run git in `repo`, return stdout, raise on failure."""
     return subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True, text=True).stdout
+
+
+def ensure_clone(cfg: Config, which: str) -> pathlib.Path:
+    """cfg.<which> ("repo" | "vllm"), cloned (blobless: blobs come on demand) if it does not exist yet."""
+    path = getattr(cfg, which)
+    if not (path / ".git").exists() and not (path / "HEAD").exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        print(f"first use: cloning {REPO_URLS[which]} into {path} ...", flush=True)
+        subprocess.run(["git", "clone", "-q", "--filter=blob:none", REPO_URLS[which], str(path)], check=True)
+    return path
 
 
 def pr_meta(raw: dict) -> dict:
@@ -58,6 +68,7 @@ def build(cfg: Config, name: str, commit: str, base: str, history: str, context:
 
 def add_vllm(cfg: Config, wt: pathlib.Path, at: str | None) -> None:
     """Put vLLM main's `vllm/` package as of `at` into wt/_context/vllm/."""
+    ensure_clone(cfg, "vllm")
     ref = git(cfg.vllm, "rev-list", "-1", *([f"--before={at}"] if at else []), "origin/main").strip()
     ctx = wt / "_context"
     ctx.mkdir()
@@ -96,11 +107,12 @@ def live_workspace(cfg: Config, raw: dict, commit: str | None = None,
     Fetches the PR head and base branch into cfg.repo first. Yields (path, commit, base).
     """
     n, base_ref = raw["number"], raw["baseRefName"]
+    ensure_clone(cfg, "repo")
     git(cfg.repo, "fetch", "-q", "origin", f"+refs/pull/{n}/head:refs/remotes/pr/{n}",
         f"+refs/heads/{base_ref}:refs/remotes/origin/{base_ref}")
     commit = commit or raw["headRefOid"]
     base = git(cfg.repo, "merge-base", f"origin/{base_ref}", commit).strip()
     if "vllm" in context:
-        git(cfg.vllm, "fetch", "-q", "origin", "main")
+        git(ensure_clone(cfg, "vllm"), "fetch", "-q", "origin", "main")
     with build(cfg, f"live-{n}-{commit[:8]}-{uuid.uuid4().hex[:6]}", commit, base, format_history(raw), context) as wt:
         yield wt, commit, base

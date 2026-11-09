@@ -79,6 +79,10 @@ reviewer, or skip the group if it carries no reusable principle or knowledge:
 - "principle": the review principle at the level a reviewer would apply it to other changes (the
   group's candidates are instances); specific enough to check against a diff. "expect" states the
   change a reviewer should ask for, as the candidates did; do not generalize it into a vaguer goal.
+  But neither "when" nor "expect" may carry the instances' particulars: "when" names a KIND of
+  situation a reviewer can recognize in any diff (e.g. "a docstring explains in prose a process the
+  reader has to simulate in their head"), not the mechanisms, identifiers or parameters of the PRs it
+  came from (e.g. not "appending/relocating block ids, nulling slots"); those go in "examples" only.
 - "knowledge": a fact or invariant about this codebase or the engine, and what a reviewer must
   therefore check when touching that code; scope it with "paths".
 Fields: "group" (its number), "kind", "when" (the kind of change it applies to), "expect" (what to

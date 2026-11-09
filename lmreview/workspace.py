@@ -6,6 +6,8 @@
   PR_HISTORY.md       review discussion (replay: strictly before t0; live review: everything so far)
   _context/vllm/      only if the prompt declares `context: vllm`: the `vllm/` package of vLLM main
                       as of t0 (LMCache CI runs vLLM nightly), described in _context/README.md
+  _context/dev_since_base.md  only if the prompt declares `context: dev`: commits that landed on the base
+                      branch after the PR forked (up to t0) and touch the PR's files, with their diff
 """
 
 from __future__ import annotations
@@ -46,10 +48,11 @@ def pr_meta(raw: dict) -> dict:
 
 @contextlib.contextmanager
 def build(cfg: Config, name: str, commit: str, base: str, history: str, context: tuple[str, ...] = (),
-          at: str | None = None) -> Iterator[pathlib.Path]:
+          at: str | None = None, base_tip: str | None = None) -> Iterator[pathlib.Path]:
     """Materialize a workspace under cfg.sandbox/<name>; removed on exit.
 
-    `context`: extra sources ("vllm"), taken as of time `at` (ISO; None = now).
+    `context`: extra sources ("vllm", "dev"), taken as of time `at` (ISO; None = now).
+    `base_tip`: the base branch's tip at that time (needed for "dev").
     """
     wt = cfg.sandbox / name
     shutil.rmtree(wt, ignore_errors=True)
@@ -61,6 +64,8 @@ def build(cfg: Config, name: str, commit: str, base: str, history: str, context:
         (wt / "PR_HISTORY.md").write_text(history or "(no discussion yet)\n")
         if "vllm" in context:
             add_vllm(cfg, wt, at)
+        if "dev" in context:
+            add_dev(cfg, wt, base, base_tip, commit)
         yield wt
     finally:
         shutil.rmtree(wt, ignore_errors=True)
@@ -81,6 +86,29 @@ def add_vllm(cfg: Config, wt: pathlib.Path, at: str | None) -> None:
         "against. It is reference only; it is not part of the PR.\n")
 
 
+DEV_DIFF_CAP = 150_000  # chars of diff kept in dev_since_base.md
+
+
+def add_dev(cfg: Config, wt: pathlib.Path, base: str, tip: str, commit: str) -> None:
+    """Write wt/_context/dev_since_base.md: what landed on the base branch after the PR forked
+    (base..tip) in the files the PR touches. Lets the reviewer see code to reuse or conflicts."""
+    files = [f for f in git(cfg.repo, "diff", "--name-only", base, commit).split("\n") if f]
+    ctx = wt / "_context"
+    ctx.mkdir(exist_ok=True)
+    n_all = int(git(cfg.repo, "rev-list", "--count", f"{base}..{tip}").strip() or 0)
+    log = git(cfg.repo, "log", "--format=- %h %as %s", f"{base}..{tip}", "--", *files).strip() if files else ""
+    diff = git(cfg.repo, "diff", "-M", base, tip, "--", *files) if log else ""
+    if len(diff) > DEV_DIFF_CAP:
+        diff = diff[:DEV_DIFF_CAP] + "\n... (truncated)\n"
+    (ctx / "dev_since_base.md").write_text(
+        f"# Base branch since this PR forked\n\n{n_all} commits landed on the base branch between the PR's\n"
+        f"merge-base ({base[:12]}) and its tip at review time ({tip[:12]}). Those touching the files this PR\n"
+        "changes are below, then their combined diff on those files. The PR does not include these changes\n"
+        "yet; it will have to rebase onto them.\n\n"
+        + (f"## Commits\n\n{log}\n\n## Diff on the PR's files\n\n```diff\n{diff}```\n" if log
+           else "None of them touch the files this PR changes.\n"))
+
+
 @contextlib.contextmanager
 def sample_workspace(cfg: Config, s: dict, tag: str, context: tuple[str, ...] = ()) -> Iterator[tuple[pathlib.Path, str]]:
     """Replay workspace for eval sample `s` (a samples.jsonl row): commit C, history before t0.
@@ -90,7 +118,7 @@ def sample_workspace(cfg: Config, s: dict, tag: str, context: tuple[str, ...] = 
     dev_then = git(cfg.repo, "rev-list", "-1", f"--before={s['time']}", "origin/dev").strip()
     base = git(cfg.repo, "merge-base", dev_then, s["commit"]).strip()
     name = f"{s['pr']}-{s['commit'][:8]}-{tag}-{uuid.uuid4().hex[:6]}"  # unique: parallel runs may share a sample
-    with build(cfg, name, s["commit"], base, s["history"], context, s["time"]) as wt:
+    with build(cfg, name, s["commit"], base, s["history"], context, s["time"], dev_then) as wt:
         yield wt, base
 
 
@@ -114,5 +142,6 @@ def live_workspace(cfg: Config, raw: dict, commit: str | None = None,
     base = git(cfg.repo, "merge-base", f"origin/{base_ref}", commit).strip()
     if "vllm" in context:
         git(ensure_clone(cfg, "vllm"), "fetch", "-q", "origin", "main")
-    with build(cfg, f"live-{n}-{commit[:8]}-{uuid.uuid4().hex[:6]}", commit, base, format_history(raw), context) as wt:
+    with build(cfg, f"live-{n}-{commit[:8]}-{uuid.uuid4().hex[:6]}", commit, base, format_history(raw), context,
+               base_tip=git(cfg.repo, "rev-parse", f"origin/{base_ref}").strip()) as wt:
         yield wt, commit, base

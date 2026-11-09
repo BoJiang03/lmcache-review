@@ -26,6 +26,7 @@ cwd, curl, web fetch and subagents (probe, 2026-11-09). Runs made before the har
 | `PR.diff` | `git diff merge-base(dev@t0, C)..C` |
 | `PR_HISTORY.md` | discussion strictly before t0: inline threads + replies, review bodies, PR comments, bot comments |
 | `_context/vllm/` | only for prompts that declare `<!-- context: vllm -->` (e.g. v0c): the `vllm/` package of vLLM main at the last commit before t0 (LMCache CI runs vLLM nightly); live review: current main |
+| `_context/dev_since_base.md` | only for prompts that declare `dev` (e.g. v0d): commits on the base branch between the PR's merge-base and the base tip at t0 that touch the PR's files, plus their diff on those files (capped at 150k chars); live review: current base tip |
 
 ## Prompt
 

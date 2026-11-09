@@ -20,6 +20,8 @@ Proposal: https://claude.ai/artifact/TtFYk2eZWjUi13YxCnf9tt
     bin/lmreview review 5876                            # review one PR now (local output only)
     bin/lmreview review --reviewer v0b@high --split test --max-cost 15
     bin/lmreview eval --reviewer v0b@high --vs v0@high  # judge + human-only by area + signals + flips
-    bin/lmreview distill r1 --area storage --max-cost 1 # train comments -> rules/r1.jsonl
+    bin/lmreview distill r2 --misses-of v0b@high         # train misses -> rules/r2.jsonl (--max-cost 0 = plan)
+    bin/lmreview eval --rules r2 --misses-of v0b@high     # do the entries explain held-out misses?
+    DRY=1 scripts/misses_pipeline.sh vllm-integration 30  # one misses-driven round (dry run)
 
 Reviewer names: `<prompt>[+<rules>][@<effort>]`. Design: docs/mechanism.md.

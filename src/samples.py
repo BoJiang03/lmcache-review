@@ -15,33 +15,20 @@ from __future__ import annotations
 import collections as C
 import json
 import pathlib
+import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from lmreview.history import format_history  # noqa: E402
+
 DS = ROOT / "data" / "dataset"
 RAW = ROOT / "data" / "raw" / "pr"
 MIN_BODY = 80  # a review body alone counts as gold only if it says something
 
 
 def history(pr: int, before: str) -> str:
-    """Markdown transcript of the PR discussion strictly before `before` (ISO time)."""
-    raw = json.loads((RAW / f"{pr}.json").read_text())
-    ev = []
-    for t in raw["reviewThreads"]["nodes"]:
-        cs = [c for c in t["comments"]["nodes"] if c["createdAt"] < before]
-        if cs:
-            root = cs[0]
-            lines = [f"- `{root['path']}` line {root.get('originalLine')} — thread:"]
-            lines += [f"  - {(c.get('author') or {}).get('login')}: {c['body'][:1200]}" for c in cs]
-            ev.append((root["createdAt"], "\n".join(lines)))
-    for r in raw["reviews"]["nodes"]:
-        if r.get("submittedAt") and r["submittedAt"] < before and (r.get("body") or "").strip():
-            ev.append((r["submittedAt"], f"- review by {(r.get('author') or {}).get('login')} "
-                                          f"({r['state']}): {r['body'][:1500]}"))
-    for c in raw["comments"]["nodes"]:
-        if c["createdAt"] < before:
-            ev.append((c["createdAt"], f"- PR comment by {(c.get('author') or {}).get('login')}: "
-                                       f"{c['body'][:1500]}"))
-    return "\n".join(x for _, x in sorted(ev))
+    """Discussion of `pr` strictly before `before` (ISO time)."""
+    return format_history(json.loads((RAW / f"{pr}.json").read_text()), before)
 
 
 def main() -> None:

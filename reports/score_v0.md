@@ -1,19 +1,18 @@
 # Score: reviewer v0
 
-PRs: 10 · human first-review comments: 16 (change_request 10, nit 4, question 2)
+Samples (PR, reviewed commit): 10 · human review comments: 18 (change_request 13, question 2, praise 2, nit 1)
 
-- Recall on change requests: 3/10 (30%)
-- Recall on change requests + nits: 4/14 (29%)
-- AI findings: 97 (9.7/PR); judged valid: 67 (69%), invalid 6, unsure 24
-- AI-only findings: 93; judged valid 63, invalid 6, unsure 24
-- Cost (review + grading): $8.04
+- Recall on change requests: 7/13 (54%)
+- Recall on change requests + nits: 7/14 (50%)
+- AI findings: 93 (9.3/PR); judged valid: 75 (81%), invalid 16, unsure 2
+- AI-only findings: 86; judged valid 68, invalid 16, unsure 2
+- Cost (review + grading): $11.20
 
 ## Missed change requests
 
-- #4865 `csrc/storage_backends/nixl/storage.cpp:590` maobaolong: I noticed other places doing similar conversions between keys and storage formats. We could standardize this and put it in a common place so everyone calls the  ([link](https://github.com/LMCache/LMCache/pull/4865#discussion_r3921709939))
-- #4865 `csrc/storage_backends/nixl/connector.cpp:291` maobaolong: This also requires 4 KiB-aligned lengths for buffered FILE and OBJ I/O, which breaks valid logical or serde buffers. Could we enforce length alignment only for  ([link](https://github.com/LMCache/LMCache/pull/4865#discussion_r3921721834))
-- #4865 `csrc/storage_backends/nixl/storage.cpp:490` maobaolong: This place looks similar with #4531 , would you mind to keep the design and naming consistent? So that we can reduce the maintain and studying cost.  cc @chunxi ([link](https://github.com/LMCache/LMCache/pull/4865#discussion_r3921767164))
-- #4882 `docs/source/getting_started/index.rst:16` ApostaC: I don't think this should be added to `getting_started` section.  Maybe we should just link to the page in the vLLM-starting-command-related sections, since the ([link](https://github.com/LMCache/LMCache/pull/4882#discussion_r3929041906))
-- #4908 `.buildkite/k3_tests/musa/run-in-container.sh:8` maobaolong: This image cannot be accessed for public internet, i test it in my test node. ([link](https://github.com/LMCache/LMCache/pull/4908#discussion_r3925575527))
-- #4947 `lmcache/v1/multiprocess/mq.py:339` maobaolong: As there is a production code caller for `set_exception`, so please help to update the note comment within that method, the description about `The current ZMQ t ([link](https://github.com/LMCache/LMCache/pull/4947#discussion_r3933756078))
-- #4949 `.buildkite/metax/buildkite-pipeline.yml:5` maobaolong: ```suggestion agents:   queue: "metax-maca" ``` ([link](https://github.com/LMCache/LMCache/pull/4949#discussion_r3949102602))
+- #5390 `overall review:` sammshen: fix looks right. synthetic head count is 1, so `[NB, BS, 1, CS]` and `[NB, 1, BS, CS]` are the same bytes, the branch only changes which axis the detector reads ([link](https://github.com/LMCache/LMCache/pull/5390#pullrequestreview-5464656058))
+- #5685 `docker/example_run.sh:` ApostaC: Actually after a second look at this file, this is a in-process mode example. Maybe we should remove it. ([link](https://github.com/LMCache/LMCache/pull/5685#discussion_r4262178376))
+- #5776 `tests/inprocess/integration/vllm/test_v1_adapter_request_finished_scheduler_role.py:` deng451e: In-process mode is being deprecated soon, so we probably don’t need to add tests for it.   ([link](https://github.com/LMCache/LMCache/pull/5776#discussion_r4299664731))
+- #5827 `lmcache/cli/commands/bench/server_bench/allocator.py:8` maobaolong: Define a data class instead of use tuple of tuple of tuple. ([link](https://github.com/LMCache/LMCache/pull/5827#discussion_r4332918669))
+- #5876 `lmcache/integration/vllm/experimental/token_drop_adapter.py:182` Zefan-Cai: With the default cudagraph mode, decode batches replay a FULL graph, so this wrapper never runs on decode steps. R-KV's observation window is exactly the decode ([link](https://github.com/LMCache/LMCache/pull/5876#discussion_r4504713099))
+- #5876 `lmcache/integration/vllm/experimental/token_drop_adapter.py:153` Zefan-Cai: token-dropping-kv-compaction.md (Query capture section) still says post-RoPE Q comes through `save_kv_layer(..., **kwargs)`. Can we update it to the `impl.forwa ([link](https://github.com/LMCache/LMCache/pull/5876#discussion_r4504713103))

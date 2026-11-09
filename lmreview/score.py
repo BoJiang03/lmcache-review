@@ -1,29 +1,25 @@
-"""Classify gold human comments and match them against a reviewer run.
+"""Eval: grade reviewer runs against the merged human reviews on the same commit.
 
 For each sample (PR, reviewed commit) in data/runs/<version>/:
   1. Classify each human review comment on that commit (all reviewers merged): change_request | question | nit | praise.
   2. For each change_request/nit, decide which AI finding (if any) raises the same issue.
-One `claude -p` call per sample does both, without tools. Results go to
-data/scores/<version>/<pr>-<commit8>.json and a summary to reports/score_<version>.md.
-
-Usage: python3 -I src/score.py --version v0
+  3. Judge whether each AI finding is valid, reading the code.
+One judge call per sample, in the SAME workspace the reviewer saw. Results go to
+<data>/scores/<version>/<pr>-<commit8>.json and a summary to reports/score_<version>.md.
 """
 
 from __future__ import annotations
 
-import argparse
 import collections as C
 import concurrent.futures as cf
 import json
 import pathlib
-import sys
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import llm  # noqa: E402
-from workspace import TOOLS, pr_meta, workspace  # noqa: E402
+from . import llm
+from .config import Config
+from .workspace import TOOLS, cached_pr, pr_meta, sample_workspace
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
-DS = ROOT / "data" / "dataset"
+REPORTS = pathlib.Path(__file__).resolve().parent.parent / "reports"
 
 PROMPT = """You are grading an AI code reviewer against human reviewers on LMCache PR #{number}.
 
@@ -65,14 +61,16 @@ Answer with one JSON block only:
 ```"""
 
 
-def load_gold() -> tuple[dict, dict]:
+def load_gold(cfg: Config) -> tuple[dict, dict]:
     """(samples keyed by (pr, commit), comments keyed by id)."""
-    ss = {(x["pr"], x["commit"]): x for x in map(json.loads, (DS / "samples.jsonl").open())}
-    cm = {c["id"]: c for c in map(json.loads, (DS / "comments.jsonl").open())}
+    ds = cfg.data / "dataset"
+    ss = {(x["pr"], x["commit"]): x for x in map(json.loads, (ds / "samples.jsonl").open())}
+    cm = {c["id"]: c for c in map(json.loads, (ds / "comments.jsonl").open())}
     return ss, cm
 
 
-def score_one(run: dict, sample: dict, gold: list[dict], out: pathlib.Path, effort: str) -> dict:
+def score_one(cfg: Config, run: dict, sample: dict, gold: list[dict], out: pathlib.Path,
+              effort: str) -> dict:
     """Grade one sample's run inside the same workspace the reviewer saw; cached on disk."""
     if out.exists():
         return json.loads(out.read_text())
@@ -85,8 +83,8 @@ def score_one(run: dict, sample: dict, gold: list[dict], out: pathlib.Path, effo
     ai = "\n".join(f"[{i}] ({f.get('severity')}) {f.get('path')}:{f.get('line')} "
                    f"{f.get('title')}: {f.get('body', '')[:800]}"
                    for i, f in enumerate(run["findings"] or [])) or "(none)"
-    with workspace(sample, "judge") as (wt, _):
-        r = llm.run(PROMPT.format(human=human, ai=ai, **pr_meta(run["pr"])), effort,
+    with sample_workspace(cfg, sample, "judge") as (wt, _):
+        r = llm.run(PROMPT.format(human=human, ai=ai, **pr_meta(cached_pr(cfg, run["pr"]))), effort,
                     cwd=str(wt), tools=TOOLS)
     res = llm.extract_json(r["text"])
     res.update(pr=run["pr"], commit=run["commit"], cost=r["cost"], effort=effort,
@@ -96,21 +94,17 @@ def score_one(run: dict, sample: dict, gold: list[dict], out: pathlib.Path, effo
     return res
 
 
-def main() -> None:
-    """Score every run of a version and write the summary report."""
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--version", default="v0")
-    ap.add_argument("--workers", type=int, default=4)
-    ap.add_argument("--effort", default="medium", help="judge effort")
-    a = ap.parse_args()
-    ss, cm = load_gold()
+def score(version: str = "v0", workers: int = 4, effort: str = "medium", cfg: Config | None = None) -> str:
+    """Grade every run of `version`, write reports/score_<version>.md, return its headline."""
+    cfg = cfg or Config()
+    ss, cm = load_gold(cfg)
     gold = {k: [cm[i] for i in s["gold_ids"]] for k, s in ss.items()}
-    runs = [json.loads(p.read_text()) for p in sorted((ROOT / "data" / "runs" / a.version).glob("*.json"))]
+    runs = [json.loads(p.read_text()) for p in sorted((cfg.data / "runs" / version).glob("*.json"))]
     runs = [r for r in runs if r["findings"] is not None]
-    sdir = ROOT / "data" / "scores" / a.version
-    with cf.ThreadPoolExecutor(a.workers) as ex:
-        res = list(ex.map(lambda r: score_one(r, ss[(r["pr"], r["commit"])], gold[(r["pr"], r["commit"])],
-                                           sdir / f"{r['pr']}-{r['commit'][:8]}.json", a.effort), runs))
+    sdir = cfg.data / "scores" / version
+    with cf.ThreadPoolExecutor(workers) as ex:
+        res = list(ex.map(lambda r: score_one(cfg, r, ss[(r["pr"], r["commit"])], gold[(r["pr"], r["commit"])],
+                                           sdir / f"{r['pr']}-{r['commit'][:8]}.json", effort), runs))
 
     types = C.Counter(h["type"] for s in res for h in s["human"])
     want = [h for s in res for h in s["human"] if h["type"] in ("change_request", "nit")]
@@ -122,7 +116,7 @@ def main() -> None:
     v = C.Counter(str(f["valid"]) for f in ai)
     vo = C.Counter(str(f["valid"]) for _, f in ai_only)
     cost = sum(r["cost"] for r in runs) + sum(s["cost"] for s in res)
-    L = [f"# Score: reviewer {a.version}", "",
+    L = [f"# Score: reviewer {version}", "",
          f"Samples (PR, reviewed commit): {len(res)} · human review comments: {sum(types.values())} "
          f"({', '.join(f'{k} {c}' for k, c in types.most_common())})", "",
          f"- Recall on change requests: {n(cr)}/{len(cr)} ({n(cr) / max(len(cr), 1):.0%})",
@@ -138,9 +132,5 @@ def main() -> None:
                 c = gold[(s["pr"], s["commit"])][h["id"]]
                 L.append(f"- #{s['pr']} `{c.get('path') or 'overall review'}:{c.get('line_lo') or ''}` {c['author']}: "
                          f"{c['body'][:160].replace(chr(10), ' ')} ([link]({c['url']}))")
-    (ROOT / "reports" / f"score_{a.version}.md").write_text("\n".join(L) + "\n")
-    print("\n".join(L[:9]))
-
-
-if __name__ == "__main__":
-    main()
+    (REPORTS / f"score_{version}.md").write_text("\n".join(L) + "\n")
+    return "\n".join(L[:9])

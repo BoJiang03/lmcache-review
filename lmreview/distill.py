@@ -4,7 +4,13 @@ Input: human change requests / nits on train samples. All of them by default; wi
 only the ones that reviewer missed (human-only, from its judge results).
   1. attribute (batches of comments, no tools): learnable rule | missing context | not an issue;
      for learnable ones, a general rule that would also apply to future PRs
-  2. merge (per area, no tools): dedupe candidates (and the base rulebook) into rules with evidence
+  2. merge (per area, no tools): turn candidates (and the base rulebook) into two kinds of entries:
+       principle  a review principle the reviewer applied; abstracted from its instances (one is enough)
+       knowledge  a fact / invariant about this codebase or the engine a reviewer must know there
+     each = kind / when / expect / why / examples / paths / evidence
+  3. global merge (no tools, only if several areas): merge duplicates across areas
+How many PRs back an entry (n_prs) is recorded but does not gate it: a comment seen once still came
+from a principle or from knowledge. Whether entries help is decided by eval flips on test.
 Output: rules/<out>.jsonl, rules/<out>.md (readable), <data>/distill/<out>/attribution.jsonl.
 Never reads test/new samples.
 """
@@ -44,20 +50,29 @@ Answer with one JSON block only:
 [{{"id": 123, "kind": "learnable|context|not_issue", "rule": "...", "paths": ["..."]}}]
 ```"""
 
-MERGE = """Below are candidate review rules for the LMCache team (area: {area}), each with the ids of
-the human review comments it came from{base_note}.
-Merge them into a clean rulebook:
-- merge rules that say the same thing (union their evidence);
-- drop rules that are one-off fixes rather than standards a reviewer would apply to future PRs;
-- keep each rule short, specific and checkable; add a one-line "why";
-- keep "paths" as glob patterns ([] = anywhere).
+MERGE = """Below are candidate review rules for the LMCache team ({scope}), each from one human review
+comment (comment id and PR number given){base_note}.
+A reviewer raised each comment for a reason: either a review PRINCIPLE they apply (the comment is
+one instance of it), or KNOWLEDGE of how this codebase or the inference engine works (a fact or
+invariant). Recover those reasons as rulebook entries:
+- "principle": state the principle at the level a reviewer would apply it to other changes
+  (e.g. "conditions for acquiring and releasing a resource must match on every path"), with the
+  candidates as examples. One instance is enough. Candidates that are instances of the same
+  principle become one entry; union their evidence. Not so vague it cannot be checked.
+- "knowledge": a fact or invariant about this code or the engine (e.g. "only the lead TP rank
+  acquires daemon read locks", "vLLM already validates X at engine init"), and what a reviewer
+  must therefore check when touching that code. Scope it with "paths".
+- Drop candidates that carry no reusable principle or knowledge (pure one-off fixes, typos).
+Each entry: "kind" (principle|knowledge), "when" (the kind of change it applies to), "expect" (what
+to check or require; checkable), "why" (one line), "examples" (1-2 short concrete instances),
+"paths" (glob patterns, [] = anywhere), "evidence" (all comment ids it covers).
 
 Candidates:
 {cands}
 
 Answer with one JSON block only:
 ```json
-[{{"rule": "...", "why": "...", "paths": ["..."], "evidence": [123, 456]}}]
+[{{"kind": "principle", "when": "...", "expect": "...", "why": "...", "examples": ["..."], "paths": ["..."], "evidence": [123, 456]}}]
 ```"""
 
 
@@ -67,6 +82,11 @@ def _ask(prompt: str, effort: str, cfg: Config) -> tuple[object, float]:
     with tempfile.TemporaryDirectory(dir=cfg.sandbox) as d:
         r = llm.run(prompt, effort, cwd=d, tools="")
     return llm.extract_json(r["text"]), r["cost"]
+
+
+def _id(x: object) -> object:
+    """Comment ids come back from the model as ints or strings."""
+    return int(x) if isinstance(x, str) and x.strip().isdigit() else x
 
 
 def inputs(cfg: Config, misses_of: str | None, area: str | None) -> list[dict]:
@@ -97,7 +117,7 @@ def _fmt(c: dict) -> str:
 
 def distill(out: str, base: str | None = None, misses_of: str | None = None, area: str | None = None,
             limit: int | None = None, effort: str = "high", workers: int = 4, max_cost: float = 5.0,
-            cfg: Config | None = None) -> str:
+            reuse: str | None = None, cfg: Config | None = None) -> str:
     """Build rules/<out>.jsonl; returns a short summary."""
     cfg = cfg or Config()
     if (RULES / f"{out}.jsonl").exists():
@@ -106,9 +126,14 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     by_id = {c["id"]: c for c in cs}
     batches = [cs[i:i + BATCH] for i in range(0, len(cs), BATCH)]
     print(f"distill {out}: {len(cs)} comments in {len(batches)} batches (cap ${max_cost:.0f})", flush=True)
-    res, spent = capped_map(lambda b: _ask(ATTRIBUTE.format(comments="\n\n".join(map(_fmt, b))), effort, cfg),
-                            batches, workers, max_cost, label=lambda b: f"batch of {len(b)}")
-    att = [a for r in res if isinstance(r, list) for a in r if isinstance(a, dict) and a.get("id") in by_id]
+    if reuse:  # attribution of an earlier run (same inputs): only the merge is re-done
+        res = [[json.loads(l) for l in (cfg.data / "distill" / reuse / "attribution.jsonl").open()]]
+        spent = 0.0
+    else:
+        res, spent = capped_map(lambda b: _ask(ATTRIBUTE.format(comments="\n\n".join(map(_fmt, b))), effort, cfg),
+                                batches, workers, max_cost, label=lambda b: f"batch of {len(b)}")
+    att = [{**a, "id": _id(a.get("id"))} for r in res if isinstance(r, list) for a in r if isinstance(a, dict)]
+    att = [a for a in att if a["id"] in by_id]
     work = cfg.data / "distill" / out
     work.mkdir(parents=True, exist_ok=True)
     (work / "attribution.jsonl").write_text("".join(json.dumps(a) + "\n" for a in att))
@@ -118,36 +143,60 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
         if a.get("kind") == "learnable" and a.get("rule"):
             groups[by_id[a["id"]].get("area") or "overall"].append(a)
     base_rules = [json.loads(l) for l in (RULES / f"{base}.jsonl").open()] if base else []
-    rules = []
-    for g, items in sorted(groups.items()):
+    _, cm = load_gold(cfg)
+    pr_of = lambda e: cm[e]["pr"] if e in cm else None  # noqa: E731
+
+    def merge(scope: str, cands: list[str], has_base: bool) -> list[dict]:
+        nonlocal spent
         if spent >= max_cost:
-            print(f"  cost cap reached; area {g} not merged", flush=True)
-            continue
-        cands = "\n".join(f"- {a['rule']} paths={a.get('paths') or []} evidence=[{a['id']}]" for a in items)
-        old = [r for r in base_rules if r.get("area") == g]
-        cands += "".join(f"\n- {r['rule']} paths={r.get('paths') or []} evidence={r.get('evidence')}" for r in old)
+            print(f"  cost cap reached; {scope} not merged", flush=True)
+            return []
         try:
-            merged, cost = _ask(MERGE.format(area=g, cands=cands,
-                                             base_note=" (some are rules from the current rulebook)" if old else ""),
+            merged, cost = _ask(MERGE.format(scope=scope, cands="\n".join(cands),
+                                             base_note=" (some come from the current rulebook)" if has_base else ""),
                                 effort, cfg)
         except Exception as e:  # keep the other areas
-            print(f"  merge {g}: FAIL {e}", flush=True)
-            continue
+            print(f"  merge {scope}: FAIL {e}", flush=True)
+            return []
         spent += cost
-        print(f"  merge {g}: {len(items)} candidates -> {len(merged)} rules ${cost:.2f} (total ${spent:.2f})", flush=True)
-        rules += [{**r, "area": g} for r in merged if isinstance(r, dict) and r.get("rule")]
+        out = [r for r in merged if isinstance(r, dict) and r.get("expect")]
+        print(f"  merge {scope}: {len(cands)} candidates -> {len(out)} rules ${cost:.2f} (total ${spent:.2f})", flush=True)
+        return out
+
+    fmt = lambda r: (f"- [{r.get('kind', 'principle')}] when: {r.get('when')} | expect: {r.get('expect')} | paths={r.get('paths') or []} "  # noqa: E731
+                     f"| evidence={r.get('evidence')} (PRs {sorted({pr_of(e) for e in r.get('evidence') or []} - {None})})")
+    rules = []
+    for g, items in sorted(groups.items()):
+        cands = [f"- {a['rule']} | paths={a.get('paths') or []} | evidence=[{a['id']}] (PR #{by_id[a['id']]['pr']})"
+                 for a in items]
+        old = [r for r in base_rules if r.get("area") == g]
+        rules += [{**r, "area": g} for r in merge(f"area: {g}", cands + [fmt(r) for r in old], bool(old))]
+    if len(groups) > 1 and rules:
+        glob = merge("all areas; merge only rules that are duplicates across areas", [fmt(r) for r in rules], False)
+        if glob:
+            area_of = {e: r["area"] for r in rules for e in r.get("evidence") or []}
+            rules = [{**r, "area": ",".join(sorted({area_of.get(e, "?") for e in r.get("evidence") or []}))}
+                     for r in glob]
     for i, r in enumerate(rules, 1):
         r["id"] = f"{out}-{i:03d}"
-        r["evidence"] = [e for e in r.get("evidence") or [] if e in by_id or base]
+        r["evidence"] = list(dict.fromkeys(e for e in map(_id, r.get("evidence") or []) if e in cm))
+        r["n_prs"] = len({pr_of(e) for e in r["evidence"]})
+        r["status"] = "active"
     RULES.mkdir(exist_ok=True)
     (RULES / f"{out}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rules))
     kinds = C.Counter(a.get("kind") for a in att)
-    _, cm = load_gold(cfg)
     md = [f"# Rulebook {out}", "", f"From {len(cs)} train comments" + (f" missed by {misses_of}" if misses_of else "")
-          + (f", area {area}" if area else "") + f"; attribution: {dict(kinds)}; cost ${spent:.2f}", ""]
-    for r in rules:
-        ev = ", ".join(f"[{e}]({cm[e]['url']})" for e in r["evidence"][:5] if e in cm)
-        md += [f"- **{r['id']}** ({r['area']}) {r['rule']}", f"  - why: {r.get('why', '')}; paths: {r.get('paths') or 'any'}; "
-               f"evidence ({len(r['evidence'])}): {ev}"]
+          + (f", area {area}" if area else "") + f"; attribution: {dict(kinds)}; cost ${spent:.2f}",
+          f"{len(rules)} entries: " + ", ".join(f"{k} {v}" for k, v in C.Counter(r.get("kind") for r in rules).items()),
+          ""]
+    for st in ("principle", "knowledge"):
+        md += [f"## {st}", ""]
+        for r in sorted((r for r in rules if r.get("kind", "principle") == st), key=lambda r: -r["n_prs"]):
+            ev = ", ".join(f"[#{cm[e]['pr']}]({cm[e]['url']})" for e in r["evidence"][:6])
+            md += [f"- **{r['id']}** ({r['area']}, {r['n_prs']} PRs) When {r.get('when')}: {r.get('expect')}",
+                   f"  - why: {r.get('why', '')}; paths: {r.get('paths') or 'any'}",
+                   f"  - e.g. {' / '.join(r.get('examples') or [])}", f"  - evidence: {ev}"]
+        md.append("")
     (RULES / f"{out}.md").write_text("\n".join(md) + "\n")
-    return f"rules/{out}.jsonl: {len(rules)} rules from {len(cs)} comments ({dict(kinds)}), ${spent:.2f}"
+    return (f"rules/{out}.jsonl: {len(rules)} entries ({dict(C.Counter(r.get('kind') for r in rules))}) from "
+            f"{len(cs)} comments ({dict(kinds)}), ${spent:.2f}")

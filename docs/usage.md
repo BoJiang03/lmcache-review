@@ -13,15 +13,29 @@ Two kinds of users:
 1. Install the `claude` CLI and log in. Reviews are billed to your own Claude account.
 2. Install the `gh` CLI and run `gh auth login`. lmreview only reads from GitHub.
 3. Install `git` and Python 3.10 or newer.
-4. Install lmreview:
+4. Install lmreview as a Claude Code plugin. In Claude Code, type:
 
-```bash
-pip install git+<this repo>      # or, from a checkout: pip install -e .   (or use bin/lmreview)
 ```
+/plugin install lmreview --marketplace <owner>/lmcache-review
+```
+
+Answer `y` to add the marketplace, then pick a scope (user is the default). Or just tell Claude Code
+"安装这个 plugin: https://github.com/<owner>/lmcache-review" and it runs the same two steps
+(`claude plugin marketplace add <owner>/lmcache-review` and `claude plugin install lmreview@lmcache-review`).
+The plugin bundles the Python package (standard library only), so there is no pip step.
+Update later with `claude plugin update lmreview@lmcache-review`.
+
+Without the plugin, the CLI also works on its own: `pip install git+<this repo>`, or `bin/lmreview` from a checkout.
 
 On first use, lmreview clones LMCache into `~/.cache/lmreview/`. It clones vLLM there too when the reviewer prompt needs it. The clones are blobless, take about 20 s and about 330 MB.
 
 ### Run
+
+In Claude Code: "lmreview 5876" or "review LMCache PR 5876". The skill checks prerequisites, runs the review in the
+background, shows blocker/major in full and folds minor/nit, and can verify a finding against the code.
+It drafts PR comments only on request and posts nothing without your explicit OK.
+
+From a shell:
 
 ```bash
 lmreview review 5876                      # review the PR's current head

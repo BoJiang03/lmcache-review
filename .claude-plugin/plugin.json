@@ -1,0 +1,5 @@
+{
+  "name": "lmreview",
+  "version": "0.1.0",
+  "description": "AI first-round review of LMCache pull requests (read-only on GitHub; never posts)"
+}

@@ -17,6 +17,7 @@ import pathlib
 from . import llm
 from .budget import capped_map
 from .config import Config
+from .reviewer import prompt_template
 from .schema import load_findings
 from .workspace import TOOLS, cached_pr, pr_meta, sample_workspace
 
@@ -87,7 +88,8 @@ def score_one(cfg: Config, run: dict, sample: dict, gold: list[dict], out: pathl
         for i, c in enumerate(gold))
     ai = "\n".join(f"[{f.id}] ({f.severity}, {f.scope}) {f.where()} {f.title}: {f.body[:800]}"
                    for f in load_findings(run) or []) or "(none)"
-    with sample_workspace(cfg, sample, "judge") as (wt, _):
+    ctx = prompt_template(run["version"])[1] if run.get("version") else ()
+    with sample_workspace(cfg, sample, "judge", ctx) as (wt, _):
         r = llm.run(PROMPT.format(human=human, ai=ai, **pr_meta(cached_pr(cfg, run["pr"]))), effort,
                     cwd=str(wt), tools=TOOLS)
     res = llm.extract_json(r["text"])

@@ -25,6 +25,7 @@ cwd, curl, web fetch and subagents (probe, 2026-11-09). Runs made before the har
 | repo files | full snapshot of C via `git archive` (incl. the repo's own CLAUDE.md, AGENTS.md, .claude/skills); no `.git` |
 | `PR.diff` | `git diff merge-base(dev@t0, C)..C` |
 | `PR_HISTORY.md` | discussion strictly before t0: inline threads + replies, review bodies, PR comments, bot comments |
+| `_context/vllm/` | only for prompts that declare `<!-- context: vllm -->` (e.g. v0c): the `vllm/` package of vLLM main at the last commit before t0 (LMCache CI runs vLLM nightly); live review: current main |
 
 ## Prompt
 

@@ -93,7 +93,7 @@ def split_of(created: str) -> str:
         return "train"
     if d < "2026-11-01":
         return "test"
-    return "holdout"
+    return "new"
 
 
 def git(*args: str) -> subprocess.CompletedProcess:

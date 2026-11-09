@@ -14,3 +14,12 @@ Proposal: https://claude.ai/artifact/TtFYk2eZWjUi13YxCnf9tt
     python3 -I src/derive.py           # -> data/dataset/{prs,comments}.jsonl
 
 `data/` is not tracked (raw data + a full LMCache clone with PR refs).
+
+## Tool (pre-launch)
+    bin/lmreview sync                                   # update dataset from GitHub (free)
+    bin/lmreview review 5876                            # review one PR now (local output only)
+    bin/lmreview review --reviewer v0b@high --split test --max-cost 15
+    bin/lmreview eval --reviewer v0b@high --vs v0@high  # judge + human-only by area + signals + flips
+    bin/lmreview distill r1 --area storage --max-cost 1 # train comments -> rules/r1.jsonl
+
+Reviewer names: `<prompt>[+<rules>][@<effort>]`. Design: docs/mechanism.md.

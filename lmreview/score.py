@@ -11,11 +11,11 @@ One judge call per sample, in the SAME workspace the reviewer saw. Results go to
 from __future__ import annotations
 
 import collections as C
-import concurrent.futures as cf
 import json
 import pathlib
 
 from . import llm
+from .budget import capped_map
 from .config import Config
 from .schema import load_findings
 from .workspace import TOOLS, cached_pr, pr_meta, sample_workspace
@@ -111,19 +111,43 @@ def _normalize(s: dict, run: dict) -> dict:
     return s
 
 
-def score(version: str = "v0", workers: int = 4, effort: str = "high", cfg: Config | None = None) -> str:
-    """Grade every run of `version`, write reports/score_<version>.md, return its headline."""
+EST_COST = 0.4  # $/sample for a judge call; used only for the estimate
+
+
+def judge(version: str, workers: int = 4, effort: str = "high", max_cost: float = 10.0,
+          cfg: Config | None = None) -> tuple[list[dict], list[dict]]:
+    """Judge every valid run of `version` not judged yet (stopping at `max_cost`).
+
+    Returns:
+        (runs that have a judge result, their normalized judge results), in the same order.
+    """
     cfg = cfg or Config()
     ss, cm = load_gold(cfg)
-    gold = {k: [cm[i] for i in s["gold_ids"]] for k, s in ss.items()}
     runs = [json.loads(p.read_text()) for p in sorted((cfg.data / "runs" / version).glob("*.json"))]
     runs = [r for r in runs if r["findings"] is not None]
     sdir = cfg.data / "scores" / version
-    with cf.ThreadPoolExecutor(workers) as ex:
-        res = list(ex.map(lambda r: score_one(cfg, r, ss[(r["pr"], r["commit"])], gold[(r["pr"], r["commit"])],
-                                           sdir / f"{r['pr']}-{r['commit'][:8]}.json", effort), runs))
+    path = lambda r: sdir / f"{r['pr']}-{r['commit'][:8]}.json"  # noqa: E731
+    todo = [r for r in runs if not path(r).exists()]
+    print(f"judge {version}: {len(runs)} runs, {len(todo)} to judge (est ${len(todo) * EST_COST:.0f}, "
+          f"cap ${max_cost:.0f})", flush=True)
 
-    res = [_normalize(s, r) for s, r in zip(res, runs)]
+    def one(r):
+        k = (r["pr"], r["commit"])
+        s = score_one(cfg, r, ss[k], [cm[i] for i in ss[k]["gold_ids"]], path(r), effort)
+        return "judged", s["cost"]
+    capped_map(one, todo, workers, max_cost, label=lambda r: f"#{r['pr']}-{r['commit'][:8]}")
+    done = [r for r in runs if path(r).exists()]
+    res = [score_one(cfg, r, None, None, path(r), effort) for r in done]  # cached reads (effort-checked)
+    return done, [_normalize(s, r) for s, r in zip(res, done)]
+
+
+def score(version: str = "v0", workers: int = 4, effort: str = "high", max_cost: float = 10.0,
+          cfg: Config | None = None) -> str:
+    """Judge runs of `version`, write reports/score_<version>.md, return its headline."""
+    cfg = cfg or Config()
+    ss, cm = load_gold(cfg)
+    gold = {k: [cm[i] for i in s["gold_ids"]] for k, s in ss.items()}
+    runs, res = judge(version, workers, effort, max_cost, cfg)
     types = C.Counter(h["type"] for s in res for h in s["human"])
     want = [h for s in res for h in s["human"] if h["type"] in ("change_request", "nit")]
     cr = [h for s in res for h in s["human"] if h["type"] == "change_request"]

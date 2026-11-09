@@ -98,9 +98,9 @@
    | 采纳 | 下一个 commit 改动了该位置，或者有 👍，或者作者回复认可 |
    | 否定 | 有 👎，或者回复不同意，或者没改代码就 resolve |
    | 无反应 | 单独统计，不算错 |
-5. **蒸馏**：
+5. **蒸馏**（与上线前是同一个 `distill`，只是输入不同）：
    - 人在 AI 之后补充的、AI 没覆盖到的评论，走和上线前一样的归因和蒸馏流程。
-   - 被否定的发现，聚类成“不要提 X”的抑制规则。
+   - 被否定的发现，聚类成“不要提 X”的抑制规则（规则库加 `kind: avoid` 区分；上线后再实现）。
    - 人附和 AI 的评论不算新证据，这是为了防止自我强化。
 6. **回退**：任一条件满足就自动退回上线前模式：
    - 对照组 human 独有率超过门槛；
@@ -115,13 +115,24 @@
 - 展示渠道（GitHub 评论 / 先只给维护者看）。这是对外动作
 - 隐藏运行的预算
 
-## 现状与待建
+## 工具（上线前）
 
-| 部件 | 状态 |
-| --- | --- |
-| 样本、工作区、沙箱、reviewer v0/v0b、裁判（匹配）、CLI | 已有 |
-| 被动信号脚本、严重程度检查 | 待建（免费） |
-| 归因 + 蒸馏 → 规则库 v1 | 待建（约 $5–10） |
-| 逐条翻转比较（vN vs vN+1） | 待建（免费；运行 reviewer 需付费） |
-| 新 PR 隐藏运行 | 待建（每个样本约 $1–2） |
-| 上线后：触发、分组、展示、反应采集、回退 | 上线前达标后再建 |
+4 个命令，部署时用脚本把它们串起来。reviewer 的命名规则是 `<prompt>[+<规则库>][@<effort>]`，例如 `v0b+r1@high`。付费命令有 `--max-cost`，达到上限后就不再发起新的调用。所有命令都不会往 GitHub 发任何东西。
+
+| 命令 | 做什么 | 费用 |
+| --- | --- | --- |
+| `lmreview sync` | 增量拉取最近更新过的 PR，重建样本。split：train / test / new（2026-11-01 之后创建的 PR，不用于蒸馏） | 免费 |
+| `lmreview review [PR]` | 带 PR 号：review 这个 PR 的当前版本。不带：在 `--split` 上跑 reviewer（`new` 就是新 PR 的隐藏运行） | 每个样本约 $1.3 |
+| `lmreview eval --reviewer R [--vs R0]` | 依次做：裁判判分 → 按 split 和领域统计 human 独有率 → 被动信号 → 逐条翻转比较。结果写到 `reports/eval_<R>.md` | 每个样本约 $0.4（裁判） |
+| `lmreview distill <out>` | 从 train 的人类评论中归因并抽取规则，写到 `rules/<out>.jsonl` 和 `rules/<out>.md`。`--misses-of R` 表示只用 R 漏掉的评论 | 每条评论约 $0.01 |
+
+```bash
+# 每天
+lmreview sync
+lmreview review --reviewer $CUR --split new --limit 0 --max-cost 20
+lmreview eval --reviewer $CUR
+# 每轮迭代
+lmreview distill $NEXT_RULES --base $CUR_RULES --max-cost 20
+lmreview review --reviewer $NEXT --split test --max-cost 30
+lmreview eval --reviewer $NEXT --vs $CUR      # 净修复 > 0 → 换成新版
+```

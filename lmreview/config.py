@@ -25,3 +25,4 @@ class Config:
 
 
 PROMPTS = pathlib.Path(__file__).resolve().parent / "prompts"
+RULES = _ROOT / "rules"  # distilled rulebooks: rules/<name>.jsonl (versioned in git)

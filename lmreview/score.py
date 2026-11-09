@@ -17,6 +17,7 @@ import pathlib
 
 from . import llm
 from .config import Config
+from .schema import load_findings
 from .workspace import TOOLS, cached_pr, pr_meta, sample_workspace
 
 REPORTS = pathlib.Path(__file__).resolve().parent.parent / "reports"
@@ -36,7 +37,7 @@ PR description:
 HUMAN review comments (all human reviews made on the same commit the AI reviewed; inline ones show\ncode location and hunk, overall reviews may contain several points):
 {human}
 
-AI findings:
+AI findings (id, severity, scope, location, title: body):
 {ai}
 
 Tasks:
@@ -45,9 +46,9 @@ Tasks:
    - question: asks for an explanation; no change implied
    - nit: tiny style/naming/typo suggestion
    - praise: approval or thanks
-2. For each HUMAN comment of type change_request or nit, set "matched_ai" to the index of the AI
-   finding that raises the SAME underlying issue (same problem, not just the same file/line), or
-   null. Be strict: a vaguely related finding is not a match. For an overall review with several
+2. For each HUMAN comment of type change_request or nit, set "matched_ai" to the list of ids of the
+   AI findings that raise the SAME underlying issue (same problem, not just the same file/line);
+   [] if none. Be strict: a vaguely related finding is not a match. Give the reason in "match_why". For an overall review with several
    points, classify by its main actionable point and match on that.
 3. For each AI finding, check it against the code and set "valid": true if it is a real, specific
    problem a maintainer would want fixed, false if it is wrong, speculative, or noise. Use "unsure"
@@ -56,8 +57,8 @@ Tasks:
 
 Answer with one JSON block only:
 ```json
-{{"human": [{{"id": 0, "type": "...", "matched_ai": null}}],
-  "ai": [{{"idx": 0, "valid": true, "why": "<=12 words"}}]}}
+{{"human": [{{"id": 0, "type": "...", "matched_ai": ["f2"], "match_why": "<=15 words"}}],
+  "ai": [{{"id": "f1", "valid": true, "why": "<=12 words"}}]}}
 ```"""
 
 
@@ -80,9 +81,8 @@ def score_one(cfg: Config, run: dict, sample: dict, gold: list[dict], out: pathl
         if c["kind"] == "inline" else
         f"[{i}] overall review by {c['author']} ({c['review_state']}):\n{c['body'][:2500]}"
         for i, c in enumerate(gold))
-    ai = "\n".join(f"[{i}] ({f.get('severity')}) {f.get('path')}:{f.get('line')} "
-                   f"{f.get('title')}: {f.get('body', '')[:800]}"
-                   for i, f in enumerate(run["findings"] or [])) or "(none)"
+    ai = "\n".join(f"[{f.id}] ({f.severity}, {f.scope}) {f.where()} {f.title}: {f.body[:800]}"
+                   for f in load_findings(run) or []) or "(none)"
     with sample_workspace(cfg, sample, "judge") as (wt, _):
         r = llm.run(PROMPT.format(human=human, ai=ai, **pr_meta(cached_pr(cfg, run["pr"]))), effort,
                     cwd=str(wt), tools=TOOLS)
@@ -92,6 +92,19 @@ def score_one(cfg: Config, run: dict, sample: dict, gold: list[dict], out: pathl
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(res, indent=1))
     return res
+
+
+def _normalize(s: dict, run: dict) -> dict:
+    """Upgrade judge files written before findings had ids (index-based, scalar matches)."""
+    ids = [f.id for f in load_findings(run) or []]
+    for h in s["human"]:
+        m = h.get("matched_ai")
+        m = [] if m is None else m if isinstance(m, list) else [m]
+        h["matched_ai"] = [ids[x] if isinstance(x, int) and x < len(ids) else str(x) for x in m]
+    for f in s["ai"]:
+        if "id" not in f:
+            f["id"] = ids[f["idx"]] if f["idx"] < len(ids) else f"f{f['idx'] + 1}"
+    return s
 
 
 def score(version: str = "v0", workers: int = 4, effort: str = "medium", cfg: Config | None = None) -> str:
@@ -106,13 +119,14 @@ def score(version: str = "v0", workers: int = 4, effort: str = "medium", cfg: Co
         res = list(ex.map(lambda r: score_one(cfg, r, ss[(r["pr"], r["commit"])], gold[(r["pr"], r["commit"])],
                                            sdir / f"{r['pr']}-{r['commit'][:8]}.json", effort), runs))
 
+    res = [_normalize(s, r) for s, r in zip(res, runs)]
     types = C.Counter(h["type"] for s in res for h in s["human"])
     want = [h for s in res for h in s["human"] if h["type"] in ("change_request", "nit")]
     cr = [h for s in res for h in s["human"] if h["type"] == "change_request"]
     ai = [f for s in res for f in s["ai"]]
-    matched = {(s["pr"], s["commit"], h["matched_ai"]) for s in res for h in s["human"] if h.get("matched_ai") is not None}
-    ai_only = [(s["pr"], f) for s in res for f in s["ai"] if (s["pr"], s["commit"], f["idx"]) not in matched]
-    n = lambda xs: sum(1 for x in xs if x.get("matched_ai") is not None)  # noqa: E731
+    matched = {(s["pr"], s["commit"], m) for s in res for h in s["human"] for m in h["matched_ai"]}
+    ai_only = [(s["pr"], f) for s in res for f in s["ai"] if (s["pr"], s["commit"], f["id"]) not in matched]
+    n = lambda xs: sum(1 for x in xs if x["matched_ai"])  # noqa: E731
     v = C.Counter(str(f["valid"]) for f in ai)
     vo = C.Counter(str(f["valid"]) for _, f in ai_only)
     cost = sum(r["cost"] for r in runs) + sum(s["cost"] for s in res)
@@ -128,7 +142,7 @@ def score(version: str = "v0", workers: int = 4, effort: str = "medium", cfg: Co
          "## Missed change requests", ""]
     for s in res:
         for h in s["human"]:
-            if h["type"] == "change_request" and h.get("matched_ai") is None:
+            if h["type"] == "change_request" and not h["matched_ai"]:
                 c = gold[(s["pr"], s["commit"])][h["id"]]
                 L.append(f"- #{s['pr']} `{c.get('path') or 'overall review'}:{c.get('line_lo') or ''}` {c['author']}: "
                          f"{c['body'][:160].replace(chr(10), ' ')} ([link]({c['url']}))")

@@ -8,29 +8,36 @@ import re
 import subprocess
 
 # Env vars that make a nested `claude` think it is a child of this session.
-_STRIP = [k for k in os.environ if k.startswith("CLAUDE_CODE_") or k in ("CLAUDECODE", "CLAUDE_PID")]
+_STRIP = [k for k in os.environ if k.startswith("CLAUDE_CODE_")
+          or k in ("CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT")]
 
 
-def run(prompt: str, cwd: str | None = None, tools: str = "", timeout: int = 1800) -> dict:
+def run(prompt: str, effort: str, cwd: str | None = None, tools: str = "", timeout: int = 1800) -> dict:
     """Run one headless Claude call.
 
     Args:
         prompt: the user prompt.
+        effort: thinking effort (low|medium|high|xhigh|max); explicit so runs are reproducible.
         cwd: working directory the model sees (e.g. a checked-out PR worktree).
-        tools: comma-separated allowed tools; empty means no tools.
+        tools: comma-separated tools that exist for the model; "" means none.
         timeout: seconds.
 
     Returns:
-        {"text": final text, "cost": usd, "turns": n}.
+        {"text": final text, "cost": usd, "turns": n, "denials": [blocked tool calls]}.
     """
     env = {k: v for k, v in os.environ.items() if k not in _STRIP}
-    cmd = ["claude", "-p", prompt, "--output-format", "json"]
-    if tools:  # in -p mode anything not allowed is denied
-        cmd += ["--allowedTools", tools]
+    # Hard sandbox (verified with a probe): only `tools` exist, file tools are confined to cwd,
+    # no shell/web/subagents/MCP, and user settings (e.g. defaultMode=auto) are ignored.
+    # --allowedTools alone is NOT enough: user settings auto-approve everything.
+    cmd = ["claude", "-p", prompt, "--output-format", "json", "--restricted",
+           "--tools", tools, "--strict-mcp-config", "--permission-mode", "dontAsk",
+           "--effort", effort]
     p = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout)
     d = json.loads(p.stdout)
     return {"text": d.get("result") or "", "cost": d.get("total_cost_usd") or 0.0,
-            "turns": d.get("num_turns")}
+            "turns": d.get("num_turns"), "effort": effort,
+            "denials": [{"tool": x.get("tool_name"), "input": str(x.get("tool_input"))[:200]}
+                        for x in d.get("permission_denials") or []]}
 
 
 def extract_json(text: str):

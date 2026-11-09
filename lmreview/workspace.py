@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import json
 import pathlib
+import uuid
 import shutil
 import subprocess
 from collections.abc import Iterator
@@ -55,7 +56,8 @@ def sample_workspace(cfg: Config, s: dict, tag: str) -> Iterator[tuple[pathlib.P
     """
     dev_then = git(cfg.repo, "rev-list", "-1", f"--before={s['time']}", "origin/dev").strip()
     base = git(cfg.repo, "merge-base", dev_then, s["commit"]).strip()
-    with build(cfg, f"{s['pr']}-{s['commit'][:8]}-{tag}", s["commit"], base, s["history"]) as wt:
+    name = f"{s['pr']}-{s['commit'][:8]}-{tag}-{uuid.uuid4().hex[:6]}"  # unique: parallel runs may share a sample
+    with build(cfg, name, s["commit"], base, s["history"]) as wt:
         yield wt, base
 
 

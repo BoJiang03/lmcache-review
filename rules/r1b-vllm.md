@@ -1,0 +1,259 @@
+# Rulebook r1b-vllm
+
+From 178 train comments, area vllm-integration; attribution: {'learnable': 138, 'context': 28, 'not_issue': 12}; cost $0.48
+62 entries: principle 45, knowledge 17
+
+## principle
+
+- **r1b-vllm-003** (vllm-integration, 5 PRs) When Documenting values whose meaning depends on units, structure or lifecycle: Docs say whether start/end are token or block indices, what dict keys and values are, and the input and output shapes/strides of tensor transforms. They say whether the function raises or silently proceeds, without contradictory hypothetical alternatives. They use no undefined terms (e.g. 'predecessor's state', 'current-session'). Lifecycle/cleanup APIs say when the caller must invoke them.
+  - why: Ambiguous units or terms cause off-by-unit and misuse bugs.; paths: any
+  - e.g. Private helper `_range(start, end)` gives no token vs block indexing / Comment on `dict` state does not say what the keys and values are
+  - evidence: [#3419](https://github.com/LMCache/LMCache/pull/3419#discussion_r3332482290), [#3248](https://github.com/LMCache/LMCache/pull/3248#discussion_r3299923912), [#4729](https://github.com/LMCache/LMCache/pull/4729#discussion_r3878156111), [#4679](https://github.com/LMCache/LMCache/pull/4679#discussion_r3833815225), [#4847](https://github.com/LMCache/LMCache/pull/4847#discussion_r3929858845), [#4847](https://github.com/LMCache/LMCache/pull/4847#discussion_r3929865923)
+- **r1b-vllm-008** (vllm-integration, 5 PRs) When Writing or modifying code comments: Comments are one or two lines on non-obvious intent, a key invariant or a caveat. They contain no long narration, model-specific examples, restatements of obvious behavior or rehashes of engine internals. A comment that does not clearly explain why nearby code exists is deleted, not reworded.
+  - why: Verbose comments hide the important caveats and rot quickly.; paths: any
+  - e.g. Paragraph justifying backward compatibility of a trivial case / Multi-line walkthrough of edge cases above a one-line check
+  - evidence: [#3248](https://github.com/LMCache/LMCache/pull/3248#discussion_r3299924208), [#3521](https://github.com/LMCache/LMCache/pull/3521#discussion_r3359429377), [#3521](https://github.com/LMCache/LMCache/pull/3521#discussion_r3359434584), [#4062](https://github.com/LMCache/LMCache/pull/4062#discussion_r3672549312), [#4679](https://github.com/LMCache/LMCache/pull/4679#discussion_r3833827312), [#4847](https://github.com/LMCache/LMCache/pull/4847#discussion_r3929882818)
+- **r1b-vllm-013** (vllm-integration, 5 PRs) When Naming functions, booleans, variables and fields: Names say exactly what is computed or tested. Factories and getters use conventional verb + noun (`create_...`, `get_tokens_per_block`), not unusual verbs like `inflate`. Booleans name the exact condition (`_has_preemption_ops`). Names are descriptive enough to stand without an explanatory comment, without broad names like `get_lmcache_<thing>` or implementation-context words. When semantics change, the name is changed to match the LMCache-level meaning.
+  - why: Imprecise names hide purpose and drift from behavior.; paths: any
+  - e.g. `inflate_spec` -> `create_spec` / Function whose behavior changed to 'cacheable' still named after an old engine mode
+  - evidence: [#3419](https://github.com/LMCache/LMCache/pull/3419#discussion_r3327192144), [#4679](https://github.com/LMCache/LMCache/pull/4679#discussion_r3833791919), [#4834](https://github.com/LMCache/LMCache/pull/4834#discussion_r3900968417), [#3808](https://github.com/LMCache/LMCache/pull/3808#discussion_r3515618410), [#3808](https://github.com/LMCache/LMCache/pull/3808#discussion_r3515797334), [#4468](https://github.com/LMCache/LMCache/pull/4468#discussion_r3834374877)
+- **r1b-vllm-001** (vllm-integration, 4 PRs) When Writing or editing docstrings of functions, methods or classes: The docstring has a one-line summary, then optionally the externally observable behavior, inputs, invariants and semantics, then Args:/Returns:/Raises:/Notes: as needed. It describes the contract, not private caches, internal fields or how the code works internally. It contains no change history, previous implementations, long rationale or discussion of downstream consumers.
+  - why: Implementation narration and history drift out of sync and bury the contract callers need.; paths: any
+  - e.g. Docstring mentions a private cache field instead of what the method returns / Docstring explains how a previous version of the health check worked
+  - evidence: [#3248](https://github.com/LMCache/LMCache/pull/3248#discussion_r3314905220), [#4062](https://github.com/LMCache/LMCache/pull/4062#discussion_r3672537889), [#4834](https://github.com/LMCache/LMCache/pull/4834#discussion_r3900958519), [#4834](https://github.com/LMCache/LMCache/pull/4834#discussion_r3900966932), [#3231](https://github.com/LMCache/LMCache/pull/3231#discussion_r3223613494), [#3231](https://github.com/LMCache/LMCache/pull/3231#discussion_r3223617431)
+- **r1b-vllm-002** (vllm-integration, 4 PRs) When Adding or changing public or abstract methods with parameters: The method has an Args: section with a short definition of every parameter. Domain-specific parameters (e.g. epoch) are defined there. Args entries do not explain how the callee uses the value internally. Longer behavioral detail goes in a separate Note section.
+  - why: Implementers and callers of an interface need every parameter defined without reading its implementation.; paths: ['lmcache/**']
+  - e.g. Abstract policy method takes `epoch` but never defines it / Args entry spends a paragraph on how the callee iterates blocks
+  - evidence: [#4434](https://github.com/LMCache/LMCache/pull/4434#discussion_r3778886149), [#4847](https://github.com/LMCache/LMCache/pull/4847#discussion_r3929848172), [#3521](https://github.com/LMCache/LMCache/pull/3521#discussion_r3359485768), [#3521](https://github.com/LMCache/LMCache/pull/3521#discussion_r3359487618), [#4679](https://github.com/LMCache/LMCache/pull/4679#discussion_r3833797556)
+- **r1b-vllm-020** (vllm-integration, 4 PRs) When Choosing between extracting a helper and inlining code: Non-trivial, self-contained logic blocks in long methods are extracted into well-named private helpers. Trivial wrappers, pass-through layers, single-call small helpers and single-use module constants are inlined. A method is not split into a public wrapper plus a private helper when the wrapper adds nothing.
+  - why: Indirection should pay for itself in readability.; paths: any
+  - e.g. Extract key-building plus free-request sending into `_send_free_requests` / Public method that only forwards to `_impl` with the same args
+  - evidence: [#3248](https://github.com/LMCache/LMCache/pull/3248#discussion_r3424252128), [#3419](https://github.com/LMCache/LMCache/pull/3419#discussion_r3333033720), [#4810](https://github.com/LMCache/LMCache/pull/4810#discussion_r3909546770), [#4253](https://github.com/LMCache/LMCache/pull/4253#discussion_r4087441341), [#4253](https://github.com/LMCache/LMCache/pull/4253#discussion_r4087615074)
+- **r1b-vllm-025** (vllm-integration, 4 PRs) When Adding imports: Imports go at the top of the module. Lazy in-function imports are used only to break cycles or for heavy or optional dependencies, never a module-level try/except fallback. Symbols are imported from their canonical, lightweight location: the package `__init__` when it is re-exported there as public API, or the defining module (e.g. `lmcache_mp_metadata`). Never import through a heavier module that merely re-exports, such as the connector.
+  - why: Import placement affects startup cost, cycles and coupling.; paths: any
+  - e.g. Import inside `__init__` without a cycle reason / Importing a metadata type from the connector module
+  - evidence: [#3248](https://github.com/LMCache/LMCache/pull/3248#discussion_r3252467733), [#3476](https://github.com/LMCache/LMCache/pull/3476#discussion_r3424193885), [#3359](https://github.com/LMCache/LMCache/pull/3359#discussion_r3326737193), [#4434](https://github.com/LMCache/LMCache/pull/4434#discussion_r3778880321)
+- **r1b-vllm-009** (vllm-integration, 3 PRs) When Changing semantics or rewriting code that has comments: Comments describe current behavior only. Stale claims (e.g. 'exactly-once') are updated, and PR numbers, change history and narratives about removed mechanisms are removed.
+  - why: History belongs in git, and stale comments mislead.; paths: any
+  - e.g. Comment still says 'exactly-once' after the semantics changed / Comment referencing 'since PR #NNNN we no longer...'
+  - evidence: [#3248](https://github.com/LMCache/LMCache/pull/3248#discussion_r3299921219), [#4062](https://github.com/LMCache/LMCache/pull/4062#discussion_r3571151784), [#3521](https://github.com/LMCache/LMCache/pull/3521#discussion_r3359438467)
+- **r1b-vllm-036** (vllm-integration, 3 PRs) When Handling unexpected states, unmet preconditions or unavailable dependencies: The code raises or logs an error and reports failure: degenerate states (e.g. zero discovered layers) error out, and required config preconditions (interleave, block size) are validated. A store or retrieve on an unhealthy adapter or unavailable daemon resolves to False. It never silently returns an empty or default object, a default that could corrupt KV data, or success.
+  - why: Silent fallbacks turn configuration errors into wrong KV cache data.; paths: any
+  - e.g. Returning an empty spec when no layers are found / Store future resolving True while the daemon is down
+  - evidence: [#3419](https://github.com/LMCache/LMCache/pull/3419#discussion_r3331229430), [#3561](https://github.com/LMCache/LMCache/pull/3561#discussion_r3378625379), [#4152](https://github.com/LMCache/LMCache/pull/4152#discussion_r3617172303)
+- **r1b-vllm-037** (vllm-integration, 3 PRs) When Adding tunables, state machines, counters, logging machinery or health-check/recovery logic: Each addition is justified by a demonstrated problem stated in the PR description. Health and heartbeat logic stays minimal with clear semantics. Nothing handles exotic failure modes (process freeze, VM migration) without evidence, and nothing goes in that the fix does not need.
+  - why: Speculative complexity is hard to review and maintain.; paths: ['lmcache/integration/**']
+  - e.g. Cold-start grace threshold plus failure counter plus latch flag in a heartbeat / Auxiliary counters added in a bug-fix PR
+  - evidence: [#3231](https://github.com/LMCache/LMCache/pull/3231#discussion_r3223595657), [#3231](https://github.com/LMCache/LMCache/pull/3231#discussion_r3223608962), [#3664](https://github.com/LMCache/LMCache/pull/3664#discussion_r3423841374), [#4671](https://github.com/LMCache/LMCache/pull/4671#discussion_r3897809947)
+- **r1b-vllm-006** (vllm-integration, 2 PRs) When Introducing ranks, world sizes, worker IDs or sharding fields in distributed or multi-server code: Names state the scope explicitly (e.g. `global_world_size`, `local_tp_size`), not vague prefixes like `actual_`/`sub_`. Docstrings say which parallel dimensions are covered (PP x TP, and whether DP/CP is included), how many pieces the KV cache is split into, and which piece this worker owns. Each new field's purpose is distinct from the others.
+  - why: Global and local rank confusion is a common source of wrong-shard and deadlock bugs.; paths: ['lmcache/integration/**']
+  - e.g. `actual_world_size` instead of `global_world_size` / Docstring 'workers under one scheduler' without saying PP x TP
+  - evidence: [#3248](https://github.com/LMCache/LMCache/pull/3248#discussion_r3253977292), [#3248](https://github.com/LMCache/LMCache/pull/3248#discussion_r3253983772), [#3248](https://github.com/LMCache/LMCache/pull/3248#discussion_r3299905728), [#3478](https://github.com/LMCache/LMCache/pull/3478#discussion_r3371423145)
+- **r1b-vllm-007** (vllm-integration, 2 PRs) When Code relies on a non-obvious engine invariant or on a precondition enforced elsewhere: A brief comment (e.g. a NOTE: line) at the dependent code states the assumption or motivation.
+  - why: Hidden dependencies break silently when the remote check changes.; paths: any
+  - e.g. Recomputing the last token on a full-prompt hit with no explanation / Computation assuming PP+TP+MLA was rejected at init
+  - evidence: [#3322](https://github.com/LMCache/LMCache/pull/3322#discussion_r3264556011), [#3248](https://github.com/LMCache/LMCache/pull/3248#discussion_r3450487918)
+- **r1b-vllm-010** (vllm-integration, 2 PRs) When Writing comments at a call site: A comment describes the code next to it and what this module is responsible for. It does not explain internal details of a callee, helper or another component (e.g. a specific policy).
+  - why: Call-site comments about callee internals go stale and sit in the wrong place.; paths: any
+  - e.g. Call site documents the internal behavior of the FIFO policy / Comment explains a helper's internals where the helper is called
+  - evidence: [#4679](https://github.com/LMCache/LMCache/pull/4679#discussion_r3833834867), [#4847](https://github.com/LMCache/LMCache/pull/4847#discussion_r3929876670)
+- **r1b-vllm-018** (vllm-integration, 2 PRs) When Adding functions or methods used only inside their module or class: They are underscore-prefixed so the public interface stays minimal.
+  - why: Every public name becomes an implicit API to maintain.; paths: any
+  - e.g. Module-local helper `build_keys` should be `_build_keys`
+  - evidence: [#3419](https://github.com/LMCache/LMCache/pull/3419#discussion_r3327195843), [#4679](https://github.com/LMCache/LMCache/pull/4679#discussion_r3833853780)
+- **r1b-vllm-019** (vllm-integration, 2 PRs) When Adding or refactoring code: Nothing ships unused or unreachable: no unused properties, methods or members, no APIs without a current caller, no loops that re-handle cases already covered by earlier branches.
+  - why: Dead code adds maintenance cost and misleads readers.; paths: any
+  - e.g. New property never read / Helper API added 'for future use'
+  - evidence: [#3248](https://github.com/LMCache/LMCache/pull/3248#discussion_r3299911901), [#4834](https://github.com/LMCache/LMCache/pull/4834#discussion_r3900970311), [#3248](https://github.com/LMCache/LMCache/pull/3248#discussion_r3329559123)
+- **r1b-vllm-022** (vllm-integration, 2 PRs) When Adding logic similar to existing code, such as config derivation or a new variant of a method: Shared logic is factored into a helper that every caller or variant uses, not copied.
+  - why: Duplicated logic diverges over time.; paths: any
+  - e.g. ParallelStrategy built from vllm_config in two places / Lazy-offload variant copying the body of the eager store method
+  - evidence: [#3248](https://github.com/LMCache/LMCache/pull/3248#discussion_r3299887479), [#4434](https://github.com/LMCache/LMCache/pull/4434#discussion_r3779069931)
+- **r1b-vllm-028** (vllm-integration, 2 PRs) When Adding pluggable policies or strategies selected by config: Each policy family is its own subpackage: base.py with the ABC and shared config/types, plus one file per implementation. Implementations are selected through a registry/factory keyed by the config value, not string checks in the consumer's __init__.
+  - why: New implementations should be addable without editing callers.; paths: ['lmcache/**']
+  - e.g. `if policy == 'fifo': ...` in the connector __init__ / Shared config class defined in fifo.py instead of base.py
+  - evidence: [#4434](https://github.com/LMCache/LMCache/pull/4434#discussion_r3781557899), [#4434](https://github.com/LMCache/LMCache/pull/4434#discussion_r3781726947), [#4847](https://github.com/LMCache/LMCache/pull/4847#discussion_r3942736743)
+- **r1b-vllm-029** (vllm-integration, 2 PRs) When Designing config options or abstract interfaces: There are no config options whose value can be derived from other config (e.g. a count equal to len(list)), and no extra predicate methods (should_X) when the main method's return value (e.g. an empty list) already carries the information.
+  - why: Redundant surface needs cross-validation and can disagree with itself.; paths: any
+  - e.g. `num_servers` alongside `server_urls` / `should_offload()` plus `get_offload_list()`
+  - evidence: [#3248](https://github.com/LMCache/LMCache/pull/3248#discussion_r3450469915), [#4434](https://github.com/LMCache/LMCache/pull/4434#discussion_r3778901600)
+- **r1b-vllm-030** (vllm-integration, 2 PRs) When Defining parameter or data-structure types in integration code: Code uses a single canonical type (e.g. `list[list[int]]` for block IDs), not unions like `str | list[str]` that need runtime isinstance normalization. There are no compatibility shims for legacy connector call conventions; users are pointed to the current MP connector.
+  - why: Union types and shims spread branching and hide the real contract.; paths: ['lmcache/integration/**']
+  - e.g. `block_ids: list[int] | list[list[int]]` with isinstance branching
+  - evidence: [#3419](https://github.com/LMCache/LMCache/pull/3419#discussion_r3331210550), [#3968](https://github.com/LMCache/LMCache/pull/3968#discussion_r3525689235)
+- **r1b-vllm-038** (vllm-integration, 2 PRs) When Preparing a PR: The PR contains only changes related to its stated purpose. No-op or whitespace edits to unrelated lines are reverted, and unrelated behavioral changes (e.g. reworking lookup or rank logic in a feature PR) go in a separate PR.
+  - why: Focused PRs are reviewable and bisectable.; paths: any
+  - e.g. Feature-support PR that also changes lookup rank gating
+  - evidence: [#3248](https://github.com/LMCache/LMCache/pull/3248#discussion_r3241078502), [#4062](https://github.com/LMCache/LMCache/pull/4062#discussion_r3571209280)
+- **r1b-vllm-039** (vllm-integration, 2 PRs) When Writing code on per-request or per-step hot paths: Objects (default specs/configs) and device/backend capability lookups (e.g. event IPC backend) are created or resolved once at init and cached, not per store/retrieve.
+  - why: Repeated allocation and lookups add latency on every request.; paths: ['lmcache/integration/**', 'lmcache/v1/**']
+  - e.g. Constructing a default spec on every retrieve / Resolving the IPC backend per request
+  - evidence: [#3419](https://github.com/LMCache/LMCache/pull/3419#discussion_r3331215831), [#4579](https://github.com/LMCache/LMCache/pull/4579#discussion_r3859036006)
+- **r1b-vllm-040** (vllm-integration, 2 PRs) When Adding logs in hot paths or for health/state: Nothing logs at warning or above per request or per step. Health and state changes are logged only on transitions, not as periodic or throttled repeats.
+  - why: Repeated logs flood output and hide real events.; paths: ['lmcache/**']
+  - e.g. Warning on every lookup while unhealthy / Throttled 'still unhealthy' log every N seconds
+  - evidence: [#3248](https://github.com/LMCache/LMCache/pull/3248#discussion_r3299929598), [#4671](https://github.com/LMCache/LMCache/pull/4671#discussion_r3897806478)
+- **r1b-vllm-042** (vllm-integration, 2 PRs) When Using limits, caps or layout metadata in the vLLM integration: Nothing engine-dependent is hardcoded: limits come from the vLLM config (e.g. `max_model_len`) or scheduler mechanisms, and KV layout (e.g. `kv_list_layout`) comes from the model's attention type (MLA vs. others).
+  - why: Hardcoded values break for other models and configs.; paths: ['lmcache/integration/**']
+  - e.g. Fixed numeric token cap / `kv_list_layout='k_v'` for MLA models
+  - evidence: [#3382](https://github.com/LMCache/LMCache/pull/3382#discussion_r3301040055), [#4607](https://github.com/LMCache/LMCache/pull/4607#discussion_r3878866757)
+- **r1b-vllm-049** (vllm-integration, 2 PRs) When Acquiring per-request or multi-server resources (locks, sessions, GPU blocks, pending-store entries): Resources are released on every exit path, including error, mismatch and partial-failure branches (e.g. FREE_LOOKUP_LOCKS to the servers that succeeded), via try/finally or explicit cleanup.
+  - why: Failure paths otherwise leak resources.; paths: ['lmcache/integration/**']
+  - e.g. Multi-server lookup failing on one server without freeing locks on the others / Mismatch branch returning without releasing the scheduler session
+  - evidence: [#3248](https://github.com/LMCache/LMCache/pull/3248#discussion_r3329560977), [#4434](https://github.com/LMCache/LMCache/pull/4434#discussion_r3781770614)
+- **r1b-vllm-004** (vllm-integration, 1 PRs) When Adding dataclasses or state/registry classes: Every dataclass field is documented, in an Attributes: section or with a per-field docstring. Every method of a state/registry class has a docstring, and methods are grouped into those that mutate state and those that only read it.
+  - why: Shared state is hard to reason about when its fields and mutators are unclear.; paths: ['lmcache/**']
+  - e.g. New dataclass with undocumented fields / Registry class mixes mutating and read-only methods without docs
+  - evidence: [#4847](https://github.com/LMCache/LMCache/pull/4847#discussion_r3929840658), [#4847](https://github.com/LMCache/LMCache/pull/4847#discussion_r3938260875)
+- **r1b-vllm-005** (vllm-integration, 1 PRs) When Adding connector or integration classes: The class docstring states which process or role it runs in: scheduler side or worker side.
+  - why: Scheduler-side and worker-side objects have different available resources and invariants.; paths: ['lmcache/integration/**']
+  - e.g. New lazy-offload class with no statement of whether it lives in the scheduler or worker
+  - evidence: [#4434](https://github.com/LMCache/LMCache/pull/4434#discussion_r3778907569)
+- **r1b-vllm-011** (vllm-integration, 1 PRs) When Adding TODO comments: Every TODO has an owner: `TODO(username): ...`.
+  - why: Unowned TODOs never get resolved.; paths: any
+  - e.g. `# TODO: support PP` without an owner
+  - evidence: [#4434](https://github.com/LMCache/LMCache/pull/4434#discussion_r3742354120)
+- **r1b-vllm-012** (vllm-integration, 1 PRs) When Documenting fallback or degraded behavior in the cache layer: The wording describes what LMCache stores or loads (e.g. 'loads KV for all tokens'), not anything implying the model's attention or inference results change.
+  - why: Users must not think a cache fallback changes model outputs.; paths: ['lmcache/**']
+  - e.g. 'falls back to full attention' instead of 'loads KV for all tokens'
+  - evidence: [#3635](https://github.com/LMCache/LMCache/pull/3635#discussion_r3398830941)
+- **r1b-vllm-014** (vllm-integration, 1 PRs) When Naming or renaming identifiers: There are no repetitive or misleading qualifier suffixes (e.g. `per_engine_group` on an object that already covers all groups). Existing functions are not renamed when their semantics are unchanged.
+  - why: Redundant qualifiers mislead about scope, and needless renames add churn.; paths: ['lmcache/integration/vllm/**']
+  - e.g. `get_kv_spec_per_engine_group` for an object covering all groups
+  - evidence: [#3419](https://github.com/LMCache/LMCache/pull/3419#discussion_r3331247109), [#3419](https://github.com/LMCache/LMCache/pull/3419#discussion_r3332402984)
+- **r1b-vllm-015** (vllm-integration, 1 PRs) When Naming functions or variables for inference-engine concepts in integration code: Engine-owned concepts carry the engine's name (e.g. `get_vllm_scheduler_block_size`), not an `lmcache_` prefix.
+  - why: Names must not imply LMCache owns an engine component.; paths: ['lmcache/integration/**']
+  - e.g. `get_lmcache_scheduler_block_size` -> `get_vllm_scheduler_block_size`
+  - evidence: [#4834](https://github.com/LMCache/LMCache/pull/4834#discussion_r3900988739)
+- **r1b-vllm-016** (vllm-integration, 1 PRs) When Writing log messages: Messages use plain descriptive wording, without cryptic tags or ad-hoc markers.
+  - why: Logs must be readable by operators.; paths: any
+  - e.g. '<preempted> by' -> 'resumed requests: ...'
+  - evidence: [#3808](https://github.com/LMCache/LMCache/pull/3808#discussion_r3515617440)
+- **r1b-vllm-017** (vllm-integration, 1 PRs) When Accessing elements of tuples or composite identities: Code uses named fields (namedtuple/dataclass) or a comment, not opaque positional indexing.
+  - why: Positional indexing hides intent and breaks on reordering.; paths: any
+  - e.g. `identity[4]`
+  - evidence: [#3419](https://github.com/LMCache/LMCache/pull/3419#discussion_r3332885112)
+- **r1b-vllm-021** (vllm-integration, 1 PRs) When Needing one helper method from a domain class: Code does not construct a heavyweight domain object just to call one helper. If only one module uses the method, it becomes a module-level helper there.
+  - why: Needless construction is costly and couples unrelated code.; paths: any
+  - e.g. Building a full spec object only to call its key-formatting method
+  - evidence: [#3419](https://github.com/LMCache/LMCache/pull/3419#discussion_r3331228879)
+- **r1b-vllm-023** (vllm-integration, 1 PRs) When Constructing several distinct classes with similar arguments: Each class is initialized explicitly, not through one shared kwargs dict.
+  - why: A shared kwargs dict forces the __init__ signatures to stay identical.; paths: any
+  - e.g. `common = dict(...); A(**common); B(**common)`
+  - evidence: [#3478](https://github.com/LMCache/LMCache/pull/3478#discussion_r3336051498)
+- **r1b-vllm-024** (vllm-integration, 1 PRs) When Adding a new Python module or reorganizing one: Order: imports; globals; private helper functions (`_`); private helper classes (`_`); main classes (public methods first, then private); public module-level interface functions last.
+  - why: A consistent layout makes modules easy to navigate.; paths: any
+  - e.g. Public factory function defined above private helpers
+  - evidence: [#3476](https://github.com/LMCache/LMCache/pull/3476#discussion_r3405192298)
+- **r1b-vllm-027** (vllm-integration, 1 PRs) When Adding features that touch engine integration adapters or connectors: Integration-layer diffs stay small (roughly under 10 LoC). Feature logic lives in a separate LMCache module and is wired in through one pluggable component (e.g. a dispatcher created once in `__init__`), not scattered attributes and inline logic across connector methods.
+  - why: Connectors are shared, version-sensitive glue and must stay thin.; paths: ['lmcache/integration/**']
+  - e.g. Experimental feature adding several attributes and branches across connector hooks
+  - evidence: [#4042](https://github.com/LMCache/LMCache/pull/4042#discussion_r3606863256), [#4042](https://github.com/LMCache/LMCache/pull/4042#discussion_r3633033001)
+- **r1b-vllm-031** (vllm-integration, 1 PRs) When Implementing dunder methods such as `__len__`: The dunder has unambiguous semantics for every supported configuration (e.g. hybrid models), or it is removed.
+  - why: Ambiguous dunders silently give wrong answers in some configs.; paths: any
+  - e.g. `__len__` on a multi-group KV spec with no clear meaning
+  - evidence: [#3419](https://github.com/LMCache/LMCache/pull/3419#discussion_r3331213201)
+- **r1b-vllm-032** (vllm-integration, 1 PRs) When Adding typing.cast: No cast wraps a conversion that already yields the right type (int(), str()).
+  - why: Redundant casts are noise.; paths: any
+  - e.g. `cast(int, int(x))`
+  - evidence: [#4847](https://github.com/LMCache/LMCache/pull/4847#discussion_r3942724617), [#4847](https://github.com/LMCache/LMCache/pull/4847#discussion_r3942725259)
+- **r1b-vllm-033** (vllm-integration, 1 PRs) When Checking optional state objects in integration code: Optional objects that are never falsy when present use truthiness checks (`if not x:`), not explicit `is None` comparisons.
+  - why: This keeps style consistent within the integration layer.; paths: ['lmcache/integration/**']
+  - e.g. `if self._tracker is None:` -> `if not self._tracker:`
+  - evidence: [#4042](https://github.com/LMCache/LMCache/pull/4042#discussion_r3540625500), [#4042](https://github.com/LMCache/LMCache/pull/4042#discussion_r3540626096)
+- **r1b-vllm-034** (vllm-integration, 1 PRs) When Calling an optional component: The guard is visible at the call site (e.g. `if self.x: self.x.method(...)`). Do not use a helper that silently no-ops on None.
+  - why: A hidden no-op makes optional calls look unconditional.; paths: any
+  - e.g. `self._maybe_dispatch(...)` that returns early when the dispatcher is None
+  - evidence: [#4042](https://github.com/LMCache/LMCache/pull/4042#discussion_r3662181503), [#4042](https://github.com/LMCache/LMCache/pull/4042#discussion_r3662182878)
+- **r1b-vllm-035** (vllm-integration, 1 PRs) When Adding try/except: Code catches only exceptions the call can actually raise. There is no try/except around non-raising calls such as MQ request submission, and no broad `except Exception` beside specific handlers unless other exceptions are known to occur.
+  - why: Defensive catches hide real bugs and add dead paths.; paths: any
+  - e.g. try/except around `mq.submit_request(...)` / `except TimeoutError` followed by an unjustified `except Exception`
+  - evidence: [#3248](https://github.com/LMCache/LMCache/pull/3248#discussion_r3329556925), [#3248](https://github.com/LMCache/LMCache/pull/3248#discussion_r3329558434)
+- **r1b-vllm-041** (vllm-integration, 1 PRs) When Changing logging format, logger setup or level conventions in an integration: The change is applied consistently across all files of that integration.
+  - why: Mixed conventions make the logs inconsistent.; paths: ['lmcache/integration/**']
+  - e.g. New logger setup in only one vLLM connector file
+  - evidence: [#4153](https://github.com/LMCache/LMCache/pull/4153#discussion_r3610109763)
+- **r1b-vllm-060** (vllm-integration, 1 PRs) When Caching state derived from mutable sources: The cache is updated or invalidated whenever the source changes (e.g. cache-key token IDs when new tokens are appended to a request).
+  - why: A stale derived cache produces wrong keys.; paths: ['lmcache/integration/vllm/**']
+  - e.g. Token-ID key cache not refreshed after decode appends tokens
+  - evidence: [#4176](https://github.com/LMCache/LMCache/pull/4176#discussion_r3632078676)
+- **r1b-vllm-061** (vllm-integration, 1 PRs) When Generating unique instance or worker identifiers: IDs come from `uuid.uuid4()` (e.g. `.int`), not the `random` module.
+  - why: Processes may share a seed, and seeded RNG output can then collide.; paths: any
+  - e.g. `random.randint(...)` for an instance ID
+  - evidence: [#3231](https://github.com/LMCache/LMCache/pull/3231#discussion_r3223559614)
+- **r1b-vllm-062** (vllm-integration, 1 PRs) When Recording timestamps for deadlines or ages: Code uses `time.monotonic()` taken when the event happens, not a cached clock field that starts at 0 and is updated later.
+  - why: A zero-initialized clock makes items look overdue immediately.; paths: any
+  - e.g. `enqueue_ts = self._now` where `_now` starts at 0
+  - evidence: [#4847](https://github.com/LMCache/LMCache/pull/4847#discussion_r3942751346)
+
+## knowledge
+
+- **r1b-vllm-026** (vllm-integration, 2 PRs) When Adding imports or vLLM-dependent code in core or adapter modules: `lmcache/v1/**` never imports from `lmcache/integration/**`. Code consuming vLLM-specific types such as VllmConfig lives in the vLLM connector module (e.g. a helper in lmcache_mp_connector.py). Engine-agnostic classes like ParallelStrategy do not take vLLM config objects.
+  - why: Dependencies flow only from integration to core, which keeps core engine-agnostic.; paths: ['lmcache/v1/**', 'lmcache/integration/**']
+  - e.g. gpu_connector importing from lmcache/integration / ParallelStrategy.from_vllm_config inside the engine-agnostic adapter
+  - evidence: [#4729](https://github.com/LMCache/LMCache/pull/4729#discussion_r3874815447), [#3478](https://github.com/LMCache/LMCache/pull/3478#discussion_r3336065450)
+- **r1b-vllm-045** (vllm-integration, 2 PRs) When Touching rank selection, world-size derivation or lead-rank election plus broadcast: The logic is correct under PP > 1, DP and CP as well as TP (e.g. which rank stores in MLA mode), or unsupported combinations are explicitly rejected and the assumption documented.
+  - why: TP-only reasoning picks wrong or duplicate ranks under PP/DP/CP.; paths: ['lmcache/integration/**']
+  - e.g. MLA store-rank check `tp_rank == 0` ignoring pp_rank / world_size = tp_size when pp_size > 1
+  - evidence: [#3248](https://github.com/LMCache/LMCache/pull/3248#discussion_r3241070418), [#3248](https://github.com/LMCache/LMCache/pull/3248#discussion_r3299865533), [#4062](https://github.com/LMCache/LMCache/pull/4062#discussion_r3580024207)
+- **r1b-vllm-050** (vllm-integration, 2 PRs) When Sending requests to LMCache MP servers (LOOKUP, QUERY_PREFETCH_STATUS, health checks, etc.): Code uses the existing ZMQ `MessageQueueClient`, not ad-hoc HTTP clients. Submission is non-blocking, so requests go to all servers sequentially and the futures are collected afterward, with no thread-pool fan-out.
+  - why: The MQ protocol is already async, and extra transports or threads add complexity.; paths: ['lmcache/integration/**', 'lmcache/v1/multiprocess/**']
+  - e.g. ThreadPoolExecutor wrapping LOOKUP per server / HTTP health check against the MP server
+  - evidence: [#3476](https://github.com/LMCache/LMCache/pull/3476#discussion_r3338011454), [#3248](https://github.com/LMCache/LMCache/pull/3248#discussion_r3299942557), [#3248](https://github.com/LMCache/LMCache/pull/3248#discussion_r3299943731), [#3248](https://github.com/LMCache/LMCache/pull/3248#discussion_r3299947442)
+- **r1b-vllm-054** (vllm-integration, 2 PRs) When Touching async load/retrieve paths with timeouts or IPC/device events: A timeout or unconfirmed drain is distinct from a terminal failure. Engine destination buffers or slots are not returned while a remote op may still write to them. A reference to an exported local event is kept on the raw request future (e.g. retain_reference) before chaining or conversion so it outlives caller timeouts. A test covers this lifetime across a timeout.
+  - why: Remote ops can outlive caller timeouts and write to freed memory or use dead events.; paths: ['lmcache/integration/**']
+  - e.g. Freeing GPU blocks on retrieve timeout / IPC event garbage-collected after the caller timed out
+  - evidence: [#4828](https://github.com/LMCache/LMCache/pull/4828#discussion_r4096343976), [#4736](https://github.com/LMCache/LMCache/pull/4736#discussion_r3975413066)
+- **r1b-vllm-043** (vllm-integration, 1 PRs) When Adding validation of engine config in the connector: Only LMCache-specific constraints are checked. Values vLLM already validates at engine init are not re-validated.
+  - why: Duplicated validation drifts from the engine's own rules.; paths: ['lmcache/integration/**']
+  - e.g. Connector re-checking block_size values vLLM already validates
+  - evidence: [#4834](https://github.com/LMCache/LMCache/pull/4834#discussion_r3907052196)
+- **r1b-vllm-044** (vllm-integration, 1 PRs) When Touching block-size or alignment validation: The LMCache chunk/block size may not be a multiple of the vLLM block size, and that case is handled (rejected or supported explicitly).
+  - why: A misaligned chunk size produces partial-block KV transfers.; paths: ['lmcache/integration/vllm/**']
+  - e.g. Validation assuming chunk_size % vllm_block_size == 0
+  - evidence: [#4437](https://github.com/LMCache/LMCache/pull/4437#discussion_r3725281405)
+- **r1b-vllm-046** (vllm-integration, 1 PRs) When Using torch.distributed collectives or electing a lead rank: `src`/`dst` on a subgroup are global ranks, converted via `dist.get_global_rank(group, 0)`, not hardcoded 0. Lead election and collectives use one rank notion (the rank within the relevant TP/process group), never mixed with local_rank or worker_id.
+  - why: Mixing rank notions sends to the wrong process or hangs.; paths: ['lmcache/integration/**']
+  - e.g. `dist.broadcast(t, src=0, group=tp_group)` / Electing the lead by local_rank but broadcasting from the group rank
+  - evidence: [#4062](https://github.com/LMCache/LMCache/pull/4062#discussion_r3617237150), [#4062](https://github.com/LMCache/LMCache/pull/4062#discussion_r3617239636)
+- **r1b-vllm-047** (vllm-integration, 1 PRs) When Letting one rank's lookup result stand in for all TP ranks: This happens only when cache keys are rank-agnostic (MLA). For non-MLA models every TP rank looks up its own keys, since ranks may match different token counts.
+  - why: Non-MLA KV is sharded per rank with distinct keys.; paths: ['lmcache/integration/**']
+  - e.g. Broadcasting rank 0's hit count for a non-MLA model
+  - evidence: [#4062](https://github.com/LMCache/LMCache/pull/4062#discussion_r3583426277)
+- **r1b-vllm-048** (vllm-integration, 1 PRs) When Touching LOOKUP, RETRIEVE, cleanup or failure paths that acquire or release daemon read locks: Release gating mirrors acquire gating on every path. If only the lead TP rank acquires locks (MLA), only it releases. If all ranks look up (non-MLA), all release. Per-rank RETRIEVE results can differ, so failure cleanup handles mixed outcomes without double-release or leaks.
+  - why: Mismatched gating over-releases or leaks daemon locks.; paths: ['lmcache/integration/**']
+  - e.g. Lead-only LOOKUP but every rank frees locks on retrieve / Cleanup assuming all ranks failed together
+  - evidence: [#4062](https://github.com/LMCache/LMCache/pull/4062#discussion_r3571407689), [#4062](https://github.com/LMCache/LMCache/pull/4062#discussion_r3583430269), [#4062](https://github.com/LMCache/LMCache/pull/4062#discussion_r3628484915)
+- **r1b-vllm-051** (vllm-integration, 1 PRs) When Aggregating exactly-once server responses (e.g. QUERY_PREFETCH_STATUS) across multiple servers: Each server's result is cached as it arrives, 'not ready' is returned until all servers have reported, and an already-consumed result is never discarded.
+  - why: The server returns each result only once, so a dropped result is lost forever.; paths: ['lmcache/integration/vllm/**']
+  - e.g. Returning not-ready and dropping the results already received from other servers
+  - evidence: [#3248](https://github.com/LMCache/LMCache/pull/3248#discussion_r3299966096)
+- **r1b-vllm-052** (vllm-integration, 1 PRs) When Touching LMCache MP server bootstrap or connector shutdown: The MP server is a per-deployment singleton that may be shared by several vLLM instances. Auto-start happens on the scheduler side, not per worker. Connector shutdown releases only per-connector resources and never terminates the server.
+  - why: Per-worker start or connector-driven kill breaks the other users of the server.; paths: ['lmcache/integration/vllm/**']
+  - e.g. Worker __init__ spawning the MP server / Connector shutdown sending a terminate to the server
+  - evidence: [#3476](https://github.com/LMCache/LMCache/pull/3476#discussion_r3338007259), [#3476](https://github.com/LMCache/LMCache/pull/3476#discussion_r3351961915)
+- **r1b-vllm-053** (vllm-integration, 1 PRs) When Implementing connector reset hooks or cache clear paths: Hooks never clear per-request tracker state while requests are active (the engine may call reset even after its own reset failed), and never force-free read/write-locked objects (e.g. `storage_manager.clear(force=True)`) while stores or retrieves are in flight. They refuse, skip locked or live items and report failure, or coordinate quiescence, and come with a regression test that resets during an active request or transfer.
+  - why: Force-clearing live state corrupts in-flight requests and KV data.; paths: ['lmcache/**']
+  - e.g. reset_cache clearing trackers mid-request / clear(force=True) racing with a retrieve
+  - evidence: [#3643](https://github.com/LMCache/LMCache/pull/3643#discussion_r3956140793), [#3643](https://github.com/LMCache/LMCache/pull/3643#discussion_r3956141013)
+- **r1b-vllm-055** (vllm-integration, 1 PRs) When Writing per-rank code that precedes a cross-rank collective: Per-rank code does not raise out early. Exceptions are caught, the op is marked failed, and the rank still joins the collective so all ranks agree and exit together.
+  - why: One rank raising before a collective hangs the others.; paths: ['lmcache/integration/**']
+  - e.g. Rank throwing before an all_reduce of success flags
+  - evidence: [#4828](https://github.com/LMCache/LMCache/pull/4828#discussion_r4096367180)
+- **r1b-vllm-056** (vllm-integration, 1 PRs) When Editing scheduler-side connector methods: `lmcache_engine` never exists on the scheduler side. Do not turn asserts into `if x is not None` guards there. Fix the role logic or delete the unreachable code.
+  - why: Such a guard creates a dead branch and hides role bugs.; paths: ['lmcache/integration/vllm/**']
+  - e.g. `if self.lmcache_engine is not None:` inside a scheduler-only method
+  - evidence: [#3687](https://github.com/LMCache/LMCache/pull/3687#discussion_r3450975835)
+- **r1b-vllm-057** (vllm-integration, 1 PRs) When A connector starts calling a new worker-adapter method: The call works with the adapter copy vendored in vLLM, through a compat shim, a dropped fallback or a synced vendored API, and the change is applied to every versioned connector variant.
+  - why: vLLM ships its own copy of the adapter, which may lack the method.; paths: ['lmcache/integration/vllm/**']
+  - e.g. Connector calling a new adapter method missing from vLLM's vendored copy
+  - evidence: [#4736](https://github.com/LMCache/LMCache/pull/4736#discussion_r3862888755)
+- **r1b-vllm-058** (vllm-integration, 1 PRs) When Using device events, streams or other accelerator APIs: Code goes through the `torch_dev` abstraction, never torch.cuda.* directly.
+  - why: Direct CUDA calls break non-CUDA backends.; paths: ['lmcache/**']
+  - e.g. `torch.cuda.Event()` in the connector
+  - evidence: [#3245](https://github.com/LMCache/LMCache/pull/3245#discussion_r3307290320)
+- **r1b-vllm-059** (vllm-integration, 1 PRs) When Implementing tensor permute, contiguity or stride logic for KV layouts: Code reuses the helpers in `lmcache/v1/gpu_connector/kv_format/` (e.g. `attempt_permute_to_contiguous_view`) instead of reimplementing them.
+  - why: One audited implementation of layout handling avoids subtle stride bugs.; paths: ['lmcache/integration/**', 'lmcache/v1/gpu_connector/**']
+  - e.g. Hand-written permute plus stride check in the integration
+  - evidence: [#4253](https://github.com/LMCache/LMCache/pull/4253#discussion_r4098521371)
+

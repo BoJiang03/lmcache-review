@@ -29,7 +29,9 @@ def parse_reviewer(name: str) -> tuple[str, str | None, str]:
 
 
 def load_rules(name: str) -> list[dict]:
-    """Rulebook rules/<name>.jsonl: {"id", "rule", "why", "paths": [glob], "evidence": [...]}."""
+    """Rulebook rules/<name>.jsonl: {"id", "when", "expect", "why", "examples", "paths": [glob],
+    "evidence": [comment ids], "n_prs", "status", "area",
+    "kind": "principle" | "knowledge"}."""
     return [json.loads(l) for l in (RULES / f"{name}.jsonl").open() if l.strip()]
 
 
@@ -40,12 +42,17 @@ def changed_paths(wt: pathlib.Path) -> list[str]:
 
 
 def rules_section(rules: list[dict], paths: list[str]) -> str:
-    """The prompt section with the rules that apply to `paths` (rules without paths always apply)."""
-    use = [r for r in rules if not r.get("paths")
+    """The prompt section with the active rules that apply to `paths` (rules without paths always apply)."""
+    use = [r for r in rules if r.get("status", "active") == "active"]
+    use = [r for r in use if not r.get("paths")
            or any(fnmatch.fnmatch(p, g) for p in paths for g in r["paths"])]
     if not use:
         return ""
-    lines = [f"- [{r['id']}] {r['rule']}" + (f" ({r['why']})" if r.get("why") else "") for r in use]
+    def text(r: dict) -> str:
+        t = f"When {r['when']}: {r['expect']}" if r.get("expect") else r.get("rule", "")
+        t = t.rstrip(".") + "." + (f" Why: {r['why']}" if r.get("why") else "")
+        return t + (f" E.g. {r['examples'][0]}" if r.get("examples") else "")
+    lines = [f"- [{r['id']}] ({r.get('kind', 'principle')}) {text(r)}" for r in use]
     return ("\n\nTeam rules distilled from past LMCache reviews. Check the change against the ones "
             "that apply; when a finding follows from a rule, put its id in the finding's \"rule\" "
             "field.\n" + "\n".join(lines) + "\n")

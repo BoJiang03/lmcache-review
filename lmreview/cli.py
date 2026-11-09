@@ -48,6 +48,7 @@ def main(argv: list[str] | None = None) -> None:
     d.add_argument("--misses-of", help="only comments this reviewer missed (needs its eval on train)")
     d.add_argument("--area", help="only this area (e.g. storage)")
     d.add_argument("--limit", type=int, help="at most this many comments")
+    d.add_argument("--reuse", help="reuse the attribution of this earlier distill run (same inputs); only re-merge")
     d.add_argument("--effort", default="high", choices=EFFORTS)
     d.add_argument("--workers", type=int, default=4)
     d.add_argument("--max-cost", type=float, default=5.0)
@@ -70,7 +71,7 @@ def main(argv: list[str] | None = None) -> None:
         print(evaluate(a.reviewer, a.vs, a.workers, a.judge_effort, a.max_cost))
     else:
         from .distill import distill
-        print(distill(a.out, a.base, a.misses_of, a.area, a.limit, a.effort, a.workers, a.max_cost))
+        print(distill(a.out, a.base, a.misses_of, a.area, a.limit, a.effort, a.workers, a.max_cost, a.reuse))
 
 
 if __name__ == "__main__":

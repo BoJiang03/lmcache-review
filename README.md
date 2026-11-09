@@ -28,3 +28,13 @@ Reviewers: `lmreview review <PR>` (local only, posts nothing). Full guide for re
     DRY=1 scripts/misses_pipeline.sh vllm-integration 30  # one misses-driven round (dry run)
 
 Reviewer names: `<prompt>[+<rules>][@<effort>]`. Design: docs/mechanism.md.
+
+## Install (reviewers)
+
+In Claude Code:
+
+```
+/plugin install lmreview --marketplace <owner>/lmcache-review
+```
+
+Then ask "lmreview <PR number>". See docs/usage.md.

@@ -1,0 +1,11 @@
+{
+  "name": "lmcache-review",
+  "owner": { "name": "LMCache" },
+  "plugins": [
+    {
+      "name": "lmreview",
+      "source": "./",
+      "description": "AI first-round review of LMCache pull requests (read-only on GitHub; never posts)"
+    }
+  ]
+}

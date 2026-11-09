@@ -74,7 +74,11 @@ def score_one(cfg: Config, run: dict, sample: dict, gold: list[dict], out: pathl
               effort: str) -> dict:
     """Grade one sample's run inside the same workspace the reviewer saw; cached on disk."""
     if out.exists():
-        return json.loads(out.read_text())
+        res = json.loads(out.read_text())
+        if res.get("effort", "medium") != effort:
+            raise ValueError(f"{out} was judged at effort {res.get('effort', 'medium')!r}, not {effort!r}; "
+                             "pass that --effort or move the scores aside to re-judge")
+        return res
     human = "\n\n".join(
         (f"[{i}] {c['path']}:{c['line_lo']}-{c['line_hi']} by {c['author']}\n"
          f"hunk:\n{(c['diff_hunk'] or '')[-1200:]}\ncomment: {c['body'][:1500]}")
@@ -107,7 +111,7 @@ def _normalize(s: dict, run: dict) -> dict:
     return s
 
 
-def score(version: str = "v0", workers: int = 4, effort: str = "medium", cfg: Config | None = None) -> str:
+def score(version: str = "v0", workers: int = 4, effort: str = "high", cfg: Config | None = None) -> str:
     """Grade every run of `version`, write reports/score_<version>.md, return its headline."""
     cfg = cfg or Config()
     ss, cm = load_gold(cfg)

@@ -12,7 +12,7 @@ Gold = all human (non-author, non-bot) reviews on C, merged across reviewers.
 | Tools | Read, Grep, Glob, confined to the working directory |
 | Not available | shell, network (WebFetch/WebSearch), subagents, MCP, git history |
 | Auto-loaded context | Claude Code system prompt + tool definitions only. Verified: no CLAUDE.md, memory or skills are auto-loaded under `--restricted` |
-| Effort | explicit, recorded in every output; reviewer `high`, judge `medium` |
+| Effort | explicit, recorded in every output; reviewer `high`, judge `high` |
 
 `--allowedTools` alone is not a sandbox: the user's `defaultMode: auto` approved file reads outside
 cwd, curl, web fetch and subagents (probe, 2026-11-09). Runs made before the hardening are in

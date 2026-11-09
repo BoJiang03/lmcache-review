@@ -32,7 +32,7 @@ def main(argv: list[str] | None = None) -> None:
     s = sub.add_parser("score", help="eval: grade replayed runs against human reviews (costs LLM quota)")
     s.add_argument("--version", default="v0")
     s.add_argument("--workers", type=int, default=4)
-    s.add_argument("--effort", default="medium", choices=EFFORTS, help="judge effort")
+    s.add_argument("--effort", default="high", choices=EFFORTS, help="judge effort")
 
     a = ap.parse_args(argv)
     if a.cmd == "review":

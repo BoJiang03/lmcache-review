@@ -13,7 +13,7 @@ import random
 
 from .budget import capped_map
 from .config import Config
-from .reviewer import DEFAULT_REVIEWER, load_rules, parse_reviewer, run_reviewer
+from .reviewer import DEFAULT_REVIEWER, load_rules, parse_reviewer, reviewer_context, run_reviewer
 from .workspace import cached_pr, sample_workspace
 
 EST_COST = 1.3  # $/sample for a high-effort review, from earlier runs; used only for the estimate
@@ -40,7 +40,7 @@ def run_path(cfg: Config, reviewer: str, s: dict) -> pathlib.Path:
 def replay_one(cfg: Config, s: dict, reviewer: str) -> tuple[str, float]:
     """Run the reviewer on one sample; returns (status, cost)."""
     out = run_path(cfg, reviewer, s)
-    with sample_workspace(cfg, s, "review") as (wt, base):
+    with sample_workspace(cfg, s, "review", reviewer_context(reviewer)) as (wt, base):
         r = run_reviewer(wt, cached_pr(cfg, s["pr"]), reviewer)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"pr": s["pr"], "commit": s["commit"], "base": base, **r}, indent=1))

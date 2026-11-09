@@ -28,6 +28,23 @@ def parse_reviewer(name: str) -> tuple[str, str | None, str]:
     return m[1], m[2], m[3] or "high"
 
 
+def prompt_template(version: str) -> tuple[str, tuple[str, ...]]:
+    """Prompt text of `version` and the extra workspace context it declares.
+
+    A prompt may start with a line `<!-- context: vllm -->`; that line is not sent to the model.
+    """
+    text = (PROMPTS / f"reviewer_{version}.md").read_text()
+    m = re.match(r"<!--\s*context:\s*([\w, ]+?)\s*-->\n", text)
+    if not m:
+        return text, ()
+    return text[m.end():], tuple(x.strip() for x in m[1].split(",") if x.strip())
+
+
+def reviewer_context(reviewer: str) -> tuple[str, ...]:
+    """Extra workspace context the reviewer's prompt needs (the judge gets the same)."""
+    return prompt_template(parse_reviewer(reviewer)[0])[1]
+
+
 def load_rules(name: str) -> list[dict]:
     """Rulebook rules/<name>.jsonl: {"id", "when", "expect", "why", "examples", "paths": [glob],
     "evidence": [comment ids], "n_prs", "status", "area",
@@ -67,7 +84,7 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER) 
          "denials", "effort", "version", "rules", "reviewer"}.
     """
     version, rules, effort = parse_reviewer(reviewer)
-    prompt = (PROMPTS / f"reviewer_{version}.md").read_text().format(**pr_meta(raw))
+    prompt = prompt_template(version)[0].format(**pr_meta(raw))
     if rules:
         sec = rules_section(load_rules(rules), changed_paths(wt))
         prompt = prompt.replace("\nFinish with one JSON block", sec + "\nFinish with one JSON block", 1) \
@@ -92,7 +109,7 @@ def review_pr(pr: int, commit: str | None = None, reviewer: str = DEFAULT_REVIEW
     """
     cfg = cfg or Config()
     raw = github.fetch_pr(pr)
-    with live_workspace(cfg, raw, commit) as (wt, c, base):
+    with live_workspace(cfg, raw, commit, reviewer_context(reviewer)) as (wt, c, base):
         out = run_reviewer(wt, raw, reviewer)
     return {"pr": pr, "title": raw["title"], "commit": c, "base": base, **out}
 

@@ -2,8 +2,8 @@ You are reviewing pull request #{number} of LMCache (a KV-cache layer for LLM in
 
 Your working directory holds the repository as of the PR's head commit. The PR's changes are in
 `PR.diff` there. `PR_HISTORY.md` holds the review discussion so far (earlier review comments and
-replies), if any. Read the diff first, then whatever surrounding code you need to judge it.
-Do not modify any files.
+replies), if any. If the repo has CLAUDE.md or AGENTS.md, read them for project conventions.
+Read the diff first, then whatever surrounding code you need to judge it. Do not modify any files.
 
 PR title: {title}
 

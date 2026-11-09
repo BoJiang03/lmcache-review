@@ -32,6 +32,7 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("--split", default="test", choices=["train", "test", "new"])
     r.add_argument("--limit", type=int, default=10, help="samples (0 = all)")
     r.add_argument("--only-pr", type=int, action="append", help="only samples of these PRs")
+    r.add_argument("--area", help="only samples whose PR touches this area (e.g. vllm-integration)")
     r.add_argument("--workers", type=int, default=4)
     r.add_argument("--max-cost", type=float, default=15.0)
 
@@ -65,7 +66,7 @@ def main(argv: list[str] | None = None) -> None:
             sys.exit(1)
     elif a.cmd == "review":
         from .replay import replay
-        print(f"spent ${replay(a.reviewer, a.split, a.limit or None, a.workers, a.max_cost, a.only_pr):.2f}")
+        print(f"spent ${replay(a.reviewer, a.split, a.limit or None, a.workers, a.max_cost, a.only_pr, a.area):.2f}")
     elif a.cmd == "eval":
         from .evaluate import evaluate
         print(evaluate(a.reviewer, a.vs, a.workers, a.judge_effort, a.max_cost))

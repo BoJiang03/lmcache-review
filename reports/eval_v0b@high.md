@@ -2,24 +2,18 @@
 
 ## Score (vs human reviews on the same commit)
 
-Samples (PR, reviewed commit): 10 · human review comments: 19 (change_request 12, nit 3, praise 3, question 1)
+Samples (PR, reviewed commit): 0 · human review comments: 0 ()
 
-- Recall on change requests: 8/12 (67%)
-- Recall on change requests + nits: 9/15 (60%)
-- AI findings: 92 (9.2/PR); judged valid: 72 (78%), invalid 16, unsure 4
-- AI-only findings: 84; judged valid 64, invalid 16, unsure 4
-- Cost (review + grading): $14.08
+- Recall on change requests: 0/0 (0%)
+- Recall on change requests + nits: 0/0 (0%)
+- Recall on serious human comments (blocker/major): 0/0 (0%)
+- AI findings: 0 (0.0/PR); judged valid: 0 (0%), invalid 0, unsure 0
+- AI-only findings: 0; judged valid 0, invalid 0, unsure 0
 
 ## Human-only on change requests (pre-launch target: lower is better)
 
 | split | area | human change requests | human-only (AI missed) | rate |
 | --- | --- | --- | --- | --- |
-| test | all | 12 | 4 | 33% |
-| test | vllm-integration | 5 | 4 | 80% |
-| test | mp | 3 | 0 | 0% |
-| test | tests | 2 | 0 | 0% |
-| test | distributed | 1 | 0 | 0% |
-| test | (overall review) | 1 | 0 | 0% |
 
 ## Passive signals
 
@@ -28,10 +22,10 @@ Samples: 10 · findings: 92. Signals only support a finding; absence means nothi
 | findings | n | changed later in PR | on merged PRs | changed after merge | later human comment at same place |
 | --- | --- | --- | --- | --- | --- |
 | all | 92 | 28 | 65 | 6 (3 fix-like) | 5 |
-| AI-only | 84 | 23 | 61 | 6 (3 fix-like) | 5 |
-| AI-only blocker | 2 | 1 | 0 | 0 (0 fix-like) | 1 |
-| AI-only major | 17 | 6 | 9 | 3 (1 fix-like) | 1 |
-| AI-only minor | 40 | 12 | 31 | 3 (2 fix-like) | 2 |
-| AI-only nit | 25 | 4 | 21 | 0 (0 fix-like) | 1 |
+| AI-only | 0 | 0 | 0 | 0 (0 fix-like) | 0 |
+| AI-only blocker | 0 | 0 | 0 | 0 (0 fix-like) | 0 |
+| AI-only major | 0 | 0 | 0 | 0 (0 fix-like) | 0 |
+| AI-only minor | 0 | 0 | 0 | 0 (0 fix-like) | 0 |
+| AI-only nit | 0 | 0 | 0 | 0 (0 fix-like) | 0 |
 
 Details: score_v0b@high.md, signals_v0b@high.md

@@ -2,7 +2,8 @@
 
 For each sample (PR, reviewed commit) in data/runs/<version>/:
   1. Classify each human review comment on that commit (all reviewers merged): change_request | question | nit | praise.
-  2. For each change_request/nit, decide which AI finding (if any) raises the same issue.
+  2. For each change_request/nit, rate its severity and decide which AI finding (if any) raises the
+     same issue and asks for a change in the same direction.
   3. Judge whether each AI finding is valid, reading the code.
 One judge call per sample, in the SAME workspace the reviewer saw. Results go to
 <data>/scores/<version>/<pr>-<commit8>.json and a summary to reports/score_<version>.md.
@@ -21,6 +22,7 @@ from .reviewer import prompt_template
 from .schema import load_findings
 from .workspace import TOOLS, cached_pr, pr_meta, sample_workspace
 
+JUDGE = "j2"  # judge prompt version; results of another version are never mixed in (see score_one)
 REPORTS = pathlib.Path(__file__).resolve().parent.parent / "reports"
 
 PROMPT = """You are grading an AI code reviewer against human reviewers on LMCache PR #{number}.
@@ -47,10 +49,19 @@ Tasks:
    - question: asks for an explanation; no change implied
    - nit: tiny style/naming/typo suggestion
    - praise: approval or thanks
-2. For each HUMAN comment of type change_request or nit, set "matched_ai" to the list of ids of the
-   AI findings that raise the SAME underlying issue (same problem, not just the same file/line);
-   [] if none. Be strict: a vaguely related finding is not a match. Give the reason in "match_why". For an overall review with several
-   points, classify by its main actionable point and match on that.
+2. For each HUMAN comment of type change_request or nit:
+   - set "severity" as you would for a review finding: blocker (must not merge: breaks
+     correctness, data, compatibility), major (real bug, design or maintainability problem worth
+     blocking on), minor (worth fixing, limited impact), nit (cosmetic or preference);
+   - set "matched_ai" to the ids of the AI findings that raise the SAME underlying issue AND ask
+     for a change in the same direction; [] if none. Be strict:
+     * same file/line or same topic is not enough: the problem must be the same;
+     * a finding whose fix goes the other way, or differs in substance, is not a match (e.g. the
+       human asks to explain a docstring with a worked example while the AI asks to shorten it;
+       the human asks to reuse an existing helper while the AI asks to add a new one);
+     * a finding that names the problem but proposes a different but compatible fix IS a match.
+   Give the reason in "match_why". For an overall review with several points, classify by its
+   main actionable point and match on that.
 3. For each AI finding, check it against the code and set "valid": true if it is a real, specific
    problem a maintainer would want fixed, false if it is wrong, speculative, or noise. Use "unsure"
    only if the code genuinely cannot settle it (e.g. it depends on runtime behavior or code outside
@@ -58,7 +69,7 @@ Tasks:
 
 Answer with one JSON block only:
 ```json
-{{"human": [{{"id": 0, "type": "...", "matched_ai": ["f2"], "match_why": "<=15 words"}}],
+{{"human": [{{"id": 0, "type": "...", "severity": "major", "matched_ai": ["f2"], "match_why": "<=15 words"}}],
   "ai": [{{"id": "f1", "valid": true, "why": "<=12 words"}}]}}
 ```"""
 
@@ -79,6 +90,9 @@ def score_one(cfg: Config, run: dict, sample: dict, gold: list[dict], out: pathl
         if res.get("effort", "medium") != effort:
             raise ValueError(f"{out} was judged at effort {res.get('effort', 'medium')!r}, not {effort!r}; "
                              "pass that --effort or move the scores aside to re-judge")
+        if res.get("judge", "j1") != JUDGE:
+            raise ValueError(f"{out} was judged by judge {res.get('judge', 'j1')}, not {JUDGE}; "
+                             f"move it to <data>/scores/_{res.get('judge', 'j1')}/ to re-judge")
         return res
     human = "\n\n".join(
         (f"[{i}] {c['path']}:{c['line_lo']}-{c['line_hi']} by {c['author']}\n"
@@ -93,7 +107,7 @@ def score_one(cfg: Config, run: dict, sample: dict, gold: list[dict], out: pathl
         r = llm.run(PROMPT.format(human=human, ai=ai, **pr_meta(cached_pr(cfg, run["pr"]))), effort,
                     cwd=str(wt), tools=TOOLS)
     res = llm.extract_json(r["text"])
-    res.update(pr=run["pr"], commit=run["commit"], cost=r["cost"], effort=effort,
+    res.update(pr=run["pr"], commit=run["commit"], cost=r["cost"], effort=effort, judge=JUDGE,
                denials=r["denials"], gold_ids=[c["id"] for c in gold])
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(res, indent=1))
@@ -153,6 +167,7 @@ def score(version: str = "v0", workers: int = 4, effort: str = "high", max_cost:
     types = C.Counter(h["type"] for s in res for h in s["human"])
     want = [h for s in res for h in s["human"] if h["type"] in ("change_request", "nit")]
     cr = [h for s in res for h in s["human"] if h["type"] == "change_request"]
+    serious = [h for h in want if h.get("severity") in ("blocker", "major")]
     ai = [f for s in res for f in s["ai"]]
     matched = {(s["pr"], s["commit"], m) for s in res for h in s["human"] for m in h["matched_ai"]}
     ai_only = [(s["pr"], f) for s in res for f in s["ai"] if (s["pr"], s["commit"], f["id"]) not in matched]
@@ -165,6 +180,8 @@ def score(version: str = "v0", workers: int = 4, effort: str = "high", max_cost:
          f"({', '.join(f'{k} {c}' for k, c in types.most_common())})", "",
          f"- Recall on change requests: {n(cr)}/{len(cr)} ({n(cr) / max(len(cr), 1):.0%})",
          f"- Recall on change requests + nits: {n(want)}/{len(want)} ({n(want) / max(len(want), 1):.0%})",
+         f"- Recall on serious human comments (blocker/major): {n(serious)}/{len(serious)} "
+         f"({n(serious) / max(len(serious), 1):.0%})",
          f"- AI findings: {len(ai)} ({len(ai) / max(len(res), 1):.1f}/PR); judged valid: "
          f"{v['True']} ({v['True'] / max(len(ai), 1):.0%}), invalid {v['False']}, unsure {v['unsure']}",
          f"- AI-only findings: {len(ai_only)}; judged valid {vo['True']}, invalid {vo['False']}, unsure {vo['unsure']}",

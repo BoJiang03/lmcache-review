@@ -40,7 +40,9 @@ inference engines such as vLLM) from past human review comments.
 For each comment below (with its code hunk, what happened afterwards and the thread replies), decide:
 - "learnable": it follows from a standard, a recurring concern, or knowledge of this codebase or the
   engine that a reviewer could apply to FUTURE pull requests. Write the reason as a candidate rule:
-  the principle or fact behind the comment, not a restatement of this one fix.
+  the principle or fact behind the comment, not a restatement of this one fix. Keep what the
+  reviewer asked the author to DO (e.g. "explain multi-step state changes in a docstring with a
+  worked example of values before/after", not just "docstrings should be clear").
 - "context": it needs knowledge outside the code (an offline decision, roadmap, another PR's state).
 - "not_issue": a question, praise, or nothing actionable.
 - "rejected": the thread shows the suggestion was declined, withdrawn or judged wrong.
@@ -55,11 +57,13 @@ Answer with one JSON block only:
 ```"""
 
 CLUSTER = """Below are candidate review rules distilled from LMCache human review comments, one per line
-with a key. Group them by UNDERLYING CONCERN: the same principle or the same piece of knowledge,
-even if they come from different files, areas or wordings (e.g. "release-path rank gating must
-match the acquire path" and "free buffers on every exit path the same way they were allocated" share
-"acquire/release symmetry"). Different concerns stay apart; singletons are fine. Every key goes into
-exactly one group.
+with a key. Group them by UNDERLYING CONCERN: the same principle or the same piece of knowledge, asking
+the author for the same kind of change, even if they come from different files, areas or wordings
+(e.g. "release-path rank gating must match the acquire path" and "free buffers on every exit path
+the same way they were allocated" share "acquire/release symmetry"). A shared TOPIC is not enough:
+candidates that ask for different or opposite changes stay apart (e.g. "shorten docstrings to the
+contract" and "explain tricky state changes in docstrings with a worked example" are two groups,
+though both are about docstrings). Singletons are fine. Every key goes into exactly one group.
 
 Candidates:
 {items}
@@ -73,7 +77,8 @@ ABSTRACT = """Each group below holds candidate review rules from LMCache human r
 one concern (with the PR numbers they came from). For each group write ONE rulebook entry for the
 reviewer, or skip the group if it carries no reusable principle or knowledge:
 - "principle": the review principle at the level a reviewer would apply it to other changes (the
-  group's candidates are instances); specific enough to check against a diff.
+  group's candidates are instances); specific enough to check against a diff. "expect" states the
+  change a reviewer should ask for, as the candidates did; do not generalize it into a vaguer goal.
 - "knowledge": a fact or invariant about this codebase or the engine, and what a reviewer must
   therefore check when touching that code; scope it with "paths".
 Fields: "group" (its number), "kind", "when" (the kind of change it applies to), "expect" (what to
@@ -143,7 +148,12 @@ def inputs(cfg: Config, misses_of: str | None, area: str | None, split: str = "t
     cs = [cm[i] for i in dict.fromkeys(ids)]
     if not keep_unaddressed:
         cs = [c for c in cs if c.get("addressed_reason") != "file-unchanged"]
-    return [c for c in cs if not area or (c.get("area") or "overall") == area]
+    if not area:
+        return cs
+    # by PR (as `review --area` picks samples), not by the comment's own area: a team standard voiced
+    # on a file of another area is still evidence (e.g. a docstring preference on an mp file)
+    prs = {p["pr"]: p for p in map(json.loads, (cfg.data / "dataset" / "prs.jsonl").open())}
+    return [c for c in cs if area in prs[c["pr"]]["areas"]]
 
 
 OUTCOME = {"lines-changed": "the commented lines were changed afterwards",

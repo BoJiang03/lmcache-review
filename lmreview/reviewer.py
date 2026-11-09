@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import os
+import shutil
 import pathlib
 import re
 
@@ -13,7 +15,7 @@ from .schema import SCHEMA_VERSION, SEVERITIES, SchemaError, load_findings, pars
 from .workspace import TOOLS, live_workspace, pr_meta
 
 
-DEFAULT_REVIEWER = "v0b@high"
+DEFAULT_REVIEWER = os.environ.get("LMREVIEW_REVIEWER", "v0b@high")  # the validated reviewer people should use
 
 
 def parse_reviewer(name: str) -> tuple[str, str | None, str]:
@@ -108,6 +110,9 @@ def review_pr(pr: int, commit: str | None = None, reviewer: str = DEFAULT_REVIEW
         run_reviewer's dict plus "pr", "title", "commit", "base".
     """
     cfg = cfg or Config()
+    missing = [t for t in ("claude", "gh", "git") if not shutil.which(t)]
+    if missing:
+        raise RuntimeError(f"lmreview needs {', '.join(missing)} on PATH (claude: logged in; gh: `gh auth login`)")
     raw = github.fetch_pr(pr)
     with live_workspace(cfg, raw, commit, reviewer_context(reviewer)) as (wt, c, base):
         out = run_reviewer(wt, raw, reviewer)

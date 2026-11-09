@@ -15,6 +15,9 @@ Proposal: https://claude.ai/artifact/TtFYk2eZWjUi13YxCnf9tt
 
 `data/` is not tracked (raw data + a full LMCache clone with PR refs).
 
+## Usage
+Reviewers: `lmreview review <PR>` (local only, posts nothing). Full guide for reviewers and operators: docs/usage.md.
+
 ## Tool (pre-launch)
     bin/lmreview sync                                   # update dataset from GitHub (free)
     bin/lmreview review 5876                            # review one PR now (local output only)

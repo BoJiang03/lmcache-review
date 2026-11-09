@@ -39,10 +39,12 @@ def main() -> None:
     ap.add_argument("--run", action="store_true")
     ap.add_argument("--effort", default="high")
     ap.add_argument("--max-cost", type=float, default=1.0)
+    ap.add_argument("--train-only", action="store_true", help="drop the test comments (fair rule for testing on them)")
+    ap.add_argument("--json", help="write the abstracted rules here")
     a = ap.parse_args()
     cfg = Config()
     _, cm = load_gold(cfg)
-    cs = [cm[i] for i in PROBE]
+    cs = [cm[i] for i in PROBE if not (a.train_only and "(test)" in PROBE[i])]
     for c in cs:
         print(f"[{c['id']}] {PROBE[c['id']]}")
     est = EST["attribute"] + EST["cluster"] + EST["abstract"]
@@ -72,6 +74,15 @@ def main() -> None:
         print(f"\n== abstract (${cost:.2f})")
         for r in rules if isinstance(rules, list) else []:
             print(json.dumps(r, ensure_ascii=False, indent=1))
+        if a.json and isinstance(rules, list):
+            out = []
+            for r in rules:
+                g = groups[r["group"]] if isinstance(r.get("group"), int) and r["group"] < len(groups) else None
+                ev = [int(k[1:]) for k in g["members"]] if g else []
+                out.append({k: r.get(k) for k in ("kind", "when", "expect", "why", "examples", "paths")}
+                           | {"concern": g["concern"] if g else "", "evidence": ev, "status": "active"})
+            pathlib.Path(a.json).write_text("".join(json.dumps(x) + "\n" for x in out))
+            print(f"wrote {len(out)} rules to {a.json}")
     print(f"\ntotal ${spend[0]:.2f}")
 
 

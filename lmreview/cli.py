@@ -41,7 +41,7 @@ def main(argv: list[str] | None = None) -> None:
     e.add_argument("--reviewer", default=DEFAULT_REVIEWER)
     e.add_argument("--rules", help="coverage mode: which entries of rules/<name> explain human comments")
     e.add_argument("--split", default="test", choices=["train", "test", "new"], help="coverage mode")
-    e.add_argument("--area", help="coverage mode: only this area")
+    e.add_argument("--area", help="coverage mode: only comments on PRs that touch this area")
     e.add_argument("--misses-of", help="coverage mode: only comments this reviewer missed")
     e.add_argument("--vs", help="compare against this reviewer")
     e.add_argument("--judge-effort", default="high", choices=EFFORTS)
@@ -52,7 +52,7 @@ def main(argv: list[str] | None = None) -> None:
     d.add_argument("out", help="new rulebook name, e.g. r1")
     d.add_argument("--base", help="rulebook to extend")
     d.add_argument("--misses-of", help="only comments this reviewer missed (needs its eval on train)")
-    d.add_argument("--area", help="only this area (e.g. storage)")
+    d.add_argument("--area", help="only comments on PRs that touch this area; usually omit it, so team-wide standards voiced in other areas count too")
     d.add_argument("--limit", type=int, help="at most this many comments")
     d.add_argument("--reuse", help="reuse the attribution of this earlier distill run (same inputs); only re-merge")
     d.add_argument("--keep-unaddressed", action="store_true",

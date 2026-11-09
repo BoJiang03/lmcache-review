@@ -1,4 +1,4 @@
-"""Command line: `lmreview review|replay|score`."""
+"""Command line: `lmreview review|replay|score|signals|compare`."""
 
 from __future__ import annotations
 
@@ -34,6 +34,13 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--workers", type=int, default=4)
     s.add_argument("--effort", default="high", choices=EFFORTS, help="judge effort")
 
+    g = sub.add_parser("signals", help="eval: passive signals for each AI finding from git history (free)")
+    g.add_argument("--version", default="v0")
+
+    c = sub.add_parser("compare", help="eval: per-comment flips between two reviewer versions (free)")
+    c.add_argument("a")
+    c.add_argument("b")
+
     a = ap.parse_args(argv)
     if a.cmd == "review":
         from .reviewer import review_pr, to_markdown
@@ -44,6 +51,12 @@ def main(argv: list[str] | None = None) -> None:
     elif a.cmd == "replay":
         from .replay import replay
         replay(a.version, a.split, a.limit, a.workers, a.effort, a.pr)
+    elif a.cmd == "signals":
+        from .signals import signals
+        print(signals(a.version))
+    elif a.cmd == "compare":
+        from .compare import compare
+        print(compare(a.a, a.b))
     else:
         from .score import score
         print(score(a.version, a.workers, a.effort))

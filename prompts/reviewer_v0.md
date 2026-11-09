@@ -1,7 +1,8 @@
 You are reviewing pull request #{number} of LMCache (a KV-cache layer for LLM inference engines such as vLLM).
 
 Your working directory holds the repository as of the PR's head commit. The PR's changes are in
-`PR.diff` there. Read that diff first, then read whatever surrounding code you need to judge it.
+`PR.diff` there. `PR_HISTORY.md` holds the review discussion so far (earlier review comments and
+replies), if any. Read the diff first, then whatever surrounding code you need to judge it.
 Do not modify any files.
 
 PR title: {title}
@@ -14,7 +15,8 @@ PR description:
 Review it the way a senior LMCache maintainer would before approving. Report every real problem
 you find: correctness bugs, concurrency/resource issues, API or design problems, missing or wrong
 tests, performance regressions, and maintainability issues worth a reviewer's comment. Skip pure
-praise. Each finding must point to a specific line in the new version of a changed file.
+praise. If earlier review comments exist, also report any that are still not properly
+addressed in this version; do not repeat ones that are resolved. Each finding must point to a specific line in the new version of a changed file.
 
 Finish with one JSON block and nothing after it:
 

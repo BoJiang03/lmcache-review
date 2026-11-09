@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Run the lmreview CLI from this checkout without installing it.
+here="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+exec env PYTHONPATH="$here${PYTHONPATH:+:$PYTHONPATH}" python3 -m lmreview "$@"

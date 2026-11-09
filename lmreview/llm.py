@@ -33,7 +33,12 @@ def run(prompt: str, effort: str, cwd: str | None = None, tools: str = "", timeo
            "--tools", tools, "--strict-mcp-config", "--permission-mode", "dontAsk",
            "--effort", effort]
     p = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout)
-    d = json.loads(p.stdout)
+    try:
+        d = json.loads(p.stdout)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"claude -p failed (exit {p.returncode}): {(p.stderr or p.stdout)[:500]}") from e
+    if d.get("is_error"):
+        raise RuntimeError(f"claude -p error: {str(d.get('result'))[:500]}")
     return {"text": d.get("result") or "", "cost": d.get("total_cost_usd") or 0.0,
             "turns": d.get("num_turns"), "effort": effort,
             "denials": [{"tool": x.get("tool_name"), "input": str(x.get("tool_input"))[:200]}

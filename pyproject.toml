@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lmreview"
+version = "0.1.0"
+description = "AI first-round PR review for LMCache (library + CLI)"
+requires-python = ">=3.10"
+dependencies = []  # needs the `claude` and `gh` CLIs on PATH, and git
+
+[project.scripts]
+lmreview = "lmreview.cli:main"
+
+[tool.setuptools]
+packages = ["lmreview"]
+
+[tool.setuptools.package-data]
+lmreview = ["prompts/*.md"]

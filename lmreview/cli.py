@@ -36,8 +36,13 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("--workers", type=int, default=4)
     r.add_argument("--max-cost", type=float, default=15.0)
 
-    e = sub.add_parser("eval", help="judge + human-only by area + signals (+ flips with --vs) (paid: judge)")
+    e = sub.add_parser("eval", help="judge + human-only by area + signals (+ flips with --vs) (paid: judge); "
+                                   "with --rules: rulebook coverage of held-out human comments (paid, cheap)")
     e.add_argument("--reviewer", default=DEFAULT_REVIEWER)
+    e.add_argument("--rules", help="coverage mode: which entries of rules/<name> explain human comments")
+    e.add_argument("--split", default="test", choices=["train", "test", "new"], help="coverage mode")
+    e.add_argument("--area", help="coverage mode: only this area")
+    e.add_argument("--misses-of", help="coverage mode: only comments this reviewer missed")
     e.add_argument("--vs", help="compare against this reviewer")
     e.add_argument("--judge-effort", default="high", choices=EFFORTS)
     e.add_argument("--workers", type=int, default=4)
@@ -50,9 +55,11 @@ def main(argv: list[str] | None = None) -> None:
     d.add_argument("--area", help="only this area (e.g. storage)")
     d.add_argument("--limit", type=int, help="at most this many comments")
     d.add_argument("--reuse", help="reuse the attribution of this earlier distill run (same inputs); only re-merge")
+    d.add_argument("--keep-unaddressed", action="store_true",
+                   help="keep comments whose file never changed again (likely not taken)")
     d.add_argument("--effort", default="high", choices=EFFORTS)
     d.add_argument("--workers", type=int, default=4)
-    d.add_argument("--max-cost", type=float, default=5.0)
+    d.add_argument("--max-cost", type=float, default=5.0, help="0 = print the plan and estimate only")
 
     a = ap.parse_args(argv)
     if a.cmd == "sync":
@@ -67,12 +74,16 @@ def main(argv: list[str] | None = None) -> None:
     elif a.cmd == "review":
         from .replay import replay
         print(f"spent ${replay(a.reviewer, a.split, a.limit or None, a.workers, a.max_cost, a.only_pr, a.area):.2f}")
+    elif a.cmd == "eval" and a.rules:
+        from .distill import coverage
+        print(coverage(a.rules, a.split, a.area, a.misses_of, workers=a.workers, max_cost=a.max_cost))
     elif a.cmd == "eval":
         from .evaluate import evaluate
         print(evaluate(a.reviewer, a.vs, a.workers, a.judge_effort, a.max_cost))
     else:
         from .distill import distill
-        print(distill(a.out, a.base, a.misses_of, a.area, a.limit, a.effort, a.workers, a.max_cost, a.reuse))
+        print(distill(a.out, a.base, a.misses_of, a.area, a.limit, a.effort, a.workers, a.max_cost, a.reuse,
+                      a.keep_unaddressed))
 
 
 if __name__ == "__main__":

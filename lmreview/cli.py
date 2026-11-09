@@ -1,4 +1,8 @@
-"""Command line: `lmreview review|replay|score|signals|compare`."""
+"""Command line: `lmreview sync|review|eval|distill`.
+
+A reviewer is named <prompt>[+<rules>][@<effort>], e.g. v0b+r1@high (rules = rules/r1.jsonl).
+Paid commands stop starting new LLM calls once --max-cost is reached. Nothing is posted to GitHub.
+"""
 
 from __future__ import annotations
 
@@ -6,60 +10,67 @@ import argparse
 import json
 import sys
 
+from .reviewer import DEFAULT_REVIEWER
+
 EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 
 
 def main(argv: list[str] | None = None) -> None:
     """Parse arguments and dispatch to the library."""
-    ap = argparse.ArgumentParser(prog="lmreview", description=__doc__)
+    ap = argparse.ArgumentParser(prog="lmreview", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    r = sub.add_parser("review", help="review a PR now (local output only, posts nothing)")
-    r.add_argument("pr", type=int)
-    r.add_argument("--commit", help="review this commit instead of the PR head")
-    r.add_argument("--version", default="v0", help="reviewer prompt version")
-    r.add_argument("--effort", default="high", choices=EFFORTS)
+    sub.add_parser("sync", help="update the dataset from GitHub (free)").add_argument(
+        "--since", help="ISO date/time; default: last sync")
+
+    r = sub.add_parser("review", help="review one PR now, or run a reviewer over a split (paid)")
+    r.add_argument("pr", type=int, nargs="?", help="review this PR as it is now (local output only)")
+    r.add_argument("--commit", help="with a PR: review this commit instead of the head")
     r.add_argument("--format", default="md", choices=["md", "json"])
+    r.add_argument("--reviewer", default=DEFAULT_REVIEWER)
+    r.add_argument("--split", default="test", choices=["train", "test", "new"])
+    r.add_argument("--limit", type=int, default=10, help="samples (0 = all)")
+    r.add_argument("--only-pr", type=int, action="append", help="only samples of these PRs")
+    r.add_argument("--workers", type=int, default=4)
+    r.add_argument("--max-cost", type=float, default=15.0)
 
-    p = sub.add_parser("replay", help="eval: replay the reviewer on historical samples (costs LLM quota)")
-    p.add_argument("--version", default="v0")
-    p.add_argument("--split", default="test", choices=["train", "test", "holdout"])
-    p.add_argument("--limit", type=int, default=10)
-    p.add_argument("--workers", type=int, default=4)
-    p.add_argument("--effort", default="high", choices=EFFORTS)
-    p.add_argument("--pr", type=int, action="append", help="only these PRs (within --limit)")
+    e = sub.add_parser("eval", help="judge + human-only by area + signals (+ flips with --vs) (paid: judge)")
+    e.add_argument("--reviewer", default=DEFAULT_REVIEWER)
+    e.add_argument("--vs", help="compare against this reviewer")
+    e.add_argument("--judge-effort", default="high", choices=EFFORTS)
+    e.add_argument("--workers", type=int, default=4)
+    e.add_argument("--max-cost", type=float, default=10.0)
 
-    s = sub.add_parser("score", help="eval: grade replayed runs against human reviews (costs LLM quota)")
-    s.add_argument("--version", default="v0")
-    s.add_argument("--workers", type=int, default=4)
-    s.add_argument("--effort", default="high", choices=EFFORTS, help="judge effort")
-
-    g = sub.add_parser("signals", help="eval: passive signals for each AI finding from git history (free)")
-    g.add_argument("--version", default="v0")
-
-    c = sub.add_parser("compare", help="eval: per-comment flips between two reviewer versions (free)")
-    c.add_argument("a")
-    c.add_argument("b")
+    d = sub.add_parser("distill", help="distill train human comments into a new rulebook (paid)")
+    d.add_argument("out", help="new rulebook name, e.g. r1")
+    d.add_argument("--base", help="rulebook to extend")
+    d.add_argument("--misses-of", help="only comments this reviewer missed (needs its eval on train)")
+    d.add_argument("--area", help="only this area (e.g. storage)")
+    d.add_argument("--limit", type=int, help="at most this many comments")
+    d.add_argument("--effort", default="high", choices=EFFORTS)
+    d.add_argument("--workers", type=int, default=4)
+    d.add_argument("--max-cost", type=float, default=5.0)
 
     a = ap.parse_args(argv)
-    if a.cmd == "review":
+    if a.cmd == "sync":
+        from .sync import sync
+        print(sync(a.since))
+    elif a.cmd == "review" and a.pr:
         from .reviewer import review_pr, to_markdown
-        out = review_pr(a.pr, a.commit, a.version, a.effort)
+        out = review_pr(a.pr, a.commit, a.reviewer)
         print(json.dumps(out, indent=1) if a.format == "json" else to_markdown(out))
         if out["findings"] is None:
             sys.exit(1)
-    elif a.cmd == "replay":
+    elif a.cmd == "review":
         from .replay import replay
-        replay(a.version, a.split, a.limit, a.workers, a.effort, a.pr)
-    elif a.cmd == "signals":
-        from .signals import signals
-        print(signals(a.version))
-    elif a.cmd == "compare":
-        from .compare import compare
-        print(compare(a.a, a.b))
+        print(f"spent ${replay(a.reviewer, a.split, a.limit or None, a.workers, a.max_cost, a.only_pr):.2f}")
+    elif a.cmd == "eval":
+        from .evaluate import evaluate
+        print(evaluate(a.reviewer, a.vs, a.workers, a.judge_effort, a.max_cost))
     else:
-        from .score import score
-        print(score(a.version, a.workers, a.effort))
+        from .distill import distill
+        print(distill(a.out, a.base, a.misses_of, a.area, a.limit, a.effort, a.workers, a.max_cost))
 
 
 if __name__ == "__main__":

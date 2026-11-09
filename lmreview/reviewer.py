@@ -2,23 +2,69 @@
 
 from __future__ import annotations
 
+import fnmatch
+import json
 import pathlib
+import re
 
 from . import github, llm
-from .config import PROMPTS, Config
+from .config import PROMPTS, RULES, Config
 from .schema import SCHEMA_VERSION, SEVERITIES, SchemaError, load_findings, parse_findings, to_dicts
 from .workspace import TOOLS, live_workspace, pr_meta
 
 
-def run_reviewer(wt: pathlib.Path, raw: dict, version: str = "v0", effort: str = "high") -> dict:
-    """Run reviewer `version` in workspace `wt` for PR `raw`.
+DEFAULT_REVIEWER = "v0b@high"
+
+
+def parse_reviewer(name: str) -> tuple[str, str | None, str]:
+    """A reviewer is named `<prompt>[+<rules>][@<effort>]`, e.g. `v0b+r1@high`.
+
+    Returns:
+        (prompt version, rulebook name or None, effort; default "high").
+    """
+    m = re.fullmatch(r"([\w.-]+?)(?:\+([\w.-]+))?(?:@(\w+))?", name)
+    if not m:
+        raise ValueError(f"bad reviewer name {name!r}; expected <prompt>[+<rules>][@<effort>]")
+    return m[1], m[2], m[3] or "high"
+
+
+def load_rules(name: str) -> list[dict]:
+    """Rulebook rules/<name>.jsonl: {"id", "rule", "why", "paths": [glob], "evidence": [...]}."""
+    return [json.loads(l) for l in (RULES / f"{name}.jsonl").open() if l.strip()]
+
+
+def changed_paths(wt: pathlib.Path) -> list[str]:
+    """Paths touched by PR.diff in workspace `wt`."""
+    d = (wt / "PR.diff").read_text(errors="replace") if (wt / "PR.diff").exists() else ""
+    return sorted(set(re.findall(r"^diff --git a/\S+ b/(\S+)", d, re.M)))
+
+
+def rules_section(rules: list[dict], paths: list[str]) -> str:
+    """The prompt section with the rules that apply to `paths` (rules without paths always apply)."""
+    use = [r for r in rules if not r.get("paths")
+           or any(fnmatch.fnmatch(p, g) for p in paths for g in r["paths"])]
+    if not use:
+        return ""
+    lines = [f"- [{r['id']}] {r['rule']}" + (f" ({r['why']})" if r.get("why") else "") for r in use]
+    return ("\n\nTeam rules distilled from past LMCache reviews. Check the change against the ones "
+            "that apply; when a finding follows from a rule, put its id in the finding's \"rule\" "
+            "field.\n" + "\n".join(lines) + "\n")
+
+
+def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER) -> dict:
+    """Run `reviewer` (see parse_reviewer) in workspace `wt` for PR `raw`.
 
     Returns:
         {"schema_version", "findings": list of schema.Finding dicts | None (None = output not
          parsable or not schema-valid, see "error"), "error", "raw": text, "cost", "turns",
-         "denials", "effort", "version"}.
+         "denials", "effort", "version", "rules", "reviewer"}.
     """
+    version, rules, effort = parse_reviewer(reviewer)
     prompt = (PROMPTS / f"reviewer_{version}.md").read_text().format(**pr_meta(raw))
+    if rules:
+        sec = rules_section(load_rules(rules), changed_paths(wt))
+        prompt = prompt.replace("\nFinish with one JSON block", sec + "\nFinish with one JSON block", 1) \
+            if "\nFinish with one JSON block" in prompt else prompt + sec
     r = llm.run(prompt, effort, cwd=str(wt), tools=TOOLS)
     findings, error = None, None
     try:
@@ -27,10 +73,10 @@ def run_reviewer(wt: pathlib.Path, raw: dict, version: str = "v0", effort: str =
         error = str(e)
     return {"schema_version": SCHEMA_VERSION, "findings": findings, "error": error, "raw": r["text"],
             "cost": r["cost"], "turns": r["turns"], "denials": r["denials"], "effort": effort,
-            "version": version}
+            "version": version, "rules": rules, "reviewer": reviewer}
 
 
-def review_pr(pr: int, commit: str | None = None, version: str = "v0", effort: str = "high",
+def review_pr(pr: int, commit: str | None = None, reviewer: str = DEFAULT_REVIEWER,
               cfg: Config | None = None) -> dict:
     """Review PR `pr` as it is now (or at `commit`). Read-only: nothing is posted to GitHub.
 
@@ -40,15 +86,15 @@ def review_pr(pr: int, commit: str | None = None, version: str = "v0", effort: s
     cfg = cfg or Config()
     raw = github.fetch_pr(pr)
     with live_workspace(cfg, raw, commit) as (wt, c, base):
-        out = run_reviewer(wt, raw, version, effort)
+        out = run_reviewer(wt, raw, reviewer)
     return {"pr": pr, "title": raw["title"], "commit": c, "base": base, **out}
 
 
 def to_markdown(r: dict) -> str:
     """Render a review: blocker/major in full, minor/nit folded; each item shows scope and places."""
     head = [f"# AI review of #{r['pr']}: {r.get('title', '')}", "",
-            f"commit `{r['commit'][:10]}` vs base `{r['base'][:10]}` · reviewer {r.get('version')} "
-            f"({r.get('effort')}) · ${r['cost']:.2f}", ""]
+            f"commit `{r['commit'][:10]}` vs base `{r['base'][:10]}` · reviewer "
+            f"{r.get('reviewer') or str(r.get('version')) + '@' + str(r.get('effort'))} · ${r['cost']:.2f}", ""]
     fs = load_findings(r)
     if fs is None:
         return "\n".join(head + [f"Could not parse the reviewer output ({r.get('error')}):", "", r["raw"]])

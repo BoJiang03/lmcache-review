@@ -34,7 +34,7 @@ Reviewer names: `<prompt>[+<rules>][@<effort>]`. Design: docs/mechanism.md.
 In Claude Code:
 
 ```
-/plugin install lmreview --marketplace <owner>/lmcache-review
+/plugin install lmreview --marketplace BoJiang03/lmcache-review
 ```
 
 Then ask "lmreview <PR number>". See docs/usage.md.

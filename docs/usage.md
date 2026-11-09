@@ -16,12 +16,12 @@ Two kinds of users:
 4. Install lmreview as a Claude Code plugin. In Claude Code, type:
 
 ```
-/plugin install lmreview --marketplace <owner>/lmcache-review
+/plugin install lmreview --marketplace BoJiang03/lmcache-review
 ```
 
 Answer `y` to add the marketplace, then pick a scope (user is the default). Or just tell Claude Code
-"安装这个 plugin: https://github.com/<owner>/lmcache-review" and it runs the same two steps
-(`claude plugin marketplace add <owner>/lmcache-review` and `claude plugin install lmreview@lmcache-review`).
+"安装这个 plugin: https://github.com/BoJiang03/lmcache-review" and it runs the same two steps
+(`claude plugin marketplace add BoJiang03/lmcache-review` and `claude plugin install lmreview@lmcache-review`).
 The plugin bundles the Python package (standard library only), so there is no pip step.
 Update later with `claude plugin update lmreview@lmcache-review`.
 

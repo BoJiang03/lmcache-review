@@ -95,6 +95,17 @@ To promote it:
 - set `DEFAULT_REVIEWER` in `lmreview/reviewer.py`, or `LMREVIEW_REVIEWER` on the deploy machine;
 - commit the rulebook (`lmreview/rules/`).
 
+The default rulebook is versioned: `team-v1`, `team-v2`, and so on. To update it, build the next
+version from the current one (`lmreview distill team-v2 --base team-v1 ...`) and point the default at
+it. Old versions stay, so their runs can be reproduced.
+
+`review` and `eval` skip samples whose human comments are evidence for an entry of the reviewer's
+rulebook, because that rule was written from the answer. Rules distilled from test comments therefore
+remove those samples from that reviewer's test set.
+
+The current default is `v0b+team-v1@high`. `team-v1` holds five rules, each distilled from one
+review comment. They were added for out-of-the-box use before passing the promotion gate above.
+
 Reviewers pick up the new version when they upgrade.
 
 ### Environment variables

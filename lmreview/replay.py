@@ -13,7 +13,7 @@ import pathlib
 
 from .budget import capped_map
 from .config import Config
-from .reviewer import DEFAULT_REVIEWER, load_rules, parse_reviewer, reviewer_context, run_reviewer
+from .reviewer import DEFAULT_REVIEWER, load_rules, parse_reviewer, reviewer_context, rule_evidence, run_reviewer
 from .workspace import cached_pr, sample_workspace
 
 EST_COST = 1.3  # $/sample for a high-effort review, from earlier runs; used only for the estimate
@@ -68,6 +68,12 @@ def replay(reviewer: str = DEFAULT_REVIEWER, split: str = "test", limit: int | N
     if rules:
         load_rules(rules)  # fail now, not once per sample
     ss = load_samples(cfg, split, limit, prs, area)
+    ev = rule_evidence(reviewer)
+    leak = [s for s in ss if ev & set(s["gold_ids"])]
+    if leak:  # its rulebook was distilled from these samples' own human comments
+        print(f"skipping {len(leak)} samples whose comments the rulebook came from: "
+              + ", ".join(f"#{s['pr']}-{s['commit'][:8]}" for s in leak), flush=True)
+        ss = [s for s in ss if s not in leak]
     todo = [s for s in ss if not run_path(cfg, reviewer, s).exists()]
     print(f"{reviewer} on {split}" + (f" ({area})" if area else "") + f": {len(ss)} samples, {len(ss) - len(todo)} cached, {len(todo)} to run "
           f"(est ${len(todo) * EST_COST:.0f}, cap ${max_cost:.0f})", flush=True)

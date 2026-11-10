@@ -33,13 +33,23 @@ def parse_reviewer(name: str) -> tuple[str, str | None, str]:
 def prompt_template(version: str) -> tuple[str, tuple[str, ...]]:
     """Prompt text of `version` and the extra workspace context it declares.
 
-    A prompt may start with a line `<!-- context: vllm -->`; that line is not sent to the model.
+    A prompt may start with directive lines that are not sent to the model:
+    `<!-- context: vllm -->` (extra workspace context) and `<!-- system: trimmed -->` (see
+    prompt_system).
     """
-    text = (PROMPTS / f"reviewer_{version}.md").read_text()
-    m = re.match(r"<!--\s*context:\s*([\w, ]+?)\s*-->\n", text)
-    if not m:
-        return text, ()
-    return text[m.end():], tuple(x.strip() for x in m[1].split(",") if x.strip())
+    text, ctx = (PROMPTS / f"reviewer_{version}.md").read_text(), ()
+    while m := re.match(r"<!--\s*(context|system):\s*([\w, .-]*?)\s*-->\n", text):
+        if m[1] == "context":
+            ctx = tuple(x.strip() for x in m[2].split(",") if x.strip())
+        text = text[m.end():]
+    return text, ctx
+
+
+def prompt_system(version: str) -> str | None:
+    """System prompt that prompt `version` asks for with `<!-- system: X -->` (prompts/system_X.md);
+    None keeps Claude Code's default."""
+    m = re.search(r"^<!--\s*system:\s*([\w.-]+)\s*-->$", (PROMPTS / f"reviewer_{version}.md").read_text(), re.M)
+    return (PROMPTS / f"system_{m[1]}.md").read_text() if m else None
 
 
 def reviewer_context(reviewer: str) -> tuple[str, ...]:
@@ -91,7 +101,7 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER) 
         sec = rules_section(load_rules(rules), changed_paths(wt))
         prompt = prompt.replace("\nFinish with one JSON block", sec + "\nFinish with one JSON block", 1) \
             if "\nFinish with one JSON block" in prompt else prompt + sec
-    r = llm.run(prompt, effort, cwd=str(wt), tools=TOOLS)
+    r = llm.run(prompt, effort, cwd=str(wt), tools=TOOLS, system=prompt_system(version))
     findings, error = None, None
     try:
         findings = to_dicts(parse_findings(llm.extract_json(r["text"])))

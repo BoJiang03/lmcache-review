@@ -49,8 +49,14 @@ def run(prompt: str, effort: str, cwd: str | None = None, tools: str = "", timeo
                         for x in d.get("permission_denials") or []]}
 
 
-def extract_json(text: str):
+def extract_json(text: str) -> object:
     """Parse the last ```json block (or the whole text) as JSON."""
+    dec = json.JSONDecoder()
+    for m in reversed(list(re.finditer(r"```json\s*", text))):  # a JSON string may itself contain ```
+        try:
+            return dec.raw_decode(text, m.end())[0]
+        except json.JSONDecodeError:
+            continue
     blocks = re.findall(r"```(?:json)?\s*(.*?)```", text, re.S)
     for cand in reversed(blocks + [text]):
         try:

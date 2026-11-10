@@ -21,7 +21,10 @@ reuse explain held-out comments; this is checked before spending on reviewer A/B
 from __future__ import annotations
 
 import collections as C
+import datetime as dt
+import fnmatch
 import json
+import subprocess
 import tempfile
 
 from . import llm
@@ -73,18 +76,32 @@ Answer with one JSON block only:
 [{{"concern": "short name of the shared concern", "members": ["k1", "k7"]}}]
 ```"""
 
+# How general an entry must be; shared by ABSTRACT and REVISE (no braces: it goes through str.format).
+GENERAL = """How general "when" and "expect" must be:
+- "when" names a KIND of situation a reviewer can recognize in any diff (e.g. "a docstring explains in
+  prose a process the reader has to simulate in their head"), not the mechanisms, identifiers or
+  parameters of the PRs it came from (e.g. not "appending/relocating block ids, nulling slots").
+- "expect" names the ACTIONS to ask the author for (bound a temporary, state a precondition, redo the
+  whole handshake, add a worked example), as the source comments did. Keep the action checkable
+  against a diff; do not soften it into a vague goal ("be careful with memory" is useless). But the
+  source PRs' particulars (numbers, identifiers, parameters, orderings, e.g. "128K tokens", "chunk
+  size") do not belong in "expect" either: use the general term ("a long request", "every
+  negotiated parameter") and put the particulars in "examples".
+- Self-check before answering: for each noun, number or mechanism in "when" and "expect", ask whether
+  it still holds for another PR of the same kind. If not, replace it with the general term and move
+  the particular to "examples".
+- Counterfactual check: imagine two other PRs of the same kind that differ in those particulars. The
+  entry must apply to both word for word; rewrite it until it does."""
+
 ABSTRACT = """Each group below holds candidate review rules from LMCache human review comments that share
 one concern (with the PR numbers they came from). For each group write ONE rulebook entry for the
 reviewer, or skip the group if it carries no reusable principle or knowledge:
 - "principle": the review principle at the level a reviewer would apply it to other changes (the
-  group's candidates are instances); specific enough to check against a diff. "expect" states the
-  change a reviewer should ask for, as the candidates did; do not generalize it into a vaguer goal.
-  But neither "when" nor "expect" may carry the instances' particulars: "when" names a KIND of
-  situation a reviewer can recognize in any diff (e.g. "a docstring explains in prose a process the
-  reader has to simulate in their head"), not the mechanisms, identifiers or parameters of the PRs it
-  came from (e.g. not "appending/relocating block ids, nulling slots"); those go in "examples" only.
+  group's candidates are instances); specific enough to check against a diff.
 - "knowledge": a fact or invariant about this codebase or the engine, and what a reviewer must
   therefore check when touching that code; scope it with "paths".
+
+""" + GENERAL + """
 Fields: "group" (its number), "kind", "when" (the kind of change it applies to), "expect" (what to
 check or require; checkable), "why" (one line), "examples" (1-2 short concrete instances), "paths"
 (glob patterns, [] = anywhere).
@@ -95,6 +112,35 @@ Groups:
 Answer with one JSON block only:
 ```json
 [{{"group": 0, "kind": "principle", "when": "...", "expect": "...", "why": "...", "examples": ["..."], "paths": []}}]
+```"""
+
+REVISE = """Below are groups of an LMCache review rulebook being updated. Each group holds existing
+entries (keys "b...", with id, text and examples) and/or new candidate rules (keys "c...", from human
+review comments the reviewer missed), grouped as one concern. Decide how the rulebook changes. Every
+key of a group appears in exactly one decision of that group:
+- "keep": an existing entry stays as written (no candidate concerns it).
+- "evidence": candidates are already instances of an existing entry AS WRITTEN: a reviewer applying it
+  to their change would have raised their point. The entry's text stays.
+- "generalize": candidates ask for the same kind of change as an existing entry, but its "when" or
+  "expect" is too narrow to make a reviewer raise their point. Rewrite the entry at the lowest level
+  that covers its old examples AND the candidates; never drop what it asked for before; keep its old
+  examples and add one for the candidates.
+- "merge": two or more existing entries are one concern; write the one entry that covers them all.
+- "add": candidates ask for a different change than every existing entry; write a new entry.
+- "contradict": candidates ask for the OPPOSITE of an existing entry. Do not rewrite it; say why.
+Fields of a written entry (generalize, merge, add): "kind" (principle | knowledge), "when", "expect",
+"why" (one line), "examples" (short concrete instances), "paths" (globs, [] = anywhere).
+
+""" + GENERAL + """
+
+Groups:
+@GROUPS@
+
+Answer with one JSON block only, one object per decision:
+```json
+[{"group": 0, "op": "keep|evidence|generalize|merge|add|contradict", "rules": ["<existing id>"],
+  "members": ["c123"], "kind": "...", "when": "...", "expect": "...", "why": "...", "examples": ["..."],
+  "paths": []}]
 ```"""
 
 COVERAGE = """Below is a rulebook of LMCache review rules (id: when -> expect), then human review comments
@@ -217,6 +263,126 @@ def cluster(items: dict[str, str], effort: str, cfg: Config, spend: list[float],
     return out
 
 
+def _entry(r: dict) -> dict:
+    """The fields of a rulebook entry the model writes."""
+    return {k: r.get(k) for k in ("kind", "when", "expect", "why", "examples", "paths")}
+
+
+def _uniq(xs: list) -> list:
+    return list(dict.fromkeys(xs))
+
+
+def _regress(rule: dict, old_ev: list[int], cm: dict, effort: str, cfg: Config, spend: list[float]) -> list[int]:
+    """Old evidence comments the rewritten `rule` no longer explains (one coverage call)."""
+    cs = [cm[e] for e in old_ev if e in cm]
+    if not cs:
+        return []
+    text = f"{rule['id']}: when {rule.get('when')} -> {rule.get('expect')}"
+    res, cost = _ask(COVERAGE.format(rules=text, comments="\n\n".join(_fmt(c, False) for c in cs)), effort, cfg)
+    spend[0] += cost
+    ok = {_id(x.get("id")) for x in res if isinstance(x, dict) and rule["id"] in (x.get("rules") or [])} \
+        if isinstance(res, list) else set()
+    return [c["id"] for c in cs if c["id"] not in ok]
+
+
+def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evid: dict, out: str, cm: dict,
+                    effort: str, cfg: Config, spend: list[float], max_cost: float,
+                    workers: int = 4) -> tuple[list[dict], list[dict]]:
+    """Apply new candidates (`items` keys "c...", grouped with the base entries "b<id>") to a rulebook.
+
+    Groups of new candidates only become new entries (ABSTRACT). Groups that mix existing entries
+    with candidates, or hold several existing entries, go to REVISE: keep | evidence | generalize |
+    merge | add | contradict. A generalized or merged entry keeps its id, gets version + 1 and
+    a history line, and must still explain all its old evidence (else the rewrite is rejected and
+    becomes a new entry). Merged-away entries are retired, never deleted.
+
+    Returns:
+        (the whole rulebook: base entries, changed or not, then new ones; the list of changes)
+    """
+    today = dt.date.today().isoformat()
+    base = {f"b{r['id']}": {**r, "version": r.get("version", 1), "history": list(r.get("history") or [])}
+            for r in base_rules}
+    fresh = [(i, g) for i, g in enumerate(groups) if not any(k in base for k in g["members"])]
+    revise = [(i, g) for i, g in enumerate(groups) if any(k in base for k in g["members"])
+              and (any(k not in base for k in g["members"]) or len(g["members"]) > 1)]
+    added, changes = [], []
+
+    def show(k: str) -> str:
+        if k in base:
+            r = base[k]
+            return (f"- {k} = existing entry {r['id']} (v{r['version']}, {r.get('kind')}): When {r.get('when')}: "
+                    f"{r.get('expect')} | examples: {'; '.join(r.get('examples') or [])} | paths {r.get('paths') or []}")
+        return f"- {k}: {items[k]}"
+
+    def text(gb: list) -> str:
+        return "\n\n".join(f"Group {i} ({g['concern']}):\n" + "\n".join(map(show, g["members"])) for i, g in gb)
+
+    batches = [fresh[i:i + ABSTRACT_BATCH] for i in range(0, len(fresh), ABSTRACT_BATCH)]
+    res, cost = capped_map(lambda gb: _ask(ABSTRACT.format(groups=text(gb)), effort, cfg), batches, workers,
+                           max(0.0, max_cost - spend[0]), label=lambda gb: f"abstract {len(gb)} groups")
+    spend[0] += cost
+    for r in (x for part in res if isinstance(part, list) for x in part):
+        if isinstance(r, dict) and r.get("expect") and isinstance(r.get("group"), int) and 0 <= r["group"] < len(groups):
+            g = groups[r["group"]]
+            ev = _uniq(e for k in g["members"] for e in evid.get(k, []))
+            added.append((_entry(r), ev, g["concern"]))
+            changes.append({"op": "add", "members": g["members"], "concern": g["concern"]})
+
+    batches = [revise[i:i + ABSTRACT_BATCH] for i in range(0, len(revise), ABSTRACT_BATCH)]
+    res, cost = capped_map(lambda gb: _ask(REVISE.replace("@GROUPS@", text(gb)), effort, cfg), batches, workers,
+                           max(0.0, max_cost - spend[0]), label=lambda gb: f"revise {len(gb)} groups")
+    spend[0] += cost
+    for d in (x for part in res if isinstance(part, list) for x in part):
+        if not isinstance(d, dict) or not isinstance(d.get("group"), int) or not 0 <= d["group"] < len(groups):
+            continue
+        g, op = groups[d["group"]], d.get("op")
+        mem = [k for k in d.get("members") or [] if k in g["members"] and k not in base]
+        bkeys = [f"b{x}" for x in d.get("rules") or [] if f"b{x}" in g["members"]]
+        ev = _uniq(e for k in mem for e in evid.get(k, []))
+        ch = {"op": op, "rules": [base[b]["id"] for b in bkeys], "members": mem, "concern": g["concern"]}
+        if op == "evidence" and bkeys:
+            base[bkeys[0]]["evidence"] = _uniq(list(base[bkeys[0]].get("evidence") or []) + ev)
+        elif op in ("generalize", "merge") and bkeys and d.get("expect"):
+            r = base[bkeys[0]]
+            old_ev = _uniq(e for b in bkeys for e in base[b].get("evidence") or [])
+            lost = _regress({"id": r["id"], **_entry(d)}, old_ev, cm, effort, cfg, spend)
+            if lost:  # the rewrite would stop explaining what the entry stood for: keep it, add the rewrite
+                ch |= {"op": f"{op}-rejected", "lost": lost}
+                added.append((_entry(d) | {"kind": d.get("kind") or r.get("kind")}, ev, g["concern"]))
+            else:
+                r["history"].append({"version": r["version"], "until": today, "by": out, "reason": op,
+                                     **{k: r.get(k) for k in ("when", "expect", "examples", "paths")}})
+                r.update({k: v for k, v in _entry(d).items() if v is not None})
+                r["version"] += 1
+                r["evidence"] = _uniq(old_ev + ev)
+                for b in bkeys[1:]:
+                    base[b]["status"] = "retired"
+                    base[b]["retired"] = {"date": today, "by": out, "reason": f"merged into {r['id']}"}
+                ch |= {"version": r["version"], "when": r["when"], "expect": r["expect"]}
+        elif op == "add" and d.get("expect") and mem:
+            added.append((_entry(d) | {"kind": d.get("kind") or "principle"}, ev, g["concern"]))
+        elif op == "contradict" and bkeys:
+            base[bkeys[0]]["contested"] = _uniq(list(base[bkeys[0]].get("contested") or []) + ev)
+            ch["why"] = d.get("why")
+        else:
+            continue
+        changes.append(ch)
+
+    def finish(r: dict) -> dict:
+        ev = [e for e in r.get("evidence") or [] if e in cm]
+        return r | {"n_prs": len({cm[e]["pr"] for e in ev}),
+                    "area": ",".join(sorted({cm[e].get("area") or "overall" for e in ev}))}
+    new = [finish({**e, "concern": concern, "evidence": ev, "status": "active", "version": 1, "history": []})
+           for e, ev, concern in added]
+    new.sort(key=lambda r: -r["n_prs"])
+    for i, r in enumerate(new, 1):
+        r["id"] = f"{out}-{i:03d}"
+    for ch in changes:  # name new entries in the change log
+        if ch["op"] in ("add",) or ch["op"].endswith("-rejected"):
+            ch["new"] = [r["id"] for r in new if set(r["evidence"]) & {e for k in ch["members"] for e in evid.get(k, [])}]
+    return [finish(r) for r in base.values()] + new, changes
+
+
 def distill(out: str, base: str | None = None, misses_of: str | None = None, area: str | None = None,
             limit: int | None = None, effort: str = "high", workers: int = 4, max_cost: float = 5.0,
             reuse: str | None = None, keep_unaddressed: bool = False, cfg: Config | None = None) -> str:
@@ -255,6 +421,8 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
             evid[k] = [a["id"]]
     if base:
         for r in map(json.loads, (RULES / f"{base}.jsonl").open()):
+            if r.get("status", "active") != "active":  # retired entries are carried over untouched
+                continue
             k = f"b{r['id']}"
             items[k] = f"When {r.get('when')}: {r.get('expect')} (existing rule; paths {r.get('paths') or []})"
             evid[k] = r.get("evidence") or []
@@ -263,29 +431,10 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     (work / "clusters.json").write_text(json.dumps(groups, indent=1))
 
     _, cm = load_gold(cfg)
-    gbatches = [list(enumerate(groups))[i:i + ABSTRACT_BATCH] for i in range(0, len(groups), ABSTRACT_BATCH)]
-
-    def abstract(gb):
-        text = "\n\n".join(f"Group {i} ({g['concern']}):\n" + "\n".join(f"- {items[k]}" for k in g["members"])
-                           for i, g in gb)
-        return _ask(ABSTRACT.format(groups=text), effort, cfg)
-
-    res, cost = capped_map(abstract, gbatches, workers, max(0.0, max_cost - spend[0]),
-                           label=lambda gb: f"abstract {len(gb)} groups")
-    spent = spend[0] + cost
-    rules = []
-    for r in (x for part in res if isinstance(part, list) for x in part):
-        if not isinstance(r, dict) or not r.get("expect") or not isinstance(r.get("group"), int) \
-                or not 0 <= r["group"] < len(groups):
-            continue
-        g = groups[r["group"]]
-        ev = list(dict.fromkeys(e for k in g["members"] for e in evid.get(k, []) if e in cm))
-        rules.append({k: r.get(k) for k in ("kind", "when", "expect", "why", "examples", "paths")}
-                     | {"concern": g["concern"], "evidence": ev, "n_prs": len({cm[e]["pr"] for e in ev}),
-                        "area": ",".join(sorted({cm[e].get("area") or "overall" for e in ev})), "status": "active"})
-    rules.sort(key=lambda r: -r["n_prs"])
-    for i, r in enumerate(rules, 1):
-        r["id"] = f"{out}-{i:03d}"
+    base_rules = [json.loads(l) for l in (RULES / f"{base}.jsonl").open() if l.strip()] if base else []
+    rules, changes = update_rulebook(base_rules, groups, items, evid, out, cm, effort, cfg, spend, max_cost, workers)
+    spent = spend[0]
+    (work / "changes.json").write_text(json.dumps(changes, indent=1))
     RULES.mkdir(exist_ok=True)
     (RULES / f"{out}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rules))
 
@@ -295,11 +444,14 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
           + (f", area {area}" if area else "") + (f", extending {base}" if base else "")
           + f"; attribution: {dict(kinds)}; {len(groups)} concern groups; cost ${spent:.2f}",
           f"{len(rules)} entries: " + ", ".join(f"{k} {v}" for k, v in C.Counter(r["kind"] for r in rules).items()), ""]
+    md += ["## Changes", ""] + [f"- {ch['op']}: " + ", ".join(ch.get("rules") or ch.get("new") or [])
+                                 + f" ({ch['concern']})" + (f"; lost old evidence {ch['lost']}" if ch.get("lost") else "")
+                                 for ch in changes] + [""]
     for kind in ("principle", "knowledge"):
         md += [f"## {kind}", ""]
-        for r in (r for r in rules if r["kind"] == kind):
+        for r in (r for r in rules if r["kind"] == kind and r.get("status", "active") == "active"):
             ev = ", ".join(f"[#{cm[e]['pr']}]({cm[e]['url']})" for e in r["evidence"][:6])
-            md += [f"- **{r['id']}** ({r['area']}, {r['n_prs']} PRs) When {r['when']}: {r['expect']}",
+            md += [f"- **{r['id']}** v{r.get('version', 1)} ({r['area']}, {r['n_prs']} PRs) When {r['when']}: {r['expect']}",
                    f"  - why: {r.get('why') or ''}; paths: {r.get('paths') or 'any'}",
                    f"  - e.g. {' / '.join(r.get('examples') or [])}", f"  - evidence: {ev}"]
         md.append("")
@@ -342,3 +494,48 @@ def coverage(rules_name: str, split: str = "test", area: str | None = None, miss
         L.append(f"| {rid} | {r.get('kind')} | {r.get('n_prs')} | {n} | When {r.get('when')}: {(r.get('expect') or '')[:100]} |")
     (REPORTS / f"coverage_{rules_name}_{split}.md").write_text("\n".join(L) + "\n")
     return "\n".join(L[:5])
+
+
+def audit(name: str, cfg: Config | None = None) -> str:
+    """Free checks that suggest retiring entries of rules/<name> (it never changes the rulebook).
+
+    - paths gone: the entry's path globs match no file on dev any more
+    - judged invalid: findings that cite the entry (runs of reviewers using this rulebook) and how
+      the judge rated them
+    - contested: later human comments asked for the opposite (set by distill's revise step)
+    Writes reports/audit_<name>.md; returns it.
+    """
+    from .reviewer import parse_reviewer
+    cfg = cfg or Config()
+    rules = [json.loads(l) for l in (RULES / f"{name}.jsonl").open() if l.strip()]
+    files = subprocess.run(["git", "-C", str(cfg.repo), "ls-tree", "-r", "--name-only", "origin/dev"],
+                           capture_output=True, text=True, check=True).stdout.split()
+    cited, valid = C.Counter(), C.Counter()
+    for d in (cfg.data / "runs").iterdir():
+        try:
+            uses = d.is_dir() and not d.name.startswith("_") and parse_reviewer(d.name.split("#")[0])[1] == name
+        except ValueError:
+            uses = False
+        if not uses:
+            continue
+        for p in d.glob("*.json"):
+            run = json.loads(p.read_text())
+            sp = cfg.data / "scores" / d.name / p.name
+            judged = {a["id"]: a.get("valid") for a in json.loads(sp.read_text()).get("ai", [])} if sp.exists() else {}
+            for f in run.get("findings") or []:
+                if f.get("rule"):
+                    cited[f["rule"]] += 1
+                    valid[f["rule"]] += judged.get(f["id"]) is True
+    L = [f"# Audit of rulebook {name}", "", "Suggestions only; retiring an entry is a decision.", "",
+         "| entry | status | v | evidence PRs | paths on dev | findings citing it | judged valid | suggestion |",
+         "| --- | --- | --- | --- | --- | --- | --- | --- |"]
+    for r in rules:
+        gone = bool(r.get("paths")) and not any(fnmatch.fnmatch(f, g) for g in r["paths"] for f in files)
+        n, ok = cited[r["id"]], valid[r["id"]]
+        why = (["retire? paths gone"] if gone else []) + (["review: mostly judged invalid"] if n >= 3 and ok / n < 0.5 else []) \
+            + ([f"contested by {len(r['contested'])} comments"] if r.get("contested") else [])
+        L.append(f"| {r['id']} | {r.get('status', 'active')} | {r.get('version', 1)} | {r.get('n_prs')} | "
+                 f"{'gone' if gone else 'ok'} | {n} | {ok} | {'; '.join(why)} |")
+    (REPORTS / f"audit_{name}.md").write_text("\n".join(L) + "\n")
+    return "\n".join(L)
+

@@ -1,4 +1,4 @@
-"""Command line: `lmreview sync|review|eval|distill`.
+"""Command line: `lmreview sync|review|eval|distill|audit`.
 
 A reviewer is named <prompt>[+<rules>][@<effort>], e.g. v0b+r1@high (rules = rules/r1.jsonl).
 Paid commands stop starting new LLM calls once --max-cost is reached. Nothing is posted to GitHub.
@@ -61,6 +61,9 @@ def main(argv: list[str] | None = None) -> None:
     d.add_argument("--workers", type=int, default=4)
     d.add_argument("--max-cost", type=float, default=5.0, help="0 = print the plan and estimate only")
 
+    sub.add_parser("audit", help="suggest rulebook entries to retire: paths gone, findings judged invalid, "
+                                 "contested (free)").add_argument("rules", help="rulebook name")
+
     a = ap.parse_args(argv)
     if a.cmd == "sync":
         from .sync import sync
@@ -80,6 +83,9 @@ def main(argv: list[str] | None = None) -> None:
     elif a.cmd == "eval":
         from .evaluate import evaluate
         print(evaluate(a.reviewer, a.vs, a.workers, a.judge_effort, a.max_cost))
+    elif a.cmd == "audit":
+        from .distill import audit
+        print(audit(a.rules))
     else:
         from .distill import distill
         print(distill(a.out, a.base, a.misses_of, a.area, a.limit, a.effort, a.workers, a.max_cost, a.reuse,

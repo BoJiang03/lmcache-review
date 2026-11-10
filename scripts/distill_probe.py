@@ -17,7 +17,8 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from lmreview.config import Config  # noqa: E402
-from lmreview.distill import ABSTRACT, ATTRIBUTE, EST, _ask, _fmt, _id, cluster  # noqa: E402
+from lmreview.config import RULES  # noqa: E402
+from lmreview.distill import ATTRIBUTE, EST, _ask, _fmt, _id, cluster, update_rulebook  # noqa: E402
 from lmreview.score import load_gold  # noqa: E402
 
 # probe sets: id -> role in the probe
@@ -43,6 +44,20 @@ PROBES["recovery"] = {
     3299887479: "unrelated #3248 (train) ApostaC: duplicated code, make a helper",
 }
 
+# one missed comment per PR, no siblings: can distill generalize from a single example?
+PROBES["oneshot"] = {
+    4033893835: "single    #5150 (test) chunxiaozheng: define proto fields in order",
+    4147509834: "single    #5405 (test) Zefan-Cai: temporary sized by the moves; bound it with chunks",
+    4147509854: "single    #5405 (test) Zefan-Cai: destination block may be shared via prefix caching",
+    5671926237: "single    #5938 (test) ApostaC: why reported at all; why an LMCache-side fix, not vLLM",
+    4066665554: "single    #5004 (test) ApostaC: replace prose docstring with a worked example",
+    4238283183: "single    #5222 (test) zhengfeihe: renegotiate chunk size on recovery after restart",
+}
+
+# a new comment against an existing rulebook (use with --base probe-recovery): evidence or generalize?
+PROBES["recovery-new"] = {
+    4238283183: "new       #5222 (test) zhengfeihe: renegotiate chunk size on recovery after restart",
+}
 
 def main() -> None:
     ap = argparse.ArgumentParser()
@@ -51,7 +66,8 @@ def main() -> None:
     ap.add_argument("--effort", default="high")
     ap.add_argument("--max-cost", type=float, default=1.0)
     ap.add_argument("--train-only", action="store_true", help="drop the test comments (fair rule for testing on them)")
-    ap.add_argument("--json", help="write the abstracted rules here")
+    ap.add_argument("--json", help="write the resulting rulebook here")
+    ap.add_argument("--base", help="existing rulebook (rules/<name>.jsonl) to update instead of starting empty")
     a = ap.parse_args()
     cfg = Config()
     _, cm = load_gold(cfg)
@@ -73,28 +89,29 @@ def main() -> None:
         print(f"[{x['id']}] {x.get('kind')}: {x.get('rule') or ''}  paths={x.get('paths')}")
 
     items = {f"c{x['id']}": x["rule"] for x in att if x.get("kind") == "learnable" and x.get("rule")}
+    evid = {k: [int(k[1:])] for k in items}
+    base = [json.loads(l) for l in (RULES / f"{a.base}.jsonl").open() if l.strip()] if a.base else []
+    for r in base:
+        if r.get("status", "active") == "active":
+            items[f"b{r['id']}"] = f"When {r.get('when')}: {r.get('expect')} (existing rule; paths {r.get('paths') or []})"
+            evid[f"b{r['id']}"] = r.get("evidence") or []
     groups = cluster(items, a.effort, cfg, spend, a.max_cost)
     print("\n== cluster")
     for i, g in enumerate(groups):
         print(f"group {i} ({g['concern']}): " + ", ".join(g["members"]))
-
-    text = "\n\n".join(f"Group {i} ({g['concern']}):\n" + "\n".join(f"- {items[k]}" for k in g["members"])
-                       for i, g in enumerate(groups))
-    if spend[0] < a.max_cost:
-        rules, cost = _ask(ABSTRACT.format(groups=text), a.effort, cfg)
-        spend[0] += cost
-        print(f"\n== abstract (${cost:.2f})")
-        for r in rules if isinstance(rules, list) else []:
-            print(json.dumps(r, ensure_ascii=False, indent=1))
-        if a.json and isinstance(rules, list):
-            out = []
-            for r in rules:
-                g = groups[r["group"]] if isinstance(r.get("group"), int) and r["group"] < len(groups) else None
-                ev = [int(k[1:]) for k in g["members"]] if g else []
-                out.append({k: r.get(k) for k in ("kind", "when", "expect", "why", "examples", "paths")}
-                           | {"concern": g["concern"] if g else "", "evidence": ev, "status": "active"})
-            pathlib.Path(a.json).write_text("".join(json.dumps(x) + "\n" for x in out))
-            print(f"wrote {len(out)} rules to {a.json}")
+    rules, changes = update_rulebook(base, groups, items, evid, "probe", cm, a.effort, cfg, spend, a.max_cost)
+    print("\n== changes")
+    for ch in changes:
+        print(json.dumps(ch, ensure_ascii=False))
+    print("\n== entries added or changed")
+    touched = {x for ch in changes for x in (ch.get("rules") or []) + (ch.get("new") or [])}
+    for r in rules:
+        if r["id"] in touched:
+            print(json.dumps({k: r.get(k) for k in ("id", "version", "status", "kind", "when", "expect", "examples",
+                                                    "paths", "evidence")}, ensure_ascii=False, indent=1))
+    if a.json:
+        pathlib.Path(a.json).write_text("".join(json.dumps(r) + "\n" for r in rules))
+        print(f"wrote {len(rules)} entries to {a.json}")
     print(f"\ntotal ${spend[0]:.2f}")
 
 

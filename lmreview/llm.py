@@ -12,7 +12,8 @@ _STRIP = [k for k in os.environ if k.startswith("CLAUDE_CODE_")
           or k in ("CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT")]
 
 
-def run(prompt: str, effort: str, cwd: str | None = None, tools: str = "", timeout: int = 1800) -> dict:
+def run(prompt: str, effort: str, cwd: str | None = None, tools: str = "", timeout: int = 1800,
+        system: str | None = None) -> dict:
     """Run one headless Claude call.
 
     Args:
@@ -21,6 +22,9 @@ def run(prompt: str, effort: str, cwd: str | None = None, tools: str = "", timeo
         cwd: working directory the model sees (e.g. a checked-out PR worktree).
         tools: comma-separated tools that exist for the model; "" means none.
         timeout: seconds.
+        system: replaces the default Claude Code system prompt when given. Claude Code still adds
+            its one-line SDK identity, an environment block (cwd, platform, today's date) and the
+            account e-mail reminder; those are the same with or without `system`.
 
     Returns:
         {"text": final text, "cost": usd, "turns": n, "denials": [blocked tool calls]}.
@@ -31,7 +35,7 @@ def run(prompt: str, effort: str, cwd: str | None = None, tools: str = "", timeo
     # --allowedTools alone is NOT enough: user settings auto-approve everything.
     cmd = ["claude", "-p", prompt, "--output-format", "json", "--restricted",
            "--tools", tools, "--strict-mcp-config", "--permission-mode", "dontAsk",
-           "--effort", effort]
+           "--effort", effort] + (["--system-prompt", system] if system else [])
     p = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout)
     try:
         d = json.loads(p.stdout)

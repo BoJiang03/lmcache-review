@@ -40,6 +40,7 @@ class Finding:
     locations: list[Location] = dataclasses.field(default_factory=list)
     suggestion: str | None = None
     rule: str | None = None
+    support: int | None = None  # merged parallel review: how many of the runs raised it
 
     def primary(self) -> Location | None:
         """The first primary location, if any."""
@@ -106,7 +107,8 @@ def parse_findings(obj: object) -> list[Finding]:
             fid = f"f{i}"
         seen.add(fid)
         out.append(Finding(fid, sev, scope, str(d.get("title", "")).strip(), str(d.get("body", "")).strip(),
-                           locs, d.get("suggestion") or None, d.get("rule") or None))
+                           locs, d.get("suggestion") or None, d.get("rule") or None,
+                           d["support"] if isinstance(d.get("support"), int) else None))
     return out
 
 

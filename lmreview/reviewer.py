@@ -10,8 +10,9 @@ import pathlib
 import re
 
 from . import github, llm
+from .ensemble import ensemble
 from .config import PROMPTS, RULES, Config
-from .schema import SCHEMA_VERSION, SEVERITIES, SchemaError, load_findings, parse_findings, to_dicts
+from .schema import SCHEMA_VERSION, SEVERITIES, Finding, SchemaError, load_findings, parse_findings, to_dicts
 from .workspace import TOOLS, live_workspace, pr_meta
 
 
@@ -20,16 +21,26 @@ from .workspace import TOOLS, live_workspace, pr_meta
 DEFAULT_REVIEWER = os.environ.get("LMREVIEW_REVIEWER", "v0b+team-v1@high")
 
 
+_NAME = re.compile(r"([\w.-]+?)(?:\+([\w.-]+?))?(?:@([a-z]+))?(?:x(\d+))?")
+
+
 def parse_reviewer(name: str) -> tuple[str, str | None, str]:
-    """A reviewer is named `<prompt>[+<rules>][@<effort>]`, e.g. `v0b+r1@high`.
+    """A reviewer is named `<prompt>[+<rules>][@<effort>][x<n>]`, e.g. `v0b+r1@high` or `v0b+r1@highx3`
+    (x3: three runs in parallel, then one merge run; see parallel_of).
 
     Returns:
         (prompt version, rulebook name or None, effort; default "high").
     """
-    m = re.fullmatch(r"([\w.-]+?)(?:\+([\w.-]+))?(?:@(\w+))?", name)
+    m = _NAME.fullmatch(name)
     if not m:
-        raise ValueError(f"bad reviewer name {name!r}; expected <prompt>[+<rules>][@<effort>]")
+        raise ValueError(f"bad reviewer name {name!r}; expected <prompt>[+<rules>][@<effort>][x<n>]")
     return m[1], m[2], m[3] or "high"
+
+
+def parallel_of(name: str) -> int:
+    """How many reviewer runs `name` asks for (its `x<n>` suffix; 1 without one)."""
+    m = _NAME.fullmatch(name.split("#")[0])
+    return int(m[4]) if m and m[4] else 1
 
 
 def prompt_template(version: str) -> tuple[str, tuple[str, ...]]:
@@ -95,7 +106,10 @@ def rules_section(rules: list[dict], paths: list[str]) -> str:
     lines = [f"- [{r['id']}] ({r.get('kind', 'principle')}) {text(r)}" for r in use]
     return ("\n\nTeam rules distilled from past LMCache reviews. Check the change against the ones "
             "that apply; when a finding follows from a rule, put its id in the finding's \"rule\" "
-            "field.\n" + "\n".join(lines) + "\n")
+            "field. A rule finding must be about code this PR adds or changes: do not raise a rule "
+            "against behavior the PR leaves as it was. A rule's example shows one instance, not a "
+            "checklist item: apply the rule's condition, not the example's particulars.\n"
+            + "\n".join(lines) + "\n")
 
 
 def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER) -> dict:
@@ -104,23 +118,53 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER) 
     Returns:
         {"schema_version", "findings": list of schema.Finding dicts | None (None = output not
          parsable or not schema-valid, see "error"), "error", "raw": text, "cost", "turns",
-         "denials", "effort", "version", "rules", "reviewer"}.
+         "denials", "effort", "version", "rules", "reviewer"}. With `x<n>` (n > 1) the findings are
+        the merge run's, each with "support" (how many runs raised it); "parallel" = n, "runs" = each
+        run's findings/error/cost, "cost" = all runs plus the merge.
     """
-    version, rules, effort = parse_reviewer(reviewer)
+    version, rules, effort = parse_reviewer(reviewer.split("#")[0])
     prompt = prompt_template(version)[0].format(**pr_meta(raw))
     if rules:
         sec = rules_section(load_rules(rules), changed_paths(wt))
         prompt = prompt.replace("\nFinish with one JSON block", sec + "\nFinish with one JSON block", 1) \
             if "\nFinish with one JSON block" in prompt else prompt + sec
-    r = llm.run(prompt, effort, cwd=str(wt), tools=TOOLS, system=prompt_system(version))
+    system = prompt_system(version)
+    meta = {"schema_version": SCHEMA_VERSION, "effort": effort, "version": version, "rules": rules,
+            "reviewer": reviewer}
+    n = parallel_of(reviewer)
+
+    def once() -> dict:
+        return _parsed(llm.run(prompt, effort, cwd=str(wt), tools=TOOLS, system=system))
+
+    def merge(ok: list[dict]) -> dict:  # one more agent run on the same workspace: it may read code
+        reviews = "\n\n".join(f"Run {i}:\n{json.dumps(x['findings'], indent=1)}" for i, x in enumerate(ok, 1))
+        return _parsed(llm.run((PROMPTS / "merge.md").read_text().format(n=len(ok), reviews=reviews,
+                                                                         **pr_meta(raw)),
+                               effort, cwd=str(wt), tools=TOOLS, system=system))
+
+    e = ensemble(once, n, merge, ok=lambda x: x["findings"] is not None)
+    if n == 1:
+        return {**e.result, **meta}
+    out = dict(e.result)
+    if not e.merged and out["findings"] is not None:  # one usable run, or the merge failed: unmerged
+        out["findings"] = [{**f, "support": 1} for f in out["findings"]]
+    merge_cost = e.merge["cost"] if e.merge else 0.0
+    keep = {"parallel": n, "merged": e.merged, "merge_cost": merge_cost,
+            "merge_error": None if e.merged or not e.merge else e.merge["error"],
+            # raw kept per run so scripts/reparse_invalid.py can recover any of them
+            "runs": [{k: x[k] for k in ("findings", "error", "raw", "cost", "turns")} for x in e.runs]}
+    return {**out, "cost": sum(x["cost"] for x in e.runs) + merge_cost, **keep, **meta}
+
+
+def _parsed(r: dict) -> dict:
+    """One llm.run result as run-file fields: findings (None if unparsable) and the error."""
     findings, error = None, None
     try:
         findings = to_dicts(parse_findings(llm.extract_json(r["text"])))
     except (ValueError, SchemaError) as e:  # SchemaError is a ValueError; kept explicit for clarity
         error = str(e)
-    return {"schema_version": SCHEMA_VERSION, "findings": findings, "error": error, "raw": r["text"],
-            "cost": r["cost"], "turns": r["turns"], "denials": r["denials"], "effort": effort,
-            "version": version, "rules": rules, "reviewer": reviewer}
+    return {"findings": findings, "error": error, "raw": r["text"], "cost": r["cost"], "turns": r["turns"],
+            "denials": r["denials"]}
 
 
 def review_pr(pr: int, commit: str | None = None, reviewer: str = DEFAULT_REVIEWER,
@@ -151,9 +195,28 @@ def to_markdown(r: dict) -> str:
     if not fs:
         return "\n".join(head + ["No findings."])
     fs.sort(key=lambda f: SEVERITIES.index(f.severity))
+    book = parse_reviewer(r["reviewer"].split("#")[0])[1] if r.get("reviewer") else None
+    rules = {x["id"]: x for x in load_rules(book)} if book else {}
+    cited = [f for f in fs if f.rule]
+    if cited:
+        head += [f"{len(cited)} of {len(fs)} findings follow a team rule ({book or 'no rulebook'}).", ""]
 
-    def item(f):
-        out = [f"### [{f.severity}] {f.title}", f"*{f.scope}* · `{f.where()}`", "", f.body, ""]
+    def rule_line(f: Finding) -> str:
+        x = rules.get(f.rule)
+        if x is None:  # the model named an id that is not in the reviewer's rulebook
+            return f"Rule: `{f.rule}` (not in {book or 'any rulebook'})"
+        return f"Rule: `{f.rule}` · when {x.get('when') or x.get('rule', '')}"
+
+    n = r.get("parallel") or 1
+    if n > 1:  # merged parallel review: within a severity, what more runs agree on comes first
+        fs.sort(key=lambda f: (SEVERITIES.index(f.severity), -(f.support or 1)))
+        head += [f"{n} parallel runs, merged; each finding shows how many runs raised it.", ""]
+
+    def item(f: Finding) -> list[str]:
+        found = f" · found by {f.support or 1}/{n} runs" if n > 1 else ""
+        out = [f"### [{f.severity}] {f.title}", f"*{f.scope}* · `{f.where()}`{found}", "", f.body, ""]
+        if f.rule:
+            out += [rule_line(f), ""]
         rel = [l for l in f.locations if l.role == "related"]
         if rel:
             out += ["Related: " + ", ".join(f"`{l.path}" + (f":{l.start}" if l.start else "") + "`" for l in rel), ""]

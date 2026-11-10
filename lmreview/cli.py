@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 
 from .reviewer import DEFAULT_REVIEWER
@@ -29,6 +30,8 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("--commit", help="with a PR: review this commit instead of the head")
     r.add_argument("--format", default="md", choices=["md", "json"])
     r.add_argument("--reviewer", default=DEFAULT_REVIEWER)
+    r.add_argument("--parallel", type=int, default=1,
+                   help="run the reviewer this many times at once and merge (one more agent run); same as x<n>")
     r.add_argument("--split", default="test", choices=["train", "test", "new"])
     r.add_argument("--limit", type=int, default=10, help="samples (0 = all)")
     r.add_argument("--only-pr", action="append", help="only these samples: PR number (all its commits) or PR:commit")
@@ -65,6 +68,9 @@ def main(argv: list[str] | None = None) -> None:
                                  "contested (free)").add_argument("rules", help="rulebook name")
 
     a = ap.parse_args(argv)
+    if getattr(a, "parallel", 1) > 1:
+        name, sep, rep = a.reviewer.partition("#")  # keep a repeat tag such as #r2
+        a.reviewer = re.sub(r"x\d+$", "", name) + f"x{a.parallel}" + sep + rep
     if a.cmd == "sync":
         from .sync import sync
         print(sync(a.since))

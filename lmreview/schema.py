@@ -68,6 +68,8 @@ def _loc(d: dict) -> Location:
         start, end = end, start
     side = d.get("side", "new")
     role = d.get("role", "primary")
+    if side in ("primary", "related"):  # the model put the role in "side"
+        side, role = "new", d.get("role", side)
     if side not in ("new", "old") or role not in ("primary", "related"):
         raise SchemaError(f"bad side/role: {d!r}")
     return Location(d["path"], start, end, side, role)

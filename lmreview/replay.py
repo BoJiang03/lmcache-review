@@ -50,7 +50,7 @@ def replay_one(cfg: Config, s: dict, reviewer: str) -> tuple[str, float]:
     """Run the reviewer on one sample; returns (status, cost)."""
     out = run_path(cfg, reviewer, s)
     with sample_workspace(cfg, s, "review", reviewer_context(reviewer)) as (wt, base):
-        r = run_reviewer(wt, cached_pr(cfg, s["pr"]), reviewer)
+        r = run_reviewer(wt, cached_pr(cfg, s["pr"], s["time"]), reviewer)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"pr": s["pr"], "commit": s["commit"], "base": base, **r}, indent=1))
     n = len(r["findings"]) if r["findings"] is not None else f"INVALID ({r['error']})"

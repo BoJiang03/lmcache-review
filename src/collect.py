@@ -17,7 +17,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from lmreview.github import PR_Q, REPO_NAME, REPO_OWNER, gh_graphql  # noqa: E402
+from lmreview.github import PR_Q, REPO_NAME, REPO_OWNER, fetch_edits, gh_graphql  # noqa: E402
 RAW = ROOT / "data" / "raw"
 
 SEARCH_Q = """
@@ -62,6 +62,7 @@ def fetch_pr(n: int) -> str:
     if path.exists():
         return "cached"
     pr = gh_graphql(PR_Q, owner=REPO_OWNER, name=REPO_NAME, n=n)["repository"]["pullRequest"]
+    pr["_edits"] = fetch_edits(n)
     pr["_fetched_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(pr))

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .asof import as_of
+
 
 def _who(node: dict) -> str:
     return (node.get("author") or {}).get("login") or "(deleted)"
@@ -13,8 +15,11 @@ def format_history(raw: dict, before: str | None = None) -> str:
     Args:
         raw: the PR as returned by github.fetch_pr.
         before: ISO time; only events strictly before it are included (replay uses the first
-            human review time t0 so nothing from the future leaks). None = everything.
+            human review time t0 so nothing from the future leaks). None = everything. Texts are
+            shown as they read at `before` (needs raw["_edits"]), not as later edited.
     """
+    if before is not None:
+        raw = as_of(raw, before)
     ok = (lambda t: True) if before is None else (lambda t: t < before)
     ev = []
     for t in raw["reviewThreads"]["nodes"]:

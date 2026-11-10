@@ -15,7 +15,7 @@ import subprocess
 import sys
 
 from .config import Config
-from .github import PR_Q, REPO_NAME, REPO_OWNER, gh_graphql
+from .github import PR_Q, REPO_NAME, REPO_OWNER, fetch_edits, gh_graphql
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 START = "2026-05-01"  # dataset start (PR creation date)
@@ -43,6 +43,7 @@ def updated_prs(since: str) -> list[int]:
 def fetch(cfg: Config, n: int) -> None:
     """(Re-)fetch PR `n` into <data>/raw/pr/<n>.json."""
     pr = gh_graphql(PR_Q, owner=REPO_OWNER, name=REPO_NAME, n=n)["repository"]["pullRequest"]
+    pr["_edits"] = fetch_edits(n)  # so replays can show texts as they read at review time
     pr["_fetched_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
     path = cfg.data / "raw" / "pr" / f"{n}.json"
     tmp = path.with_suffix(".tmp")

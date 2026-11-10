@@ -273,12 +273,17 @@ def _uniq(xs: list) -> list:
 
 
 def _regress(rule: dict, old_ev: list[int], cm: dict, effort: str, cfg: Config, spend: list[float]) -> list[int]:
-    """Old evidence comments the rewritten `rule` no longer explains (one coverage call)."""
+    """Old evidence comments the rewritten `rule` no longer explains (one coverage call; all of them if
+    the call fails, so an unverified rewrite is rejected)."""
     cs = [cm[e] for e in old_ev if e in cm]
     if not cs:
         return []
     text = f"{rule['id']}: when {rule.get('when')} -> {rule.get('expect')}"
-    res, cost = _ask(COVERAGE.format(rules=text, comments="\n\n".join(_fmt(c, False) for c in cs)), effort, cfg)
+    try:
+        res, cost = _ask(COVERAGE.format(rules=text, comments="\n\n".join(_fmt(c, False) for c in cs)), effort, cfg)
+    except (RuntimeError, ValueError) as e:  # unverified: treat as losing everything, so the rewrite is rejected
+        print(f"  regression check of {rule['id']} failed: {e}", flush=True)
+        return [c["id"] for c in cs]
     spend[0] += cost
     ok = {_id(x.get("id")) for x in res if isinstance(x, dict) and rule["id"] in (x.get("rules") or [])} \
         if isinstance(res, list) else set()
@@ -345,10 +350,15 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
         elif op in ("generalize", "merge") and bkeys and d.get("expect"):
             r = base[bkeys[0]]
             old_ev = _uniq(e for b in bkeys for e in base[b].get("evidence") or [])
+            if spend[0] >= max_cost:  # no budget left to verify the rewrite: keep the entries as they are
+                ch |= {"op": f"{op}-skipped", "why": "cost cap reached before the regression check"}
+                changes.append(ch)
+                continue
             lost = _regress({"id": r["id"], **_entry(d)}, old_ev, cm, effort, cfg, spend)
             if lost:  # the rewrite would stop explaining what the entry stood for: keep it, add the rewrite
                 ch |= {"op": f"{op}-rejected", "lost": lost}
-                added.append((_entry(d) | {"kind": d.get("kind") or r.get("kind")}, ev, g["concern"]))
+                if ev:  # a rewrite with no new evidence would only duplicate the entries kept
+                    added.append((_entry(d) | {"kind": d.get("kind") or r.get("kind")}, ev, g["concern"]))
             else:
                 r["history"].append({"version": r["version"], "until": today, "by": out, "reason": op,
                                      **{k: r.get(k) for k in ("when", "expect", "examples", "paths")}})
@@ -375,7 +385,11 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
     new = [finish({**e, "concern": concern, "evidence": ev, "status": "active", "version": 1, "history": []})
            for e, ev, concern in added]
     new.sort(key=lambda r: -r["n_prs"])
-    for i, r in enumerate(new, 1):
+    used, i = {r["id"] for r in base.values()}, 0
+    for r in new:  # never reuse an id of the base (e.g. out == base, or out names an ancestor)
+        i += 1
+        while f"{out}-{i:03d}" in used:
+            i += 1
         r["id"] = f"{out}-{i:03d}"
     for ch in changes:  # name new entries in the change log
         if ch["op"] in ("add",) or ch["op"].endswith("-rejected"):
@@ -463,9 +477,10 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
 def coverage(rules_name: str, split: str = "test", area: str | None = None, misses_of: str | None = None,
              effort: str = "high", workers: int = 4, max_cost: float = 2.0, cfg: Config | None = None) -> str:
     """Which rulebook entries explain the human comments of `split` (only those `misses_of` missed, if
-    given). Writes reports/coverage_<rules>_<split>.md; returns its headline. `max_cost` 0 = plan only."""
+    given). Writes reports/coverage_<rules>_<split>.md (and .json: the explained comments); returns its headline. `max_cost` 0 = plan only."""
     cfg = cfg or Config()
-    rules = [json.loads(l) for l in (RULES / f"{rules_name}.jsonl").open()]
+    rules = [r for r in map(json.loads, filter(str.strip, (RULES / f"{rules_name}.jsonl").open()))
+             if r.get("status", "active") == "active"]
     cs = inputs(cfg, misses_of, area, split, keep_unaddressed=True)
     batches = [cs[i:i + BATCH] for i in range(0, len(cs), BATCH)]
     print(f"coverage {rules_name} on {split}" + (f" ({area})" if area else "") + f": {len(cs)} comments, "
@@ -493,6 +508,8 @@ def coverage(rules_name: str, split: str = "test", area: str | None = None, miss
         r = byid[rid]
         L.append(f"| {rid} | {r.get('kind')} | {r.get('n_prs')} | {n} | When {r.get('when')}: {(r.get('expect') or '')[:100]} |")
     (REPORTS / f"coverage_{rules_name}_{split}.md").write_text("\n".join(L) + "\n")
+    (REPORTS / f"coverage_{rules_name}_{split}.json").write_text(json.dumps(
+        [{"comment": i, "pr": next(c["pr"] for c in cs if c["id"] == i), "rules": rs} for i, rs in hits.items() if rs], indent=1))
     return "\n".join(L[:5])
 
 

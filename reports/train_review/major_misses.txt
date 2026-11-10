@@ -1,0 +1,135 @@
+=== #3180 [3184161998] lmcache/v1/memory_management.py:2485 by ApostaC (lines-changed)
+At a high level, the memory management module should not depend on the transfer-channel's implementation. 
+
+Can you elaborate on why `allocate_device_buffer` needs to be put in the `transfer_channel.transfer_utils` module?
+
+=== #3223 [4341806839] overall by YaoJiayi (None)
+IIUC, we are retrieving and storing the actual KV cache instead of some pointers over http? Will this be slow? Why are we not keeping the actual data (i.e., KV cache) inside LMCache and let users' customized operations submitted through http so that all data-heavy operations happen locally inside LMCache?
+
+=== #3231 [3223576654] lmcache/v1/multiprocess/server.py:336 by ApostaC (no-later-commits)
+In PR #3208 (support LMCache restart), the semantics have been set to "noop" if the instance ID already exists.
+
+This is because the vLLM-side may have duplicated registration if there is a transient PING check failure. In this case, we don't want to re-register the kv cache again since the creation of GPUCacheContext may take a long time.
+
+=== #3476 [3338007259] lmcache/integration/vllm/lmcache_mp_connector.py:522 by ApostaC (lines-changed)
+Since both the scheduler and the worker will need to talk to the LMCache MP server, we only want to bootstrap a single LMCache server. Can we move it to the scheduler part since there might be multiple worker processes.
+
+=== #3477 [3336521050] docs/design/v1/mp_observability/EVENTS.md:86 by ApostaC (lines-changed)
+Why do we change `key_count` to `keys`? This will greatly explode the size of the events and incur python-level overheads.
+
+=== #3485 [3424943905] lmcache/v1/gpu_connector/kv_format/specs/base.py:86 by ApostaC (lines-changed)
+It's a bit dangerous to let the KVFormatSpec object hold the raw reference to `kv_caches` because it may cause a memory leak.
+We want to make sure all the references to the GPU kv tensors are removed when the serving engine gets disconnected.
+
+=== #3631 [3405496325] docs/design/v1/multiprocess/worker_liveness.md:54 by ApostaC (lines-changed)
+We may not want to move PING to SYNC dispatch -- right now, REGISTER_KV_CACHE also uses SYNC dispatch, but it may block the server-side dispatcher thread for a while -- which will make PING unresponsive.
+
+The good solution is to move REGISTER_KV_CACHE to BLOCKING dispatch, and also have a separate thread to answer PING. But for now, let's put PING to the BLOCKING dispatch using normal thread pool
+
+=== #3631 [3405567725] docs/design/v1/multiprocess/worker_liveness.md:102 by ApostaC (lines-changed)
+I just realized one thing: previously, the transfer contexts and the ping module were handled by the same class, but now they are in two different classes. 
+
+Right now, it's more like a tree-structure:
+- MP Engine Context (owns all the sub modules and the storage manager)
+  - Management Module -- which answers PING, and has a reference to the MP Engine Context
+  - Transfer Module (GPU transfer or CPU transfer) -- which handles register KV cache, store, and retrieve -- it also has a reference to the MP module.
+
+The problem is that the Management Module cannot directly see the Transfer Modules.
+
+Therefore, maybe we need to do
+Management Module calls `self._ctx.xxx` when handling ping or reap -
+
+=== #3779 [3463822629] lmcache/v1/gpu_connector/utils.py:227 by ApostaC (file-unchanged)
+Design question: what's the problem if we reuse the existing `normalize_and_discover_format` but just passing the layers that belongs to the same engine-group at a time?
+
+Basically, we have
+```python
+layers_per_engine_group = _group_layers_by_engine_group_ids(....)
+for layers in layers_per_engine_group:
+    normalized_layers, kv_format = normalize_and_discover_format(...)
+```
+
+=== #3808 [3495026571] lmcache/integration/vllm/vllm_multi_process_adapter.py:1715 by ApostaC (lines-changed)
+One potential problem for LMCache-driven transfer.
+If the code is still the way I understand it, the worker adapter will hold the MessageQueueFutures returned by the LMCache-driven transfer context. The transfer_ctx itself does not know whether the transfer has finished or not. The worker adapter should query those futures and wait until they are finished.
+
+=== #3869 [3679348498] lmcache/v1/multiprocess/modules/lmcache_driven_transfer.py:None by ApostaC (no-line)
+Remove the changes in `store`/`retrieve` code path (keep the group layout desc registration)
+
+=== #3877 [3543858387] lmcache/v1/multiprocess/modules/lmcache_driven_transfer.py:147 by maobaolong (lines-changed)
+It's best to avoid including device type checks within the generic LMCache layer.
+
+=== #3877 [3543864444] lmcache/v1/multiprocess/modules/lmcache_driven_transfer.py:98 by maobaolong (lines-changed)
+ditto, this is equivalent to creating a specialization for MUSC within the general LMCache layer code.
+
+=== #3877 [3543873753] lmcache/v1/multiprocess/modules/lmcache_driven_transfer.py:128 by maobaolong (lines-changed)
+ditto
+
+=== #4042 [3633033001] lmcache/integration/vllm/lmcache_mp_connector.py:681 by KuntaiDu (lines-changed)
+from lmcache.experimental.engine_side import init_dispatcher
+`self.dispatcher = init_dispatcher(kwargs)`
+
+=== #4042 [3633043948] lmcache/integration/vllm/lmcache_mp_connector.py:784 by KuntaiDu (lines-changed)
+self.dispatcher.dispatch("register_kv_caches", **kwargs)
+
+=== #4042 [3633046216] lmcache/integration/vllm/lmcache_mp_connector.py:866 by KuntaiDu (lines-changed)
+self.dispatcher.dispatch("save_kv_layer", **kwargs)
+
+=== #4062 [3571407689] lmcache/integration/sglang/multi_process_adapter.py:327 by Shaoting-Feng (lines-changed)
+retrieve runs on every rank, which mat over-release daemon read locks
+
+=== #4079 [3745856118] lmcache/v1/multiprocess/modules/lmcache_driven_transfer.py:43 by hlin99 (lines-changed)
+overall, we need to make the lmcache_driven_transfer.py itsself very thin, also the connection with transfer descriptor & transfer plan.
+Ideally, 2 functions for each descriptor and plan, 1 is to build, 1 is to consume. all the descriptor/plan internal functions and structures are hidden as many as we can
+can you help check if this way can be achieved, or at least close to it.
+
+in the end, when next time, a new para is introduced in kernel/object group, we only need to modify common descriptor/plan, and leave lmcache_driven_transfer.py untouched. I feel this PR is still not there..
+
+=== #4196 [3632013018] docs/design/integration/vllm/lazy_offload.md:206 by maobaolong (file-changed-elsewhere)
+Shouldn't this be eager?
+
+=== #4218 [3670076106] operator/internal/resources/cacheblend_engine.go:None by ApostaC (no-line)
+We are not sure whether we will use Multi-connector-based PD disaggregation for Cacheblend. Let's maybe not do it for now?
+
+=== #4468 [3826989675] lmcache/v1/kv_layer_groups.py:697 by ApostaC (lines-changed)
+We should enforce "aux" state to be the last groups, so that normal vllms won't hit those aux states.
+
+=== #4639 [3826508379] lmcache/v1/distributed/storage_manager.py:841 by ruizhang0101 (lines-changed)
+can we use event driven instead of taking snapshot?
+
+=== #4639 [4988786836] overall by ruizhang0101 (None)
+At a high level, right now there are two paths for the capacity, one is event, the other is snapshot. Consider using only one path.
+
+=== #4639 [3826909561] lmcache/v1/mp_coordinator/http_apis/events_api.py:42 by ruizhang0101 (lines-changed)
+Can we make the capacity a new type of cache event called "config" and then make server config registry also a consumer of the cache event and then consume the config event and update.
+
+=== #4709 [5009870884] overall by DongDongJu (None)
+Hello @yhl-amd, Thanks for the contribution.
+Could we add an explicit per-request LOAD_FAILED or BYPASS_LMCACHE state that continues returning (0, False) until the request is locally admitted or finishes? 
+Please also add a regression test with two consecutive get_num_new_matched_tokens() calls and no intervening update_state_after_alloc().
+
+=== #4723 [3858664052] lmcache/v1/mp_coordinator/http_apis/quota_api.py:120 by ApostaC (file-unchanged)
+Like here, if we have OOT controllers, there will be problems.
+
+I can think of two ways to solve this in general:
+1. Pass the class names from the config
+2. Let the "controller package" register its own http_apis.
+
+I personally think 2 makes more sense.
+
+=== #4723 [5025696552] overall by ApostaC (None)
+Summarize of follow-up works:
+1. pluggable controllers: 
+  a. define standardized interface for controllers (start, stop, etc)
+  b. controllers do not see other controllers
+  c. HTTP APIs are part of the "controller package" (need refine on "what is a controller package")
+
+=== #4736 [3862855463] lmcache/integration/vllm/vllm_multi_process_adapter.py:1289 by superleo (lines-changed)
+we may need select the event type based on the actual transfer context: use an IPC event for LMCache-driven transfers and a normal local event for engine-driven transfers. Async engine-driven transfers must retain a local event rather than passing None.
+
+=== #4736 [3862888755] lmcache/integration/vllm/lmcache_mp_connector.py:537 by superleo (lines-changed)
+This connector still falls back to vLLM's vendored LMCacheMPWorkerAdapter, but create_and_record_event is only guaranteed on the LMCache-owned adapter. The fallback can therefore fail at request time with AttributeError. Before this PR, the connector created the event itself, so the vendored adapter did not require this API. Please add a compatibility helper, remove the fallback, or synchronize the vendored API; the store path and the 0180/0201 variants need the same treatment.
+
+=== #4836 [3898883072] lmcache/v1/multiprocess/transfer_context/worker_transfer.py:557 by andyluo7 (lines-changed)
+This retains the future, but not its producer `event`. A later store for the same request can overwrite `store_events[request_id]` while the server still uses the earlier IPC handle. Please call `future.retain_reference(event)` here and add a two-store/same-request lifetime test.
+

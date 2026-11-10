@@ -20,8 +20,9 @@ from lmreview.config import Config  # noqa: E402
 from lmreview.distill import ABSTRACT, ATTRIBUTE, EST, _ask, _fmt, _id, cluster  # noqa: E402
 from lmreview.score import load_gold  # noqa: E402
 
-# id -> role in the probe
-PROBE = {
+# probe sets: id -> role in the probe
+PROBES = {}
+PROBES["docex"] = {
     4066665554: "target    #5004 (test) ApostaC: replace prose docstring with a worked example",
     3448895452: "sibling   #3776 (train) ApostaC: hard to understand, use an illustrative example",
     3456756099: "sibling   #3776 (train) ApostaC: maybe have an example here",
@@ -32,10 +33,20 @@ PROBE = {
     3299865533: "unrelated #3248 (train) ApostaC: only TP? what about PP?",
     3299887479: "unrelated #3248 (train) ApostaC: duplicated code, make a helper",
 }
+PROBES["recovery"] = {
+    4238283183: "target    #5222 (test) zhengfeihe: renegotiate chunk size on recovery after LMCache restart",
+    4996346428: "sibling   #4662 (train) andyluo7: fast server restart loses registration; PING is not registration",
+    3833555656: "sibling   #4687 (train) rob-9: lazy heartbeat takes new server's token as baseline; recovery never runs",
+    3223576654: "contrast  #3231 (train) ApostaC: duplicate registration is a noop (restart semantics, knowledge)",
+    3314905220: "unrelated #3248 (train) ApostaC: docstring describes public behavior, not internals",
+    3448895452: "unrelated #3776 (train) ApostaC: hard to understand, use an illustrative example",
+    3299887479: "unrelated #3248 (train) ApostaC: duplicated code, make a helper",
+}
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--set", default="docex", choices=sorted(PROBES))
     ap.add_argument("--run", action="store_true")
     ap.add_argument("--effort", default="high")
     ap.add_argument("--max-cost", type=float, default=1.0)
@@ -44,6 +55,7 @@ def main() -> None:
     a = ap.parse_args()
     cfg = Config()
     _, cm = load_gold(cfg)
+    PROBE = PROBES[a.set]
     cs = [cm[i] for i in PROBE if not (a.train_only and "(test)" in PROBE[i])]
     for c in cs:
         print(f"[{c['id']}] {PROBE[c['id']]}")

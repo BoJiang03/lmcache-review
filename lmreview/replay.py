@@ -7,9 +7,9 @@ Each run is saved to <data>/runs/<reviewer>/<pr>-<commit8>.json and reused if pr
 
 from __future__ import annotations
 
+import hashlib
 import json
 import pathlib
-import random
 
 from .budget import capped_map
 from .config import Config
@@ -30,7 +30,8 @@ def _picked(s: dict, prs: list) -> bool:
 
 def load_samples(cfg: Config, split: str, limit: int | None, prs: list | None = None,
                  area: str | None = None) -> list[dict]:
-    """Samples of `split` in a fixed random order (same subset every time), optionally only `prs`
+    """Samples of `split` in a fixed random order (a hash of PR and commit, so adding or removing
+    samples does not reorder the others), optionally only `prs`
     (PR numbers or "PR:commit") or PRs whose files touch `area`. Samples whose gold is only
     approvals are skipped unless named in `prs`."""
     ss = [json.loads(l) for l in (cfg.data / "dataset" / "samples.jsonl").open()]
@@ -38,7 +39,7 @@ def load_samples(cfg: Config, split: str, limit: int | None, prs: list | None = 
     if area:
         meta = {p["pr"]: p for p in map(json.loads, (cfg.data / "dataset" / "prs.jsonl").open())}
         ss = [s for s in ss if area in meta[s["pr"]]["areas"]]
-    random.Random(0).shuffle(ss)
+    ss.sort(key=lambda s: hashlib.sha256(f"{s['pr']}-{s['commit']}".encode()).hexdigest())
     return ss[:limit] if limit else ss
 
 

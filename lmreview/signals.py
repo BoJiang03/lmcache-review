@@ -101,7 +101,8 @@ def signals_one(cfg: Config, run: dict, sample: dict, raw: dict, comments: list[
     """Signals for every finding of one run."""
     c0, head = run["commit"], raw["headRefOid"]
     merge = merge_commit(cfg, raw)
-    later = [c for c in comments if c["pr"] == run["pr"] and c["kind"] == "inline" and not c["is_bot"]
+    own = set(sample["gold_ids"])  # moved to this sample by samples.commit_at; their "commit" is GitHub's hint
+    later = [c for c in comments if c["pr"] == run["pr"] and c["id"] not in own and c["kind"] == "inline" and not c["is_bot"]
              and not c["is_pr_author"] and c["created"] > sample["time"] and c.get("commit")
              and c["commit"] != c0 and c.get("line_lo") and _has(cfg, c["commit"])]
     out = []
@@ -137,6 +138,7 @@ def signals(version: str = "v0", cfg: Config | None = None) -> str:
     sdir, odir = cfg.data / "scores" / version, cfg.data / "signals" / version
     odir.mkdir(parents=True, exist_ok=True)
     rows, sev_matched = [], C.Counter()
+    runs = [r for r in runs if (r["pr"], r["commit"]) in ss]  # score() reports the stale ones
     for r in runs:
         raw = json.loads((cfg.data / "raw" / "pr" / f"{r['pr']}.json").read_text())
         res = signals_one(cfg, r, ss[(r["pr"], r["commit"])], raw, comments)

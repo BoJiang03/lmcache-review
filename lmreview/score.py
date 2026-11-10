@@ -148,7 +148,9 @@ def judge(version: str, workers: int = 4, effort: str = "high", max_cost: float 
         runs = [r for r in runs if (r["pr"], r["commit"]) in ss]
     sdir = cfg.data / "scores" / version
     path = lambda r: sdir / f"{r['pr']}-{r['commit'][:8]}.json"  # noqa: E731
-    todo = [r for r in runs if not path(r).exists()]
+    def fresh(r: dict) -> bool:  # judged against the sample's current gold (it changes when the dataset is rebuilt)
+        return path(r).exists() and json.loads(path(r).read_text()).get("gold_ids") == ss[(r["pr"], r["commit"])]["gold_ids"]
+    todo = [r for r in runs if not fresh(r)]
     print(f"judge {version}: {len(runs)} runs, {len(todo)} to judge (est ${len(todo) * EST_COST:.0f}, "
           f"cap ${max_cost:.0f})", flush=True)
 

@@ -30,6 +30,7 @@ import tempfile
 from . import llm
 from .budget import capped_map
 from .config import RULES, Config
+from .ensemble import ensemble
 from .score import REPORTS, _normalize, load_gold
 
 BATCH = 30          # comments per attribution / coverage call
@@ -43,13 +44,17 @@ inference engines such as vLLM) from past human review comments.
 For each comment below (with its code hunk, what happened afterwards and the thread replies), decide:
 - "learnable": it follows from a standard, a recurring concern, or knowledge of this codebase or the
   engine that a reviewer could apply to FUTURE pull requests. Write the reason as a candidate rule:
-  the principle or fact behind the comment, not a restatement of this one fix. Keep what the
+  the principle or fact behind the comment, not a restatement of this one fix. If the reviewer
+  states the principle ("X does not belong in the generic layer", "use only one path"), the rule is
+  at that level; the mechanism this PR used (an inline type check, an event stream) is one instance
+  of it, not its condition. Keep what the
   reviewer asked the author to DO (e.g. "explain multi-step state changes in a docstring with a
   worked example of values before/after", not just "docstrings should be clear").
 - "context": it needs knowledge outside the code (an offline decision, roadmap, another PR's state).
 - "not_issue": a question, praise, or nothing actionable.
 - "rejected": the thread shows the suggestion was declined, withdrawn or judged wrong.
-Also give "paths": glob patterns of where the rule applies ([] = anywhere).
+Also give "paths": glob patterns of where the rule applies ([] = anywhere). Where the commented file
+happens to be is not a reason: a principle that would hold in any module gets [].
 
 Comments:
 {comments}
@@ -87,11 +92,22 @@ GENERAL = """How general "when" and "expect" must be:
   source PRs' particulars (numbers, identifiers, parameters, orderings, e.g. "128K tokens", "chunk
   size") do not belong in "expect" either: use the general term ("a long request", "every
   negotiated parameter") and put the particulars in "examples".
+- Level: read what the reviewer said (quoted under each candidate). When the reviewer states the
+  principle behind the ask (e.g. "there are two paths for X; use only one", "this is a vendor
+  specialization inside the generic layer"), write "when" and "expect" at the level of that stated
+  principle, even if the candidate is narrower. The mechanism the PR happened to use (an inline type
+  check, an event stream, a snapshot getter) goes to "examples", never into "when" as a condition.
 - Self-check before answering: for each noun, number or mechanism in "when" and "expect", ask whether
   it still holds for another PR of the same kind. If not, replace it with the general term and move
   the particular to "examples".
-- Counterfactual check: imagine two other PRs of the same kind that differ in those particulars. The
-  entry must apply to both word for word; rewrite it until it does."""
+- Counterfactual check: imagine two other PRs that break the same principle by a DIFFERENT mechanism
+  (e.g. a whole module instead of an inline branch; a polling loop instead of a snapshot API). The
+  entry must apply to both word for word; rewrite it until it does. But do not lift it above what the
+  reviewer said: no entry so broad that it fits any change ("keep the design clean").
+- "paths" limits where the reviewer is shown the entry at all. A "principle" gets [] (anywhere) unless
+  the principle itself only makes sense in that code; that the source comments sat in some directory
+  is not a reason (a "keep the shared layer feature-agnostic" rule from connector comments applies to
+  the server too). A "knowledge" entry is scoped to the code its fact is about."""
 
 ABSTRACT = """Each group below holds candidate review rules from LMCache human review comments that share
 one concern (with the PR numbers they came from). For each group write ONE rulebook entry for the
@@ -110,6 +126,28 @@ Groups:
 {groups}
 
 Answer with one JSON block only:
+```json
+[{{"group": 0, "kind": "principle", "when": "...", "expect": "...", "why": "...", "examples": ["..."], "paths": []}}]
+```"""
+
+# Merge step of an ensemble of ABSTRACT runs: one entry per group from several drafts of it.
+MERGE_ABSTRACT = """Several independent drafts were written for the rulebook entries of the groups below (each
+group: candidate review rules from LMCache human review comments, with what the reviewer said). The drafts
+differ by chance, mostly in how general they are. For each group write the ONE final entry:
+- Its level is the one the reviewer's own words support: read the quotes. Prefer the draft whose "when"
+  covers every mechanism by which a PR could break that stated principle; take the most precise
+  "expect" and the best examples from any draft. Do not go above what the reviewer said.
+- Skip a group only if most drafts skipped it.
+
+""" + GENERAL + """
+
+Groups:
+{groups}
+
+Drafts:
+{drafts}
+
+Answer with one JSON block only, in the same format as the drafts:
 ```json
 [{{"group": 0, "kind": "principle", "when": "...", "expect": "...", "why": "...", "examples": ["..."], "paths": []}}]
 ```"""
@@ -292,10 +330,11 @@ def _regress(rule: dict, old_ev: list[int], cm: dict, effort: str, cfg: Config, 
 
 def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evid: dict, out: str, cm: dict,
                     effort: str, cfg: Config, spend: list[float], max_cost: float,
-                    workers: int = 4) -> tuple[list[dict], list[dict]]:
+                    workers: int = 4, n: int = 3) -> tuple[list[dict], list[dict]]:
     """Apply new candidates (`items` keys "c...", grouped with the base entries "b<id>") to a rulebook.
 
-    Groups of new candidates only become new entries (ABSTRACT). Groups that mix existing entries
+    Groups of new candidates only become new entries (ABSTRACT, run `n` times and merged by
+    MERGE_ABSTRACT: the level of abstraction varies from run to run). Groups that mix existing entries
     with candidates, or hold several existing entries, go to REVISE: keep | evidence | generalize |
     merge | add | contradict. A generalized or merged entry keeps its id, gets version + 1 and
     a history line, and must still explain all its old evidence (else the rewrite is rejected and
@@ -317,13 +356,24 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
             r = base[k]
             return (f"- {k} = existing entry {r['id']} (v{r['version']}, {r.get('kind')}): When {r.get('when')}: "
                     f"{r.get('expect')} | examples: {'; '.join(r.get('examples') or [])} | paths {r.get('paths') or []}")
-        return f"- {k}: {items[k]}"
+        # the human words too: the candidate may already be narrower than the principle the reviewer stated
+        said = " | ".join(" ".join((cm[e].get("body") or "").split())[:400] for e in evid.get(k, []) if e in cm)
+        return f"- {k}: {items[k]}" + (f"\n    reviewer said: \"{said}\"" if said else "")
 
     def text(gb: list) -> str:
         return "\n\n".join(f"Group {i} ({g['concern']}):\n" + "\n".join(map(show, g["members"])) for i, g in gb)
 
     batches = [fresh[i:i + ABSTRACT_BATCH] for i in range(0, len(fresh), ABSTRACT_BATCH)]
-    res, cost = capped_map(lambda gb: _ask(ABSTRACT.format(groups=text(gb)), effort, cfg), batches, workers,
+    def abstract(gb: list) -> tuple[object, float]:
+        # n drafts, then a merge that settles the level (abstraction varies run to run)
+        def merge(ok: list) -> tuple[object, float]:
+            drafts = "\n\n".join(f"Draft {i}:\n{json.dumps(d, indent=1)}" for i, (d, _) in enumerate(ok, 1))
+            return _ask(MERGE_ABSTRACT.format(groups=text(gb), drafts=drafts), effort, cfg)
+        e = ensemble(lambda: _ask(ABSTRACT.format(groups=text(gb)), effort, cfg), n, merge,
+                     ok=lambda r: isinstance(r[0], list))
+        return e.result[0], sum(c for _, c in e.runs) + (e.merge[1] if e.merge else 0.0)
+
+    res, cost = capped_map(abstract, batches, workers,
                            max(0.0, max_cost - spend[0]), label=lambda gb: f"abstract {len(gb)} groups")
     spend[0] += cost
     for r in (x for part in res if isinstance(part, list) for x in part):
@@ -399,7 +449,8 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
 
 def distill(out: str, base: str | None = None, misses_of: str | None = None, area: str | None = None,
             limit: int | None = None, effort: str = "high", workers: int = 4, max_cost: float = 5.0,
-            reuse: str | None = None, keep_unaddressed: bool = False, cfg: Config | None = None) -> str:
+            reuse: str | None = None, keep_unaddressed: bool = False, cfg: Config | None = None,
+            n: int = 3) -> str:
     """Build rules/<out>.jsonl; returns a short summary. `max_cost` 0 = plan only (prints the estimate)."""
     cfg = cfg or Config()
     if (RULES / f"{out}.jsonl").exists():
@@ -409,7 +460,7 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     batches = [cs[i:i + BATCH] for i in range(0, len(cs), BATCH)]
     n_cand = int(len(cs) * 0.7)  # pilot: ~75% learnable
     est = (0 if reuse else len(batches) * EST["attribute"]) + (n_cand // CLUSTER_CHUNK + 1) * EST["cluster"] \
-        + (n_cand * 0.6 // ABSTRACT_BATCH + 1) * EST["abstract"]
+        + (n_cand * 0.6 // ABSTRACT_BATCH + 1) * EST["abstract"] * (n + 1 if n > 1 else 1)  # n drafts + merge
     print(f"distill {out}: {len(cs)} comments" + (f" missed by {misses_of}" if misses_of else "")
           + f", {len(batches)} attribution batches; est ${est:.1f}, cap ${max_cost:.1f}", flush=True)
     if max_cost <= 0:
@@ -446,7 +497,8 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
 
     _, cm = load_gold(cfg)
     base_rules = [json.loads(l) for l in (RULES / f"{base}.jsonl").open() if l.strip()] if base else []
-    rules, changes = update_rulebook(base_rules, groups, items, evid, out, cm, effort, cfg, spend, max_cost, workers)
+    rules, changes = update_rulebook(base_rules, groups, items, evid, out, cm, effort, cfg, spend, max_cost, workers,
+                                     n=n)
     spent = spend[0]
     (work / "changes.json").write_text(json.dumps(changes, indent=1))
     RULES.mkdir(exist_ok=True)

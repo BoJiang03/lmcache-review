@@ -63,6 +63,7 @@ def main(argv: list[str] | None = None) -> None:
     d.add_argument("--effort", default="high", choices=EFFORTS)
     d.add_argument("--workers", type=int, default=4)
     d.add_argument("--max-cost", type=float, default=5.0, help="0 = print the plan and estimate only")
+    d.add_argument("--n", type=int, default=3, help="abstraction drafts merged per batch (1 = a single draft)")
 
     sub.add_parser("audit", help="suggest rulebook entries to retire: paths gone, findings judged invalid, "
                                  "contested (free)").add_argument("rules", help="rulebook name")
@@ -95,7 +96,7 @@ def main(argv: list[str] | None = None) -> None:
     else:
         from .distill import distill
         print(distill(a.out, a.base, a.misses_of, a.area, a.limit, a.effort, a.workers, a.max_cost, a.reuse,
-                      a.keep_unaddressed))
+                      a.keep_unaddressed, n=a.n))
 
 
 if __name__ == "__main__":

@@ -59,6 +59,27 @@ PROBES["recovery-new"] = {
     4238283183: "new       #5222 (test) zhengfeihe: renegotiate chunk size on recovery after restart",
 }
 
+# miss1 #1: the three major misses of #4639 (train), against team-v1
+PROBES["m4639"] = {
+    3826508379: "single    #4639 (train) ruizhang0101: use event driven instead of taking a snapshot",
+    4988786836: "single    #4639 (train) ruizhang0101: capacity has two paths (event, snapshot); use only one",
+    3826909561: "single    #4639 (train) ruizhang0101: make capacity a 'config' cache event; registry consumes it",
+}
+
+# miss1 #2: the three major misses of #3877 (train), against team-v1
+PROBES["m3877"] = {
+    3543858387: "single    #3877 (train) maobaolong: avoid device type checks in the generic LMCache layer",
+    3543864444: "single    #3877 (train) maobaolong: ditto, a MUSA specialization inside general layer code",
+    3543873753: "single    #3877 (train) maobaolong: ditto",
+}
+
+# miss1 #3: the three major misses of #4042 (train); use with --base t1m3877b (maintain: generalize or add?)
+PROBES["m4042"] = {
+    3633033001: "single    #4042 (train) KuntaiDu: init a dispatcher in the connector",
+    3633043948: "single    #4042 (train) KuntaiDu: dispatcher.dispatch('register_kv_caches', ...)",
+    3633046216: "single    #4042 (train) KuntaiDu: dispatcher.dispatch('save_kv_layer', ...)",
+}
+
 def main() -> None:
     """Run attribute, cluster and rulebook update on one probe set and print the changes."""
     ap = argparse.ArgumentParser()
@@ -68,6 +89,7 @@ def main() -> None:
     ap.add_argument("--max-cost", type=float, default=1.0)
     ap.add_argument("--train-only", action="store_true", help="drop the test comments (fair rule for testing on them)")
     ap.add_argument("--json", help="write the resulting rulebook here")
+    ap.add_argument("--n", type=int, default=3, help="abstraction drafts to merge (1 = no ensemble)")
     ap.add_argument("--base", help="existing rulebook (rules/<name>.jsonl) to update instead of starting empty")
     a = ap.parse_args()
     cfg = Config()
@@ -100,7 +122,7 @@ def main() -> None:
     print("\n== cluster")
     for i, g in enumerate(groups):
         print(f"group {i} ({g['concern']}): " + ", ".join(g["members"]))
-    rules, changes = update_rulebook(base, groups, items, evid, "probe", cm, a.effort, cfg, spend, a.max_cost)
+    rules, changes = update_rulebook(base, groups, items, evid, "probe", cm, a.effort, cfg, spend, a.max_cost, n=a.n)
     print("\n== changes")
     for ch in changes:
         print(json.dumps(ch, ensure_ascii=False))

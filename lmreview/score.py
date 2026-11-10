@@ -18,7 +18,7 @@ import pathlib
 from . import llm
 from .budget import capped_map
 from .config import Config
-from .reviewer import prompt_template
+from .reviewer import prompt_template, rule_evidence
 from .schema import load_findings
 from .workspace import TOOLS, cached_pr, pr_meta, sample_workspace
 
@@ -146,6 +146,11 @@ def judge(version: str, workers: int = 4, effort: str = "high", max_cost: float 
         print(f"skipping {len(stale)} runs whose sample no longer exists: "
               + ", ".join(f"#{r['pr']}-{r['commit'][:8]}" for r in stale), flush=True)
         runs = [r for r in runs if (r["pr"], r["commit"]) in ss]
+    ev = rule_evidence(version)
+    leak = [r for r in runs if ev & set(ss[(r["pr"], r["commit"])]["gold_ids"])]
+    if leak:  # see replay: the rulebook was distilled from these samples' own human comments
+        print(f"skipping {len(leak)} runs whose sample the rulebook came from", flush=True)
+        runs = [r for r in runs if r not in leak]
     sdir = cfg.data / "scores" / version
     path = lambda r: sdir / f"{r['pr']}-{r['commit'][:8]}.json"  # noqa: E731
     def fresh(r: dict) -> bool:  # judged against the sample's current gold (it changes when the dataset is rebuilt)

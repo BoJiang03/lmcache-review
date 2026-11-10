@@ -15,7 +15,9 @@ from .schema import SCHEMA_VERSION, SEVERITIES, SchemaError, load_findings, pars
 from .workspace import TOOLS, live_workspace, pr_meta
 
 
-DEFAULT_REVIEWER = os.environ.get("LMREVIEW_REVIEWER", "v0b@high")  # the validated reviewer people should use
+# What people get out of the box. Rulebooks are versioned (team-v1, team-v2, ...): to update, build the
+# next version (`lmreview distill team-v2 --base team-v1`) and point this at it; old versions stay.
+DEFAULT_REVIEWER = os.environ.get("LMREVIEW_REVIEWER", "v0b+team-v1@high")
 
 
 def parse_reviewer(name: str) -> tuple[str, str | None, str]:
@@ -62,6 +64,15 @@ def load_rules(name: str) -> list[dict]:
     "evidence": [comment ids], "n_prs", "status", "area",
     "kind": "principle" | "knowledge"}."""
     return [json.loads(l) for l in (RULES / f"{name}.jsonl").open() if l.strip()]
+
+
+def rule_evidence(reviewer: str) -> set[int]:
+    """Human comments the reviewer's rulebook was distilled from (all entries, retired too).
+
+    A sample whose gold holds one of them cannot test this reviewer: the rule was written from the answer.
+    """
+    rules = parse_reviewer(reviewer.split("#")[0])[1]
+    return {e for r in load_rules(rules) for e in r.get("evidence") or []} if rules else set()
 
 
 def changed_paths(wt: pathlib.Path) -> list[str]:

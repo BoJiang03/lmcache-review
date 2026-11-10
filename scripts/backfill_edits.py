@@ -21,6 +21,11 @@ from lmreview.github import fetch_edits  # noqa: E402
 
 
 def one(path: pathlib.Path) -> str:
+    """Add `_edits` to the raw PR at `path` unless it already has force pushes.
+
+    Returns:
+        "had" if it already had them, "added" if they were fetched and saved.
+    """
     raw = json.loads(path.read_text())
     if "force_pushes" in raw.get("_edits", {}):
         return "had"
@@ -32,6 +37,7 @@ def one(path: pathlib.Path) -> str:
 
 
 def main() -> None:
+    """Backfill `_edits` for the dataset's raw PRs (or all of them with --all)."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--all", action="store_true", help="every raw PR, not just the dataset's")
     ap.add_argument("--workers", type=int, default=4)

@@ -60,6 +60,7 @@ PROBES["recovery-new"] = {
 }
 
 def main() -> None:
+    """Run attribute, cluster and rulebook update on one probe set and print the changes."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--set", default="docex", choices=sorted(PROBES))
     ap.add_argument("--run", action="store_true")

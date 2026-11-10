@@ -24,7 +24,7 @@ cwd, curl, web fetch and subagents (probe, 2026-11-09). Runs made before the har
 | --- | --- |
 | repo files | full snapshot of C via `git archive` (incl. the repo's own CLAUDE.md, AGENTS.md, .claude/skills); no `.git` |
 | `PR.diff` | `git diff merge-base(dev@t0, C)..C` |
-| `PR_HISTORY.md` | discussion strictly before t0: inline threads + replies, review bodies, PR comments, bot comments |
+| `PR_HISTORY.md` | discussion strictly before t0: inline threads + replies, review bodies, PR comments, bot comments; each text as it read at t0, not as later edited |
 | `_context/vllm/` | only for prompts that declare `<!-- context: vllm -->` (e.g. v0c): the `vllm/` package of vLLM main at the last commit before t0 (LMCache CI runs vLLM nightly); live review: current main |
 | `_context/dev_since_base.md` | only for prompts that declare `dev` (e.g. v0d): commits on the base branch between the PR's merge-base and the base tip at t0 that touch the PR's files, plus their diff on those files (capped at 150k chars); live review: current base tip |
 
@@ -32,7 +32,7 @@ cwd, curl, web fetch and subagents (probe, 2026-11-09). Runs made before the har
 
 | | Reviewer | Judge |
 | --- | --- | --- |
-| PR number, title, description | yes | yes |
+| PR number, title, description (replay: as they read at t0, from GitHub's edit history; see `lmreview/asof.py`) | yes | yes |
 | Task | review C; read CLAUDE.md/AGENTS.md if present | classify human comments, match them to AI findings, judge each AI finding's validity against the code |
 | Human reviews on C (gold) | **no** | yes |
 | AI findings | — | yes |

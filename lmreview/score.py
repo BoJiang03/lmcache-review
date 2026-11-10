@@ -104,7 +104,7 @@ def score_one(cfg: Config, run: dict, sample: dict, gold: list[dict], out: pathl
                    for f in load_findings(run) or []) or "(none)"
     ctx = prompt_template(run["version"])[1] if run.get("version") else ()
     with sample_workspace(cfg, sample, "judge", ctx) as (wt, _):
-        r = llm.run(PROMPT.format(human=human, ai=ai, **pr_meta(cached_pr(cfg, run["pr"]))), effort,
+        r = llm.run(PROMPT.format(human=human, ai=ai, **pr_meta(cached_pr(cfg, run["pr"], sample["time"]))), effort,
                     cwd=str(wt), tools=TOOLS)
     res = llm.extract_json(r["text"])
     res.update(pr=run["pr"], commit=run["commit"], cost=r["cost"], effort=effort, judge=JUDGE,

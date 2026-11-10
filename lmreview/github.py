@@ -87,3 +87,58 @@ def fetch_pr(n: int) -> dict:
     """Fetch one PR with everything the reviewer and the dataset need."""
     return gh_graphql(PR_Q, owner=REPO_OWNER, name=REPO_NAME, n=n)["repository"]["pullRequest"]
 
+
+# Edit history, so a replay can show text as it was at review time (see lmreview/asof.py).
+# Pass 1 finds which texts were ever edited; pass 2 pulls the versions of just those.
+EDITED_Q = """
+query($owner: String!, $name: String!, $n: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $n) {
+      lastEditedAt
+      userContentEdits(first: 100) { totalCount nodes { editedAt deletedAt diff } }
+      timelineItems(first: 50, itemTypes: [RENAMED_TITLE_EVENT]) {
+        nodes { ... on RenamedTitleEvent { createdAt previousTitle currentTitle } } }
+      reviews(first: 100) { nodes { id databaseId lastEditedAt } }
+      reviewThreads(first: 100) { nodes { comments(first: 50) { nodes { id databaseId lastEditedAt } } } }
+      comments(first: 100) { nodes { id databaseId lastEditedAt } }
+    }
+  }
+}"""
+
+VERSIONS_Q = """
+query {
+  nodes(ids: %s) {
+    id
+    ... on Comment { userContentEdits(first: 100) { totalCount nodes { editedAt deletedAt diff } } }
+  }
+}"""
+
+
+def _versions(conn: dict) -> list[dict]:
+    """[{at, text}] oldest first; text None where GitHub no longer has it. Raises if truncated."""
+    if conn["totalCount"] > len(conn["nodes"]):
+        raise RuntimeError(f"edit history truncated ({conn['totalCount']} edits)")
+    return [{"at": e["editedAt"], "text": None if e["deletedAt"] else e["diff"]} for e in reversed(conn["nodes"])]
+
+
+def fetch_edits(n: int) -> dict:
+    """Edit history of PR `n`'s title, description, reviews and comments.
+
+    Returns:
+        {"body": [{at, text}], "renames": [{at, from, to}],
+         "nodes": {"review:<databaseId>" | "thread:<databaseId>" | "comment:<databaseId>": [{at, text}]}}
+        Versions are oldest first; the first is the original text. Unedited texts are absent.
+    """
+    pr = gh_graphql(EDITED_Q, owner=REPO_OWNER, name=REPO_NAME, n=n)["repository"]["pullRequest"]
+    keyed = [(f"review:{r['databaseId']}", r) for r in pr["reviews"]["nodes"]]
+    keyed += [(f"thread:{c['databaseId']}", c) for t in pr["reviewThreads"]["nodes"] for c in t["comments"]["nodes"]]
+    keyed += [(f"comment:{c['databaseId']}", c) for c in pr["comments"]["nodes"]]
+    edited = {x["id"]: k for k, x in keyed if x["lastEditedAt"]}
+    nodes, ids = {}, list(edited)
+    for i in range(0, len(ids), 50):
+        for x in gh_graphql(VERSIONS_Q % json.dumps(ids[i:i + 50]))["nodes"]:
+            nodes[edited[x["id"]]] = _versions(x["userContentEdits"])
+    renames = [{"at": e["createdAt"], "from": e["previousTitle"], "to": e["currentTitle"]}
+               for e in pr["timelineItems"]["nodes"] if e]
+    return {"body": _versions(pr["userContentEdits"]), "renames": renames, "nodes": nodes}
+

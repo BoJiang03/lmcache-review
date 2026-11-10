@@ -20,6 +20,7 @@ import uuid
 import subprocess
 from collections.abc import Iterator
 
+from .asof import as_of
 from .config import REPO_URLS, Config
 from .history import format_history
 
@@ -122,9 +123,10 @@ def sample_workspace(cfg: Config, s: dict, tag: str, context: tuple[str, ...] = 
         yield wt, base
 
 
-def cached_pr(cfg: Config, pr: int) -> dict:
-    """The raw PR stored in the dataset (eval only)."""
-    return json.loads((cfg.data / "raw" / "pr" / f"{pr}.json").read_text())
+def cached_pr(cfg: Config, pr: int, at: str | None = None) -> dict:
+    """The raw PR stored in the dataset (eval only); with `at`, title and texts as they read then."""
+    raw = json.loads((cfg.data / "raw" / "pr" / f"{pr}.json").read_text())
+    return as_of(raw, at) if at else raw
 
 
 @contextlib.contextmanager

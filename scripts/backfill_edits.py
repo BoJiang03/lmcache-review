@@ -1,4 +1,4 @@
-"""Add `_edits` (edit history of title, description, reviews, comments) to raw PRs that lack it.
+"""Add `_edits` (edit history of title, description, reviews, comments; force pushes) to raw PRs.
 
 Read-only on GitHub; no LLM. Leaves every other field of the raw PR untouched, so the dataset
 (samples, gold) does not change; only what replays show as "text at review time" does.
@@ -22,7 +22,7 @@ from lmreview.github import fetch_edits  # noqa: E402
 
 def one(path: pathlib.Path) -> str:
     raw = json.loads(path.read_text())
-    if "_edits" in raw:
+    if "force_pushes" in raw.get("_edits", {}):
         return "had"
     raw["_edits"] = fetch_edits(raw["number"])
     tmp = path.with_suffix(".tmp")

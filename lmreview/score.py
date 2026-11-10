@@ -141,6 +141,11 @@ def judge(version: str, workers: int = 4, effort: str = "high", max_cost: float 
     ss, cm = load_gold(cfg)
     runs = [json.loads(p.read_text()) for p in sorted((cfg.data / "runs" / version).glob("*.json"))]
     runs = [r for r in runs if r["findings"] is not None]
+    stale = [r for r in runs if (r["pr"], r["commit"]) not in ss]
+    if stale:  # the dataset was rebuilt and the sample no longer exists (e.g. its commit was corrected)
+        print(f"skipping {len(stale)} runs whose sample no longer exists: "
+              + ", ".join(f"#{r['pr']}-{r['commit'][:8]}" for r in stale), flush=True)
+        runs = [r for r in runs if (r["pr"], r["commit"]) in ss]
     sdir = cfg.data / "scores" / version
     path = lambda r: sdir / f"{r['pr']}-{r['commit'][:8]}.json"  # noqa: E731
     todo = [r for r in runs if not path(r).exists()]

@@ -88,7 +88,8 @@ def fetch_pr(n: int) -> dict:
     return gh_graphql(PR_Q, owner=REPO_OWNER, name=REPO_NAME, n=n)["repository"]["pullRequest"]
 
 
-# Edit history, so a replay can show text as it was at review time (see lmreview/asof.py).
+# Edit and push history, so a replay can show text and code as they were at review time
+# (see lmreview/asof.py).
 # Pass 1 finds which texts were ever edited; pass 2 pulls the versions of just those.
 EDITED_Q = """
 query($owner: String!, $name: String!, $n: Int!) {
@@ -98,6 +99,8 @@ query($owner: String!, $name: String!, $n: Int!) {
       userContentEdits(first: 100) { totalCount nodes { editedAt deletedAt diff } }
       timelineItems(first: 50, itemTypes: [RENAMED_TITLE_EVENT]) {
         nodes { ... on RenamedTitleEvent { createdAt previousTitle currentTitle } } }
+      forcePushes: timelineItems(first: 100, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) {
+        pageInfo { hasNextPage } nodes { ... on HeadRefForcePushedEvent { createdAt beforeCommit { oid } afterCommit { oid } } } }
       reviews(first: 100) { nodes { id databaseId lastEditedAt } }
       reviewThreads(first: 100) { nodes { comments(first: 50) { nodes { id databaseId lastEditedAt } } } }
       comments(first: 100) { nodes { id databaseId lastEditedAt } }
@@ -122,10 +125,10 @@ def _versions(conn: dict) -> list[dict]:
 
 
 def fetch_edits(n: int) -> dict:
-    """Edit history of PR `n`'s title, description, reviews and comments.
+    """Edit history of PR `n`'s title, description, reviews and comments, and its force pushes.
 
     Returns:
-        {"body": [{at, text}], "renames": [{at, from, to}],
+        {"body": [{at, text}], "renames": [{at, from, to}], "force_pushes": [{at, before, after}],
          "nodes": {"review:<databaseId>" | "thread:<databaseId>" | "comment:<databaseId>": [{at, text}]}}
         Versions are oldest first; the first is the original text. Unedited texts are absent.
     """
@@ -140,5 +143,10 @@ def fetch_edits(n: int) -> dict:
             nodes[edited[x["id"]]] = _versions(x["userContentEdits"])
     renames = [{"at": e["createdAt"], "from": e["previousTitle"], "to": e["currentTitle"]}
                for e in pr["timelineItems"]["nodes"] if e]
-    return {"body": _versions(pr["userContentEdits"]), "renames": renames, "nodes": nodes}
+    fp = pr["forcePushes"]
+    if fp["pageInfo"]["hasNextPage"]:
+        raise RuntimeError("force-push history truncated (over 100 events)")
+    pushes = [{"at": e["createdAt"], "before": (e["beforeCommit"] or {}).get("oid"),
+               "after": (e["afterCommit"] or {}).get("oid")} for e in fp["nodes"] if e]
+    return {"body": _versions(pr["userContentEdits"]), "renames": renames, "force_pushes": pushes, "nodes": nodes}
 

@@ -31,9 +31,10 @@ def _picked(s: dict, prs: list) -> bool:
 def load_samples(cfg: Config, split: str, limit: int | None, prs: list | None = None,
                  area: str | None = None) -> list[dict]:
     """Samples of `split` in a fixed random order (same subset every time), optionally only `prs`
-    (PR numbers or "PR:commit") or PRs whose files touch `area`."""
+    (PR numbers or "PR:commit") or PRs whose files touch `area`. Samples whose gold is only
+    approvals are skipped unless named in `prs`."""
     ss = [json.loads(l) for l in (cfg.data / "dataset" / "samples.jsonl").open()]
-    ss = [s for s in ss if s["split"] == split and (not prs or _picked(s, prs))]
+    ss = [s for s in ss if s["split"] == split and (_picked(s, prs) if prs else not s.get("approval_only"))]
     if area:
         meta = {p["pr"]: p for p in map(json.loads, (cfg.data / "dataset" / "prs.jsonl").open())}
         ss = [s for s in ss if area in meta[s["pr"]]["areas"]]

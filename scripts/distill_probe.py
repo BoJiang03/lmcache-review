@@ -125,6 +125,16 @@ PROBES["m3231"] = {
     3223608962: "single    #3231 (train) ApostaC: unnecessarily complicated; think about the clear logic",
 }
 
+# m3231-001 read too narrowly (only corner-case latches): add train siblings of the same ask
+PROBES["m3231b"] = {
+    3313900972: "sibling   #3217 (train) YaoJiayi: we only need this line right?",
+    3277103036: "sibling   #3336 (train) ApostaC: no need for this fallback; c_ops is always compiled for MP",
+    3326817114: "sibling   #3359 (train) ApostaC: no backward compat needed; LMCache controls client and server",
+    3351063372: "sibling   #3492 (train) ApostaC: why introduce covered_keys?",
+    3406260333: "sibling   #3584 (train) ApostaC: no need for new l1_use_shm; raise when both set",
+    3611472206: "sibling   #4077 (train) ApostaC: remove this flag and NativePlanType",
+}
+
 def main() -> None:
     """Run attribute, cluster and rulebook update on one probe set and print the changes."""
     ap = argparse.ArgumentParser()

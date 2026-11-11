@@ -143,6 +143,14 @@ PROBES["m3779"] = {
     3463835774: "single    #3779 (train) ApostaC: existing fields identify the kernel group; no new field in the identity",
 }
 
+# miss1 #11: the misses of #4468 (train), against pk6
+PROBES["m4468"] = {
+    3826823085: "single    #4468 (train) ApostaC: generalize the special flag into extra_object_group_tag: int",
+    3826826836: "single    #4468 (train) ApostaC: this fix is probably out of the PR's scope; double check",
+    3826989675: "single    #4468 (train) ApostaC: enforce aux state groups last so normal vLLM never hits them",
+    3827038397: "single    #4468 (train) ApostaC: put aux layers with the same tokens_per_block in one engine group",
+}
+
 def main() -> None:
     """Run attribute, cluster and rulebook update on one probe set and print the changes."""
     ap = argparse.ArgumentParser()

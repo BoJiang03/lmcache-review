@@ -64,7 +64,11 @@ It reports everything it finds, so expect more findings than a human would write
 
 Design: `docs/mechanism.md`.
 
-There are four commands. Reviewers are named `<prompt>[+<rulebook>][@<effort>]`, e.g. `v0b+r2@high`.
+There are four commands. Reviewers are named `<prompt>[+<rulebook>][@<effort>][x<n>][-rc]`, e.g. `v0b+r2@high`.
+`x<n>` runs n reviews in parallel and merges them. `-rc` adds a rule-check run next to the review: one more agent
+that must give a verdict (applies, violated, why) on every applicable rule, merged with the review. It keeps a long
+rulebook from crowding out specific rules (on #3697, m3631-002 fired 0/2 with pk2 and 2/2 with pk2 `-rc`); it
+costs about $1–1.5 more per review.
 Paid commands take `--max-cost`. They stop starting new LLM calls once they reach it, and `0` prints the plan only.
 
 | Command | What it does |
@@ -102,6 +106,42 @@ it. Old versions stay, so their runs can be reproduced.
 `review` and `eval` skip samples whose human comments are evidence for an entry of the reviewer's
 rulebook, because that rule was written from the answer. Rules distilled from test comments therefore
 remove those samples from that reviewer's test set.
+
+### Rule lifecycle
+
+```
+human-only miss ──distill──> candidate ──A/B on a fair target──> corrected ──promotion gate──> team-vN
+                  (add, or merge into an existing entry;          (tests field)
+                   merged-away entries are retired, kept)
+```
+
+- **Candidate.** A new or changed entry. distill adds it, or merges it into the entry it generalizes.
+  `lmreview eval --rules` (coverage) shows which other train comments it explains. A topic match is not
+  enough: the rule's condition has to hold.
+- **Fair target.** A PR the rule was not distilled from, whose diff *adds* code that meets the
+  rule's condition. Moved code does not count. Run the same prompt with the rule and without it
+  (the control). The control has to miss.
+- **Record the result** with `lmreview.distill.record_test(book, rule, target, control, with_rule,
+  result)`. `result` is one of: corrected, both-hit, both-miss, uncited-gain, regressed.
+  `lmreview audit` shows corrected/run per entry, and flags active entries that have no corrected test.
+- **Working books** (`miss1-r4`, `-r5`, ...) are versions too. Runs name them, so keep them. Only
+  promote to `team-vN` through the gate above.
+
+### Keeping rules valid through edits
+
+A merge, generalization or rewrite can break a rule that worked. Users never see this happen, so
+every rulebook change is checked before it can be promoted:
+
+| Layer | When | Checks | Cost |
+| --- | --- | --- | --- |
+| 1. text | inside distill, on every rewrite; again in `regress` | The new text still explains the entry's evidence comments and its corrected test comments. If not, the rewrite is rejected. | ~$0.1 per entry |
+| 2. replay | `lmreview regress NEW --base OLD [--suffix=-rc]` | Each corrected test of a changed entry is re-reviewed with NEW (`--reps 2`). Every tested comment must be matched by a finding that cites the entry, in at least one run. | ~$1.6 per run |
+| 3. whole book | before promoting to `team-vN` | `lmreview eval` on test: fewer human-only misses and no rise in findings judged invalid. Catches dilution and over-firing that per-rule tests cannot see. | ~$30 |
+
+Tests follow merges: the surviving entry inherits the tests of the entries it absorbed, so they are
+replayed under its id. Replays are cached under `data/runs`, so rerunning `regress` costs nothing.
+`regress` writes `reports/regress_<book>.md`, with the verdict PASS, REGRESSED or INCOMPLETE (stopped
+by the cost cap).
 
 The current default is `v0b+team-v1@high`. `team-v1` holds five rules, each distilled from one
 review comment. They were added for out-of-the-box use before passing the promotion gate above.

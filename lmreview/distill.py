@@ -400,11 +400,14 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
         elif op in ("generalize", "merge") and bkeys and d.get("expect"):
             r = base[bkeys[0]]
             old_ev = _uniq(e for b in bkeys for e in base[b].get("evidence") or [])
+            tested = _uniq(c for b in bkeys for t in base[b].get("tests") or [] if t["result"] == "corrected"
+                           for c in t.get("comments") or [])
             if spend[0] >= max_cost:  # no budget left to verify the rewrite: keep the entries as they are
                 ch |= {"op": f"{op}-skipped", "why": "cost cap reached before the regression check"}
                 changes.append(ch)
                 continue
-            lost = _regress({"id": r["id"], **_entry(d)}, old_ev, cm, effort, cfg, spend)
+            # the rewrite must still explain what the entries stood for, and what they were shown to fix
+            lost = _regress({"id": r["id"], **_entry(d)}, _uniq(old_ev + tested), cm, effort, cfg, spend)
             if lost:  # the rewrite would stop explaining what the entry stood for: keep it, add the rewrite
                 ch |= {"op": f"{op}-rejected", "lost": lost}
                 if ev:  # a rewrite with no new evidence would only duplicate the entries kept
@@ -415,7 +418,9 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
                 r.update({k: v for k, v in _entry(d).items() if v is not None})
                 r["version"] += 1
                 r["evidence"] = _uniq(old_ev + ev)
-                for b in bkeys[1:]:
+                for b in bkeys[1:]:  # the merged entry inherits the tests, so `lmreview regress` replays them
+                    r["tests"] = list(r.get("tests") or []) + [{**t, "from": base[b]["id"]}
+                                                               for t in base[b].get("tests") or []]
                     base[b]["status"] = "retired"
                     base[b]["retired"] = {"date": today, "by": out, "reason": f"merged into {r['id']}"}
                 ch |= {"version": r["version"], "when": r["when"], "expect": r["expect"]}
@@ -565,6 +570,32 @@ def coverage(rules_name: str, split: str = "test", area: str | None = None, miss
     return "\n".join(L[:5])
 
 
+TEST_RESULTS = ("corrected", "both-hit", "both-miss", "uncited-gain", "regressed")
+
+
+def record_test(name: str, rule: str, target: str, control: str, treated: str, result: str, note: str = "",
+                comments: list[int] | None = None) -> None:
+    """Append one A/B record to entry `rule` of rules/<name>.jsonl (entry field "tests").
+
+    A fair target is a PR the rule was not distilled from whose diff ADDS code meeting the rule's
+    condition (moved code does not count), reviewed by `control` (same prompt, without the rule) and
+    `treated` (with it). result: corrected = control missed, treated hit citing the rule; both-hit /
+    both-miss = no signal; uncited-gain = treated hit without citing it; regressed = treated lost a hit.
+    `comments`: the human comment ids the rule is tested on (what `lmreview regress` replays and checks).
+    """
+    if result not in TEST_RESULTS:
+        raise ValueError(f"result must be one of {TEST_RESULTS}")
+    path = RULES / f"{name}.jsonl"
+    rules = [json.loads(l) for l in path.open() if l.strip()]
+    hit = [r for r in rules if r["id"] == rule]
+    if not hit:
+        raise KeyError(f"{rule} not in {name}")
+    hit[0].setdefault("tests", []).append({"target": target, "control": control, "with": treated,
+                                           "result": result, "note": note, "comments": comments or [],
+                                           "date": dt.date.today().isoformat()})
+    path.write_text("".join(json.dumps(r) + "\n" for r in rules))
+
+
 def audit(name: str, cfg: Config | None = None) -> str:
     """Free checks that suggest retiring entries of rules/<name> (it never changes the rulebook).
 
@@ -572,6 +603,8 @@ def audit(name: str, cfg: Config | None = None) -> str:
     - judged invalid: findings that cite the entry (runs of reviewers using this rulebook) and how
       the judge rated them
     - contested: later human comments asked for the opposite (set by distill's revise step)
+    - tests: the entry's A/B records (see record_test); "corrected" = the control missed, the rule
+      reviewer hit with a finding citing the entry. An active entry with no corrected test is a candidate.
     Writes reports/audit_<name>.md; returns it.
     """
     from .reviewer import parse_reviewer
@@ -596,15 +629,20 @@ def audit(name: str, cfg: Config | None = None) -> str:
                     cited[f["rule"]] += 1
                     valid[f["rule"]] += judged.get(f["id"]) is True
     L = [f"# Audit of rulebook {name}", "", "Suggestions only; retiring an entry is a decision.", "",
-         "| entry | status | v | evidence PRs | paths on dev | findings citing it | judged valid | suggestion |",
-         "| --- | --- | --- | --- | --- | --- | --- | --- |"]
+         "| entry | status | v | evidence PRs | paths on dev | findings citing it | judged valid | tests (corrected/run) "
+         "| suggestion |",
+         "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for r in rules:
         gone = bool(r.get("paths")) and not any(fnmatch.fnmatch(f, g) for g in r["paths"] for f in files)
         n, ok = cited[r["id"]], valid[r["id"]]
         why = (["retire? paths gone"] if gone else []) + (["review: mostly judged invalid"] if n >= 3 and ok / n < 0.5 else []) \
             + ([f"contested by {len(r['contested'])} comments"] if r.get("contested") else [])
+        tests = r.get("tests") or []
+        fixed = sum(t["result"] == "corrected" for t in tests)
+        if r.get("status", "active") == "active" and not fixed:
+            why.append("candidate: no corrected test" + ("" if tests else " (no target yet)"))
         L.append(f"| {r['id']} | {r.get('status', 'active')} | {r.get('version', 1)} | {r.get('n_prs')} | "
-                 f"{'gone' if gone else 'ok'} | {n} | {ok} | {'; '.join(why)} |")
+                 f"{'gone' if gone else 'ok'} | {n} | {ok} | {fixed}/{len(tests)} | {'; '.join(why)} |")
     (REPORTS / f"audit_{name}.md").write_text("\n".join(L) + "\n")
     return "\n".join(L)
 

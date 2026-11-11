@@ -1,4 +1,4 @@
-"""Command line: `lmreview sync|review|eval|distill|audit`.
+"""Command line: `lmreview sync|review|eval|distill|audit|regress`.
 
 A reviewer is named <prompt>[+<rules>][@<effort>], e.g. v0b+r1@high (rules = rules/r1.jsonl).
 Paid commands stop starting new LLM calls once --max-cost is reached. Nothing is posted to GitHub.
@@ -67,6 +67,13 @@ def main(argv: list[str] | None = None) -> None:
 
     sub.add_parser("audit", help="suggest rulebook entries to retire: paths gone, findings judged invalid, "
                                  "contested (free)").add_argument("rules", help="rulebook name")
+    g = sub.add_parser("regress", help="after a rulebook change: check changed entries still explain their "
+                                       "evidence and still fix their corrected tests (paid: replays)")
+    g.add_argument("rules", help="the changed rulebook")
+    g.add_argument("--base", help="the rulebook it was built from (default: check every tested entry)")
+    g.add_argument("--reps", type=int, default=2, help="runs per replayed test; a case regresses if all miss")
+    g.add_argument("--max-cost", type=float, default=10.0, help="0 = print the plan and estimate only")
+    g.add_argument("--suffix", default="", help="appended to the replay reviewer, e.g. -rc for the rule check")
 
     a = ap.parse_args(argv)
     if getattr(a, "parallel", 1) > 1:
@@ -90,6 +97,9 @@ def main(argv: list[str] | None = None) -> None:
     elif a.cmd == "eval":
         from .evaluate import evaluate
         print(evaluate(a.reviewer, a.vs, a.workers, a.judge_effort, a.max_cost))
+    elif a.cmd == "regress":
+        from .regress import regress
+        print(regress(a.rules, a.base, a.reps, a.max_cost, suffix=a.suffix))
     elif a.cmd == "audit":
         from .distill import audit
         print(audit(a.rules))

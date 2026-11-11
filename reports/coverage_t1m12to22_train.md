@@ -1,0 +1,15 @@
+# Coverage of t1m12to22 on train
+
+- comments checked: 1517 of 1517; explained by some entry: 24 (2%)
+- entries used at least once: 8 of 8; cost $4.76
+
+| entry | kind | train PRs | held-out comments explained | rule |
+| --- | --- | --- | --- | --- |
+| m3869-x4 | principle | 1 | 8 | When A docstring describes what a function computes in terse set-algebra or shorthand phrasing that the reader has to decode, or the function acquires locks, pins or references that are released somewhere other than inside the function.: Ask for the docstring to state in plain words what the function computes and from which inputs. For  |
+| m4836-x8 | principle | 1 | 5 | When An asynchronous request hands another process a handle to a locally owned resource, such as an exported IPC handle of a device event or buffer, and the local reference to that resource is kept somewhere a later submission can overwrite or free, such as a per-request or per-key slot.: Ask for the resource's lifetime to be tied to the submission's own completion object, so that the fu |
+| m3808-x1 | principle | 1 | 4 | When A change makes a primary behavior (an operating mode, a routing choice, a feature on/off switch) selectable or configurable through an environment variable.: Ask for the behavior to be selected through a CLI argument, or an explicit and documented config fie |
+| m3477-x6 | principle | 1 | 2 | When Observability data emitted on a hot path (events, metrics, log records) gains a field whose size grows with the workload, such as a full list of keys, objects or tokens, or a compact field is replaced by such a collection.: Ask for the payload to carry compact scalars such as counts, ids or sizes. If a finer breakdown is n |
+| m4709-x7 | knowledge | 1 | 2 | When A change touches how the vLLM connector's scheduler side reports or records matched/loadable tokens for a request, especially how a load failure or a decision to bypass LMCache is handled.: vLLM may call get_num_new_matched_tokens() several times for the same request without an update_stat |
+| m3223-x5 | principle | 1 | 1 | When An external or remote API (HTTP, RPC, control plane) is designed so that clients retrieve or upload bulk cached data, such as KV tensors, as payloads in order to operate on it outside the component that holds it.: Ask for the data to stay where it lives. The API should pass handles, keys or pointers, and clients  |
+| m3808-x2 | principle | 1 | 1 | When A new method or hook is added to a base class or interface that has several implementations, and the base class gives it a default body (no-op, `pass`, `return None`) that subclasses inherit silently.: Ask for the new method to be declared abstract in the base class. Every existing subclass must imple |
+| m3808-x3 | knowledge | 1 | 1 | When A change adds or modifies a synchronization point that must wait for in-flight LMCache-driven transfers to finish, such as a preemption flush or a wait before paged KV blocks are reused or overwritten.: Check that the wait queries the completion futures the worker adapter holds, which are the ones retu |

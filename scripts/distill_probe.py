@@ -80,6 +80,51 @@ PROBES["m4042"] = {
     3633046216: "single    #4042 (train) KuntaiDu: dispatcher.dispatch('save_kv_layer', ...)",
 }
 
+# miss1 #4: the two major misses of #3631 (train), against miss1-r4
+PROBES["m3631"] = {
+    3405496325: "single    #3631 (train) ApostaC: PING on SYNC dispatch shares the thread with slow REGISTER_KV_CACHE",
+    3405567725: "single    #3631 (train) ApostaC: management module can't see transfer modules; route via MPEngineContext",
+}
+
+# miss1 #5: the misses of #4723 (train), against miss1-r5
+PROBES["m4723"] = {
+    3858664052: "single    #4723 (train) ApostaC: quota_api names concrete controllers; OOT controllers break; packages register own APIs",
+    5025696552: "single    #4723 (train) ApostaC: follow-ups: controller interface, controllers don't see each other, APIs in package",
+    3858548304: "single    #4723 (train) ApostaC: OOT coordinators may need extra config (extra_config field)",
+    3858673315: "single    #4723 (train) ApostaC: why is get_durable_components a method of View",
+}
+
+# miss1 #6: the two major misses of #4736 (train), against miss1-r6
+PROBES["m4736"] = {
+    3862855463: "single    #4736 (train) superleo: pick IPC vs local event by transfer mode; engine-driven keeps a local event",
+    3862888755: "single    #4736 (train) superleo: connector falls back to vLLM's vendored adapter, which lacks the new method",
+}
+
+# miss1 #7: the misses of #3485 (train), against miss1-r7
+PROBES["m3485"] = {
+    3424943905: "single    #3485 (train) ApostaC: spec holds a raw ref to kv_caches; GPU KV refs must go on engine disconnect",
+    3424917792: "single    #3485 (train) ApostaC: non-MP-only helper should carry an lmcache_deprecate warning",
+    3424928429: "single    #3485 (train) ApostaC: base class: say which functions are MP and which non-MP only",
+    3397484415: "single    #3485 (train) maobaolong: one spec per file, discovered dynamically, not a manual registry",
+    3397500084: "single    #3485 (train) maobaolong: strategy pattern (format detectors) instead of if/elif",
+}
+
+# miss1 #8: the misses of #4079 (train), against miss1-r8
+PROBES["m4079"] = {
+    3745856118: "single    #4079 (train) hlin99: transfer module thin; descriptor/plan expose build+consume, internals hidden",
+    3745857294: "single    #4079 (train) hlin99: change signature and move this helper out of the file",
+    3745868321: "single    #4079 (train) hlin99: move out so contract changes leave lmcache_driven_transfer untouched",
+    3745869082: "single    #4079 (train) hlin99: ditto, move out of the file",
+}
+
+# miss1 #9: the misses of #3231 (train), against pk3 (principles + knowledge)
+PROBES["m3231"] = {
+    3223576654: "single    #3231 (train) ApostaC: duplicate registration of an existing instance must stay a noop (#3208)",
+    3223589685: "single    #3231 (train) ApostaC: design doc keeps AI planning details; keep only the final design",
+    3223595657: "single    #3231 (train) ApostaC: why introduce this? could be over design",
+    3223608962: "single    #3231 (train) ApostaC: unnecessarily complicated; think about the clear logic",
+}
+
 def main() -> None:
     """Run attribute, cluster and rulebook update on one probe set and print the changes."""
     ap = argparse.ArgumentParser()

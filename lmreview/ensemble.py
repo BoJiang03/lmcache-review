@@ -7,7 +7,7 @@ of the same groups, then a merge that picks the level the human comments support
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable, Generic, TypeVar
+from typing import Callable, Generic, Sequence, TypeVar
 
 R = TypeVar("R")
 
@@ -28,7 +28,7 @@ class Ensemble(Generic[R]):
 
 
 def ensemble(once: Callable[[], R], n: int, merge: Callable[[list[R]], R],
-             ok: Callable[[R], bool] = lambda r: True) -> Ensemble[R]:
+             ok: Callable[[R], bool] = lambda r: True, extra: Sequence[Callable[[], R]] = ()) -> Ensemble[R]:
     """Call `once` n times in parallel and merge the usable results.
 
     A run that raises or is not `ok` is left out; a merge that raises or is not `ok` falls back to the
@@ -39,6 +39,8 @@ def ensemble(once: Callable[[], R], n: int, merge: Callable[[list[R]], R],
         n: how many runs; 1 = just `once()`, no merge (exceptions propagate as before).
         merge: combines >= 2 usable results into one (usually one more LLM call).
         ok: whether a result is usable (e.g. its output parsed).
+        extra: other steps run alongside the n runs and merged with them (e.g. a rule check next to
+            the reviews); their results come after the n runs' in `runs`.
 
     Returns:
         An Ensemble. With fewer than 2 usable runs nothing is merged: the result is the usable run, or
@@ -47,18 +49,19 @@ def ensemble(once: Callable[[], R], n: int, merge: Callable[[list[R]], R],
     Raises:
         Exception: the first run's exception, when every run raised.
     """
-    if n <= 1:
+    if n <= 1 and not extra:
         r = once()
         return Ensemble(r, [r])
+    calls = [once] * max(n, 1) + list(extra)
 
-    def safe() -> R | Exception:
+    def safe(call: Callable[[], R]) -> R | Exception:
         try:
-            return once()
+            return call()
         except Exception as e:  # one failed call must not sink the others
             return e
 
-    with ThreadPoolExecutor(n) as ex:
-        out = list(ex.map(lambda _: safe(), range(n)))
+    with ThreadPoolExecutor(len(calls)) as ex:
+        out = list(ex.map(safe, calls))
     runs = [r for r in out if not isinstance(r, Exception)]
     if not runs:
         raise out[0]

@@ -135,6 +135,14 @@ PROBES["m3231b"] = {
     3611472206: "sibling   #4077 (train) ApostaC: remove this flag and NativePlanType",
 }
 
+# miss1 #10: the misses of #3779 (train), against pk5
+PROBES["m3779"] = {
+    3463822629: "single    #3779 (train) ApostaC: reuse normalize_and_discover_format per engine group instead of a new path",
+    3463824362: "single    #3779 (train) ApostaC: update the HTTP API instead of returning group_formats[0]",
+    3463830375: "single    #3779 (train) ApostaC: report_status must report a format per kernel group too",
+    3463835774: "single    #3779 (train) ApostaC: existing fields identify the kernel group; no new field in the identity",
+}
+
 def main() -> None:
     """Run attribute, cluster and rulebook update on one probe set and print the changes."""
     ap = argparse.ArgumentParser()

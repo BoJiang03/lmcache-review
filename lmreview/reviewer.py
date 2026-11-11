@@ -21,19 +21,20 @@ from .workspace import TOOLS, live_workspace, pr_meta
 DEFAULT_REVIEWER = os.environ.get("LMREVIEW_REVIEWER", "v0b+team-v1@high")
 
 
-_NAME = re.compile(r"([\w.-]+?)(?:\+([\w.-]+?))?(?:@([a-z]+))?(?:x(\d+))?")
+_NAME = re.compile(r"([\w.-]+?)(?:\+([\w.-]+?))?(?:@([a-z]+))?(?:x(\d+))?(-rc)?")
 
 
 def parse_reviewer(name: str) -> tuple[str, str | None, str]:
-    """A reviewer is named `<prompt>[+<rules>][@<effort>][x<n>]`, e.g. `v0b+r1@high` or `v0b+r1@highx3`
-    (x3: three runs in parallel, then one merge run; see parallel_of).
+    """A reviewer is named `<prompt>[+<rules>][@<effort>][x<n>][-rc]`, e.g. `v0b+r1@high` or
+    `v0b+r1@highx3` (x3: three runs in parallel, then one merge run; see parallel_of; -rc: see
+    rulecheck_of).
 
     Returns:
         (prompt version, rulebook name or None, effort; default "high").
     """
     m = _NAME.fullmatch(name)
     if not m:
-        raise ValueError(f"bad reviewer name {name!r}; expected <prompt>[+<rules>][@<effort>][x<n>]")
+        raise ValueError(f"bad reviewer name {name!r}; expected <prompt>[+<rules>][@<effort>][x<n>][-rc]")
     return m[1], m[2], m[3] or "high"
 
 
@@ -41,6 +42,13 @@ def parallel_of(name: str) -> int:
     """How many reviewer runs `name` asks for (its `x<n>` suffix; 1 without one)."""
     m = _NAME.fullmatch(name.split("#")[0])
     return int(m[4]) if m and m[4] else 1
+
+
+def rulecheck_of(name: str) -> bool:
+    """Whether `name` asks for a rule-check run next to the reviews (`-rc` suffix, needs a rulebook):
+    one more agent that must give a verdict on every applicable rule, merged with the reviews."""
+    m = _NAME.fullmatch(name.split("#")[0])
+    return bool(m and m[5] and m[2])
 
 
 def prompt_template(version: str) -> tuple[str, tuple[str, ...]]:
@@ -92,18 +100,28 @@ def changed_paths(wt: pathlib.Path) -> list[str]:
     return sorted(set(re.findall(r"^diff --git a/\S+ b/(\S+)", d, re.M)))
 
 
-def rules_section(rules: list[dict], paths: list[str]) -> str:
-    """The prompt section with the active rules that apply to `paths` (rules without paths always apply)."""
+def applicable(rules: list[dict], paths: list[str]) -> list[dict]:
+    """The active rules that apply to `paths` (rules without paths always apply)."""
     use = [r for r in rules if r.get("status", "active") == "active"]
-    use = [r for r in use if not r.get("paths")
-           or any(fnmatch.fnmatch(p, g) for p in paths for g in r["paths"])]
-    if not use:
-        return ""
+    return [r for r in use if not r.get("paths") or any(fnmatch.fnmatch(p, g) for p in paths for g in r["paths"])]
+
+
+def rule_lines(use: list[dict]) -> list[str]:
+    """One prompt line per rule: id, kind (and principle, if it is a specialization of one), text."""
     def text(r: dict) -> str:
         t = f"When {r['when']}: {r['expect']}" if r.get("expect") else r.get("rule", "")
         t = t.rstrip(".") + "." + (f" Why: {r['why']}" if r.get("why") else "")
         return t + (f" E.g. {r['examples'][0]}" if r.get("examples") else "")
-    lines = [f"- [{r['id']}] ({r.get('kind', 'principle')}) {text(r)}" for r in use]
+    return [f"- [{r['id']}] ({r.get('kind', 'principle')}" + (f", under {r['principle']}" if r.get("principle") else "")
+            + f") {text(r)}" for r in use]
+
+
+def rules_section(rules: list[dict], paths: list[str]) -> str:
+    """The prompt section with the active rules that apply to `paths` (rules without paths always apply)."""
+    use = applicable(rules, paths)
+    if not use:
+        return ""
+    lines = rule_lines(use)
     return ("\n\nTeam rules distilled from past LMCache reviews. Check the change against the ones "
             "that apply; when a finding follows from a rule, put its id in the finding's \"rule\" "
             "field. A rule finding must be about code this PR adds or changes: do not raise a rule "
@@ -124,6 +142,7 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER) 
     """
     version, rules, effort = parse_reviewer(reviewer.split("#")[0])
     prompt = prompt_template(version)[0].format(**pr_meta(raw))
+    use = applicable(load_rules(rules), changed_paths(wt)) if rules else []
     if rules:
         sec = rules_section(load_rules(rules), changed_paths(wt))
         prompt = prompt.replace("\nFinish with one JSON block", sec + "\nFinish with one JSON block", 1) \
@@ -131,20 +150,27 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER) 
     system = prompt_system(version)
     meta = {"schema_version": SCHEMA_VERSION, "effort": effort, "version": version, "rules": rules,
             "reviewer": reviewer}
-    n = parallel_of(reviewer)
+    n, rc = parallel_of(reviewer), rulecheck_of(reviewer) and bool(use)
 
     def once() -> dict:
         return _parsed(llm.run(prompt, effort, cwd=str(wt), tools=TOOLS, system=system))
 
+    def rulecheck() -> dict:  # must give a verdict per rule, so a long rulebook cannot crowd rules out
+        p = (PROMPTS / "rulecheck.md").read_text().format(rules="\n".join(rule_lines(use)), **pr_meta(raw))
+        return _parsed(llm.run(p, effort, cwd=str(wt), tools=TOOLS, system=system), rulecheck=True)
+
     def merge(ok: list[dict]) -> dict:  # one more agent run on the same workspace: it may read code
-        reviews = "\n\n".join(f"Run {i}:\n{json.dumps(x['findings'], indent=1)}" for i, x in enumerate(ok, 1))
+        reviews = "\n\n".join(f"Run {i}" + (" (rule check: only team-rule violations, not a full review)"
+                                            if x.get("kind") == "rulecheck" else "")
+                              + f":\n{json.dumps(x['findings'], indent=1)}" for i, x in enumerate(ok, 1))
         return _parsed(llm.run((PROMPTS / "merge.md").read_text().format(n=len(ok), reviews=reviews,
                                                                          **pr_meta(raw)),
                                effort, cwd=str(wt), tools=TOOLS, system=system))
 
-    e = ensemble(once, n, merge, ok=lambda x: x["findings"] is not None)
-    if n == 1:
+    e = ensemble(once, n, merge, ok=lambda x: x["findings"] is not None, extra=[rulecheck] if rc else [])
+    if n == 1 and not rc:
         return {**e.result, **meta}
+    n += rc  # the rule check counts as a run for "support"
     out = dict(e.result)
     if not e.merged and out["findings"] is not None:  # one usable run, or the merge failed: unmerged
         out["findings"] = [{**f, "support": 1} for f in out["findings"]]
@@ -152,19 +178,27 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER) 
     keep = {"parallel": n, "merged": e.merged, "merge_cost": merge_cost,
             "merge_error": None if e.merged or not e.merge else e.merge["error"],
             # raw kept per run so scripts/reparse_invalid.py can recover any of them
-            "runs": [{k: x[k] for k in ("findings", "error", "raw", "cost", "turns")} for x in e.runs]}
+            "runs": [{k: x[k] for k in ("findings", "error", "raw", "cost", "turns", "kind", "verdicts") if k in x}
+                     for x in e.runs]}
     return {**out, "cost": sum(x["cost"] for x in e.runs) + merge_cost, **keep, **meta}
 
 
-def _parsed(r: dict) -> dict:
-    """One llm.run result as run-file fields: findings (None if unparsable) and the error."""
-    findings, error = None, None
+def _parsed(r: dict, rulecheck: bool = False) -> dict:
+    """One llm.run result as run-file fields: findings (None if unparsable) and the error; a rule check
+    (rulecheck.md output: {"verdicts", "findings"}) also keeps its per-rule verdicts."""
+    findings, error, verdicts = None, None, None
     try:
-        findings = to_dicts(parse_findings(llm.extract_json(r["text"])))
+        obj = llm.extract_json(r["text"])
+        if rulecheck:
+            if not isinstance(obj, dict):
+                raise SchemaError("rule check output must be an object with verdicts and findings")
+            verdicts, obj = obj.get("verdicts"), obj.get("findings") or []
+        findings = to_dicts(parse_findings(obj))
     except (ValueError, SchemaError) as e:  # SchemaError is a ValueError; kept explicit for clarity
         error = str(e)
-    return {"findings": findings, "error": error, "raw": r["text"], "cost": r["cost"], "turns": r["turns"],
-            "denials": r["denials"]}
+    out = {"findings": findings, "error": error, "raw": r["text"], "cost": r["cost"], "turns": r["turns"],
+           "denials": r["denials"]}
+    return out | ({"kind": "rulecheck", "verdicts": verdicts} if rulecheck else {})
 
 
 def review_pr(pr: int, commit: str | None = None, reviewer: str = DEFAULT_REVIEWER,

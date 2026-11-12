@@ -434,12 +434,52 @@ def vet_step(max_cost: float = 30.0, reps: int = 1, everything: bool = False, cf
                 + ("; failed comments stay to_distill: `lmreview distill` tries again" if out["failed"] else ""))
 
 
+def pick_samples(prs: list[int | str], cfg: Config | None = None) -> list[str]:
+    """Expand a round's sample specs: "PR:commit" stays as it is; a bare PR number becomes the commits of
+    that PR where some judged run on disk (any reviewer) missed a change request / nit that is not yet in
+    the ledger. A PR with no judged run on any of its samples keeps all of them (nothing is known yet).
+
+    Returns:
+        "PR:commit8" specs, in the given order.
+    """
+    from .score import load_gold
+    cfg = cfg or Config()
+    ss, _ = load_gold(cfg)
+    rows, out = ledger(), []
+    for spec in prs:
+        if ":" in str(spec):
+            out.append(str(spec))
+            continue
+        pr = int(spec)
+        mine = [(c, s) for (p, c), s in ss.items() if p == pr and s.get("split") == "train"]
+        judged, keep = False, []
+        for c, s in mine:
+            missed = set()
+            for f in (cfg.data / "scores").glob(f"*/{pr}-{c[:8]}.json"):
+                if f.parent.name.startswith("_"):
+                    continue
+                judged = True
+                sc = json.loads(f.read_text())
+                gold = sc.get("gold_ids") or s["gold_ids"]
+                missed |= {int(gold[h["id"]]) for h in sc.get("human") or []
+                           if h.get("type") in ("change_request", "nit") and not h.get("matched_ai")
+                           and isinstance(h.get("id"), int) and h["id"] < len(gold)}
+            if missed - set(rows):
+                keep.append(f"{pr}:{c[:8]}")
+        picked = keep if judged else [f"{pr}:{c[:8]}" for c, _ in mine]
+        note(f"#{pr}: {len(picked)} of {len(mine)} samples" + ("" if judged else " (none judged yet: all)")
+             + (f": {', '.join(x.split(':')[1] for x in picked)}" if picked else ""), "dim")
+        out += picked
+    return out
+
+
 def round_(prs: list[int | str], review_cost: float = 30.0, judge_cost: float = 10.0, distill_cost: float = 5.0,
            vet_cost: float = 30.0, cfg: Config | None = None) -> str:
-    """One round on samples `prs` (PR numbers or PR:commit): review with the book in use, judge, then
+    """One round on samples `prs` (PR:commit, or PR numbers: see pick_samples): review with the book in use, judge, then
     distill + vet until their comments are all resolved / not rulable / needs_human (at most MAX_TRIES)."""
     from .replay import replay
     rv = reviewer()
+    prs = pick_samples(prs, cfg)
     nums = {int(str(p).split(":")[0]) for p in prs}
     out = []
     with step("round", f"{len(prs)} sample spec(s) {' '.join(map(str, prs))}; book {vname(head())}; caps review "

@@ -112,18 +112,22 @@ remove those samples from that reviewer's test set.
 ```
 human-only misses ─┐
 failure signals ───┴─distill──> NEW book ──vet NEW --base OLD --write NEXT──> NEXT (the passing part)
- (findings citing   0 screen with OLD          1 generality flags (free)
-  an entry, judged  1 attribute                2 effect: source PRs, OLD vs NEW
-  invalid)          2 cluster with OLD entries 2b revisions: their trigger is fixed
-                    3 abstract (3 drafts)      3 side effects: affected OLD entries' sources
-                    4 update: add | evidence | parent principle | revise | retire
-                    5 induce: standalone entries under principles
+ (findings citing   1 judge the runs of OLD    1 generality flags (free)
+  an entry, judged  2 attribute                2 effect: source PRs, OLD vs NEW
+  invalid)          3 cluster with OLD entries 2b revisions: their trigger is fixed
+                    4 abstract (3 drafts)      3 side effects: affected OLD entries' sources
+                    5 update: add | evidence | parent principle | revise | retire
+                    6 induce: standalone entries under principles
                                               ...later: fair-target A/B, whole-book eval -> team-vN
 ```
 
-- **distill** (`lmreview distill OUT --base OLD --misses-of R --screen-with v0c`):
-  - Step 0 re-reviews the comments' samples with `v0c+OLD@high-rc` and drops what it already
-    catches (cached; vet reuses the runs).
+- **review → distill → vet.** review produces runs; distill learns from them; vet decides what to keep.
+- **distill** (`lmreview distill OUT --base OLD --misses-of v0c+OLD@high-rc --prs N ...`) does not
+  review. First run `lmreview review` with the OLD book on the train PRs to learn from, so the misses
+  are OLD's own. distill then:
+  - Step 1 judges those runs against the human comments (cached; vet reuses runs and scores). The
+    missed comments are what to learn. Findings citing an OLD entry that were judged invalid are its
+    failure signals.
   - Additions are the normal case: a new entry, evidence on an existing one, or a parent principle
     above existing entries, which stay as written and are linked by `principle`/`members`.
   - An existing entry is rewritten (`revise`: version + 1, old text in `history`) or `retire`d only
@@ -152,8 +156,8 @@ failure signals ───┴─distill──> NEW book ──vet NEW --base OLD 
     - lost or unfixed entries go back to their OLD version;
     - new entries linked to a lost one are dropped.
 
-- **Screen first** (distill step 0). Misses go stale as the working book grows: pk7 `-rc` already
-  caught 3 of the 15 #12–#22 misses that team-v1 had, and pk8 5 of the 24 #23–#27 ones.
+- **Learn from the current book's runs.** Misses go stale as the working book grows: pk7 `-rc`
+  already caught 3 of the 15 #12–#22 misses that team-v1 had, and pk8 5 of the 24 #23–#27 ones.
 - **Candidate.** A new or changed entry. distill adds it, or merges it into the entry it generalizes.
   `lmreview eval --rules` (coverage) shows which other train comments it explains. A topic match is not
   enough: the rule's condition has to hold.

@@ -28,7 +28,7 @@ ROOT="${CLAUDE_PLUGIN_ROOT:-<base>/../..}"
 PYTHONPATH="$ROOT" python3 -m lmreview review <PR> --format json > <scratch>/lmreview-<PR>.json
 ```
 
-- A review takes 5–15 minutes and costs about $1–2. Run it in the background and tell the user it is running; do not poll.
+- A review takes 10–20 minutes and costs about $3–4 (it runs a rule check next to the review and reads the vLLM source; the first run clones vLLM). Run it in the background and tell the user it is running; do not poll.
 - Use `--format md` instead of json if the user just wants the raw report.
 - Do not pass `--reviewer` unless the user asks; the default is the current recommended reviewer.
 

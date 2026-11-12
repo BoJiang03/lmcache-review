@@ -160,6 +160,10 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER) 
         run's findings/error/cost, "cost" = all runs plus the merge.
     """
     version, rules, effort = parse_reviewer(reviewer.split("#")[0])
+    if re.fullmatch(r"p[0-9a-f]{8}", version):
+        from .state import prompt_id
+        if version == prompt_id():
+            prompt_id(save=True)  # keep the text of every prompt a run used
     prompt = prompt_template(version)[0].format(**pr_meta(raw))
     use = applicable(load_rules(rules), changed_paths(wt)) if rules else []
     if rules:

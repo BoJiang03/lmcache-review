@@ -16,4 +16,5 @@ lmreview = "lmreview.cli:main"
 packages = ["lmreview"]
 
 [tool.setuptools.package-data]
-lmreview = ["prompts/*.md", "rules/*.jsonl", "rules/*.md"]
+lmreview = ["prompts/*.md", "rules/*.jsonl", "rules/*.md", "reviewer.json", "state/*.json", "state/*.jsonl",
+            "state/history/*", "state/prompts/*.md"]

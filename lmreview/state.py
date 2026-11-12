@@ -149,16 +149,16 @@ def config() -> dict:
     return {"effort": "high", "rulecheck": True, **(json.loads(CONFIG.read_text()) if CONFIG.exists() else {})}
 
 
-def prompt_id() -> str:
-    """`p<sha8>` of lmreview/prompts/reviewer.md; its text is kept in state/prompts/ so old runs stay
-    reproducible after the prompt is edited."""
+def prompt_id(save: bool = False) -> str:
+    """`p<sha8>` of lmreview/prompts/reviewer.md. With `save` (before a run uses it), its text is kept in
+    state/prompts/ so old runs stay reproducible after the prompt is edited."""
     text = (PROMPTS / "reviewer.md").read_text()
     pid = "p" + hashlib.sha256(text.encode()).hexdigest()[:8]
     p = STATE / "prompts" / f"{pid}.md"
-    if not p.exists():
+    if save and not p.exists():
         try:
             _write(p, text)
-        except OSError:  # an installed copy may be read-only; prompt_path falls back to reviewer.md
+        except OSError:  # an installed copy may be read-only; prompt_path still finds reviewer.md by hash
             pass
     return pid
 
@@ -167,7 +167,11 @@ def prompt_path(version: str) -> pathlib.Path:
     """The prompt file of prompt version `version` (p<sha8> from state/prompts, else prompts/reviewer_<v>.md)."""
     if re.fullmatch(r"p[0-9a-f]{8}", version):
         p = STATE / "prompts" / f"{version}.md"
-        return p if p.exists() else PROMPTS / "reviewer.md"
+        if p.exists():
+            return p
+        if version == prompt_id():
+            return PROMPTS / "reviewer.md"
+        raise FileNotFoundError(f"prompt {version} is neither in {STATE / 'prompts'} nor the current reviewer.md")
     return PROMPTS / f"reviewer_{version}.md"
 
 
@@ -215,6 +219,8 @@ def judge(split: str = "train", prs: set[int] | None = None, max_cost: float = 1
     already in the ledger keeps its row, except that a to_distill comment found now becomes resolved
     (the book in use found it). Samples without such comments count as no ground truth."""
     from .distill import judge_runs
+    if split != "train":  # the ledger feeds distill, which must never learn from test / new
+        raise ValueError("judge files comments for distill: only the train split")
     cfg, rv = cfg or Config(), rv or reviewer()
     with lock(), step("judge", f"runs of {rv} on {split}" + (f", PRs {sorted(prs)}" if prs else "")
                       + f"; cap ${max_cost:.0f}") as st:
@@ -233,10 +239,10 @@ def judge(split: str = "train", prs: set[int] | None = None, max_cost: float = 1
                     continue  # likely not taken by the author
                 r = rows.get(c)
                 if r is None:
-                    st = "covered" if h["matched_ai"] else "to_distill"
-                    rows[c] = {"comment": c, "pr": run["pr"], "commit": run["commit"], "status": st,
+                    status_ = "covered" if h["matched_ai"] else "to_distill"
+                    rows[c] = {"comment": c, "pr": run["pr"], "commit": run["commit"], "status": status_,
                                "reviewer": rv, "tries": []}
-                    n[st] += 1
+                    n[status_] += 1
                 elif r["status"] == "to_distill" and h["matched_ai"]:
                     r.update(status="resolved", resolved_by={"book": rv, "entry": None})
                     n["resolved"] += 1
@@ -318,6 +324,8 @@ def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: 
     from .distill import distill
     cfg = cfg or Config()
     with lock():
+        if not head():
+            raise RuntimeError("no book in use: `lmreview init <rules name>` first")
         if candidate():
             raise RuntimeError(f"candidate {candidate()['name']} is waiting: `lmreview vet` it or `lmreview discard`")
         rows = ledger()
@@ -333,8 +341,8 @@ def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: 
         _write(STATE / "candidate" / "meta.json", json.dumps(
             {"name": name, "parent": parent, "comments": ids, "created": _now()}, indent=1) + "\n")
         try:
-            msg = distill(name, vname(parent) if parent else None, reviewer(), effort=effort, workers=workers,
-                          max_cost=max_cost, cfg=cfg, comments=ids,
+            msg = distill(name, vname(parent), reviewer(), effort=effort, workers=workers,
+                          max_cost=max_cost, cfg=cfg, comments=ids, prs=sorted({r["pr"] for r in todo}),
                           notes={r["comment"]: tries_note(r) for r in todo if r.get("tries")})
         except BaseException:
             clear_candidate()

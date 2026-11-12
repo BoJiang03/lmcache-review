@@ -330,7 +330,7 @@ def _regress(rule: dict, old_ev: list[int], cm: dict, effort: str, cfg: Config, 
 
 def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evid: dict, out: str, cm: dict,
                     effort: str, cfg: Config, spend: list[float], max_cost: float,
-                    workers: int = 4, n: int = 3) -> tuple[list[dict], list[dict]]:
+                    workers: int = 4, n: int = 3, append_only: bool = True) -> tuple[list[dict], list[dict]]:
     """Apply new candidates (`items` keys "c...", grouped with the base entries "b<id>") to a rulebook.
 
     Groups of new candidates only become new entries (ABSTRACT, run `n` times and merged by
@@ -339,6 +339,11 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
     merge | add | contradict. A generalized or merged entry keeps its id, gets version + 1 and
     a history line, and must still explain all its old evidence (else the rewrite is rejected and
     becomes a new entry). Merged-away entries are retired, never deleted.
+
+    With `append_only` (the default) existing entries are never rewritten or retired: a generalize or
+    merge becomes a new parent entry (a principle with "members") above them, and each member gets a
+    "principle" link if it has none. Only additions remain, so `lmreview regress --backtest` can check
+    every side effect by re-reviewing the entries' source PRs.
 
     Returns:
         (the whole rulebook: base entries, changed or not, then new ones; the list of changes)
@@ -397,6 +402,12 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
         ch = {"op": op, "rules": [base[b]["id"] for b in bkeys], "members": mem, "concern": g["concern"]}
         if op == "evidence" and bkeys:
             base[bkeys[0]]["evidence"] = _uniq(list(base[bkeys[0]].get("evidence") or []) + ev)
+        elif op in ("generalize", "merge") and bkeys and d.get("expect") and append_only:
+            kids = [base[b]["id"] for b in bkeys]
+            parent = _entry(d) | {"kind": "principle", "members": kids,
+                                  "tests": [{**t, "from": base[b]["id"]} for b in bkeys for t in base[b].get("tests") or []]}
+            added.append((parent, _uniq([e for b in bkeys for e in base[b].get("evidence") or []] + ev), g["concern"]))
+            ch |= {"op": f"{op}-as-parent"}
         elif op in ("generalize", "merge") and bkeys and d.get("expect"):
             r = base[bkeys[0]]
             old_ev = _uniq(e for b in bkeys for e in base[b].get("evidence") or [])
@@ -446,8 +457,13 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
         while f"{out}-{i:03d}" in used:
             i += 1
         r["id"] = f"{out}-{i:03d}"
+    by_id = {r["id"]: r for r in base.values()}
+    for r in new:  # append-only parents: link their members, whose text stays as it was
+        for m in r.get("members") or []:
+            if m in by_id and not by_id[m].get("principle"):
+                by_id[m]["principle"] = r["id"]
     for ch in changes:  # name new entries in the change log
-        if ch["op"] in ("add",) or ch["op"].endswith("-rejected"):
+        if ch["op"] in ("add",) or ch["op"].endswith(("-rejected", "-as-parent")):
             ch["new"] = [r["id"] for r in new if set(r["evidence"]) & {e for k in ch["members"] for e in evid.get(k, [])}]
     return [finish(r) for r in base.values()] + new, changes
 
@@ -455,7 +471,7 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
 def distill(out: str, base: str | None = None, misses_of: str | None = None, area: str | None = None,
             limit: int | None = None, effort: str = "high", workers: int = 4, max_cost: float = 5.0,
             reuse: str | None = None, keep_unaddressed: bool = False, cfg: Config | None = None,
-            n: int = 3) -> str:
+            n: int = 3, append_only: bool = True) -> str:
     """Build rules/<out>.jsonl; returns a short summary. `max_cost` 0 = plan only (prints the estimate)."""
     cfg = cfg or Config()
     if (RULES / f"{out}.jsonl").exists():
@@ -503,7 +519,7 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     _, cm = load_gold(cfg)
     base_rules = [json.loads(l) for l in (RULES / f"{base}.jsonl").open() if l.strip()] if base else []
     rules, changes = update_rulebook(base_rules, groups, items, evid, out, cm, effort, cfg, spend, max_cost, workers,
-                                     n=n)
+                                     n=n, append_only=append_only)
     spent = spend[0]
     (work / "changes.json").write_text(json.dumps(changes, indent=1))
     RULES.mkdir(exist_ok=True)

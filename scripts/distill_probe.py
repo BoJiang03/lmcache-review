@@ -176,6 +176,7 @@ def main() -> None:
     ap.add_argument("--train-only", action="store_true", help="drop the test comments (fair rule for testing on them)")
     ap.add_argument("--json", help="write the resulting rulebook here")
     ap.add_argument("--n", type=int, default=3, help="abstraction drafts to merge (1 = no ensemble)")
+    ap.add_argument("--rewrite", action="store_true", help="allow rewriting/retiring base entries")
     ap.add_argument("--base", help="existing rulebook (rules/<name>.jsonl) to update instead of starting empty")
     a = ap.parse_args()
     cfg = Config()
@@ -208,7 +209,8 @@ def main() -> None:
     print("\n== cluster")
     for i, g in enumerate(groups):
         print(f"group {i} ({g['concern']}): " + ", ".join(g["members"]))
-    rules, changes = update_rulebook(base, groups, items, evid, "probe", cm, a.effort, cfg, spend, a.max_cost, n=a.n)
+    rules, changes = update_rulebook(base, groups, items, evid, "probe", cm, a.effort, cfg, spend, a.max_cost, n=a.n,
+                                     append_only=not a.rewrite)
     print("\n== changes")
     for ch in changes:
         print(json.dumps(ch, ensure_ascii=False))

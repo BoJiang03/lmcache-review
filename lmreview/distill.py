@@ -889,7 +889,11 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
         md += [f"## {kind}", ""]
         for r in (r for r in rules if r["kind"] == kind and r.get("status", "active") == "active"):
             ev = ", ".join(f"[#{cm[e]['pr']}]({cm[e]['url']})" for e in r["evidence"][:6])
-            md += [f"- **{r['id']}** v{r.get('version', 1)} ({r['area']}, {r['n_prs']} PRs) When {r['when']}: {r['expect']}",
+            # induced parents carry no area / n_prs: count them from the evidence
+            evs = [cm[e] for e in r.get("evidence") or [] if e in cm]
+            area_ = r.get("area") or ",".join(sorted({c.get("area") or "overall" for c in evs}))
+            n_prs = r.get("n_prs") or len({c["pr"] for c in evs})
+            md += [f"- **{r['id']}** v{r.get('version', 1)} ({area_}, {n_prs} PRs) When {r['when']}: {r['expect']}",
                    f"  - why: {r.get('why') or ''}; paths: {r.get('paths') or 'any'}",
                    f"  - e.g. {' / '.join(r.get('examples') or [])}", f"  - evidence: {ev}"]
         md.append("")

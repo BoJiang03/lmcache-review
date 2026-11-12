@@ -11,21 +11,27 @@ distill only writes rules; vet decides whether they are kept. Three checks, then
    existing entry that gained evidence is the exception: BASE already had it, so a BASE hit there is
    a fair hit (the rule generalized to a PR it was not written from).
 3. side effects: the entries of BASE whose rendering or neighbours changed (a new parent principle,
-   a changed text, a new link; `--all`: every entry) are replayed on their own source comments. A
-   comment matched with a citation under BASE but not under NEW is a regression.
+   a revision, a new link; `--all`: every entry) are replayed on their own source comments. A comment
+   matched with a citation under BASE but not under NEW is a regression; for a retired entry, NEW must
+   still match the comment with some finding.
+2b. revisions: a revised entry is re-reviewed on the samples whose invalid findings triggered the
+   revision; a finding citing it that is judged invalid again means the revision did not fix it.
 
-2 and 3 share the runs: one review per (sample, book). Runs are cached under data/runs/<reviewer>/,
-so an earlier A/B with the same reviewer names costs nothing here.
+2, 2b and 3 share the runs: one review per (sample, book). Runs are cached under data/runs/<reviewer>/,
+so an earlier A/B with the same reviewer names costs nothing here. Single runs are noisy, so each
+failing case gets one more run with NEW before it counts (`retry`).
 
-Verdict: PASS if every entry with new evidence works on at least one of its comments and nothing
-regressed; generality flags are listed for the reader and do not fail the book.
+Verdict: PASS if every entry with new evidence works on at least one of its comments, nothing
+regressed and every revision fixed its trigger; generality flags are listed for the reader and do not
+fail the book. `write` saves NEW without the failing changes, as the next working book.
 """
 
 from __future__ import annotations
 
+import json
 import re
 
-from .config import Config
+from .config import RULES, Config
 from .regress import EST_RUN, FIELDS, replay
 from .reviewer import load_rules
 from .score import REPORTS, load_gold
@@ -62,8 +68,8 @@ def lint(r: dict) -> list[str]:
 
 
 def vet(book: str, base: str, prompt: str = "v0c", effort: str = "high", suffix: str = "-rc", reps: int = 1,
-        max_cost: float = 30.0, everything: bool = False, every_sample: bool = False,
-        cfg: Config | None = None) -> str:
+        max_cost: float = 30.0, everything: bool = False, every_sample: bool = False, retry: bool = True,
+        write: str | None = None, cfg: Config | None = None) -> str:
     """Vet rulebook `book` against `base`; see the module docstring.
 
     Args:
@@ -74,6 +80,8 @@ def vet(book: str, base: str, prompt: str = "v0c", effort: str = "high", suffix:
         max_cost: cap for all runs together; 0 prints the plan only.
         everything: replay every active entry of base on its sources, not only the affected ones.
         every_sample: test new comments in every sample of a PR, not only the one holding most of them.
+        retry: give each failing case one more run with the new book before it counts.
+        write: also write rules/<write>.jsonl: the new book without the changes that failed.
         cfg: configuration.
 
     Returns:
@@ -81,14 +89,17 @@ def vet(book: str, base: str, prompt: str = "v0c", effort: str = "high", suffix:
     """
     cfg = cfg or Config()
     act = lambda rs: {r["id"]: r for r in rs if r.get("status", "active") == "active"}  # noqa: E731
-    new_rules = load_rules(book)
-    N, O = act(new_rules), act(load_rules(base))
+    new_rules, old_rules = load_rules(book), load_rules(base)
+    N, O = act(new_rules), act(old_rules)
     ss, cm = load_gold(cfg)
     where = {int(c): k for k, s in ss.items() for c in s["gold_ids"]}
     tgt = lambda c: f"{where[c][0]}@{where[c][1][:8]}"  # noqa: E731
+    w = f"{prompt}@{effort}"
 
-    # what changed: new entries, changed text/scope, changed links
+    # what changed: new entries, changed text/scope, changed links, revisions, retirements
     touched = {i for i, r in N.items() if i not in O or any(r.get(k) != O[i].get(k) for k in FIELDS + LINKS)}
+    retired = [i for i in O if i not in N]
+    revised = [i for i in O if i in N and N[i].get("version", 1) != O[i].get("version", 1)]
     rel = _related_ids(new_rules)
     old_ev = {i: {int(e) for e in r.get("evidence") or []} for i, r in O.items()}
     in_base = set().union(*old_ev.values()) if old_ev else set()
@@ -99,27 +110,33 @@ def vet(book: str, base: str, prompt: str = "v0c", effort: str = "high", suffix:
         n_in: dict = {}
         for _, e in effect:
             n_in[where[e]] = n_in.get(where[e], 0) + 1
-        best = {k[0]: max((x for x in n_in if x[0] == k[0]), key=n_in.get) for k in n_in}
+        def cached(k: tuple) -> int:  # runs already on disk for this sample (ties go to cached ones)
+            return sum(any((cfg.data / "runs" / f"{prompt}+{b}@{effort}{suffix}").glob(f"{k[0]}-{k[1][:8]}*.json"))
+                       for b in (base, book))
+        best = {k[0]: max((x for x in n_in if x[0] == k[0]), key=lambda x: (n_in[x], cached(x))) for k in n_in}
         effect = [(i, e) for i, e in effect if where[e] == best[where[e][0]]]
     eff_set = set(effect)
-    affected = [i for i in O if i in N and (everything or rel.get(i, {i}) & touched)]
+    affected = [i for i in O if i not in N or everything or rel.get(i, {i}) & touched]
     side = [(i, e) for i in affected for e in sorted(old_ev[i]) if e in where and (i, e) not in eff_set]
-    case = lambda i, e: (i, {"target": tgt(e), "with": f"{prompt}@{effort}", "comments": [e]})  # noqa: E731
-    cases = [case(i, e) for i, e in effect + side]
+    fixes = list(dict.fromkeys((i, x["target"]) for i in revised
+                               for x in (N[i].get("revised") or {}).get("signals") or []))
+    cases = ([(i, {"target": tgt(e), "with": w, "comments": [e]}) for i, e in effect + side]
+             + [(i, {"target": t, "with": w, "comments": []}) for i, t in fixes])
     samples = {t["target"] for _, t in cases}
+
+    def run_dir(b: str, k: int):
+        return cfg.data / "runs" / (f"{prompt}+{b}@{effort}{suffix}" + ("" if k == 1 else f"#r{k}"))
     todo = [(b, t, k) for b in (base, book) for t in samples for k in range(1, reps + 1)
-             if not (cfg.data / "runs" / (f"{prompt}+{b}@{effort}{suffix}" + ("" if k == 1 else f"#r{k}"))
-                     / f"{t.split('@')[0]}-{t.split('@')[1]}.json").exists()
-             and not any((cfg.data / "runs" / (f"{prompt}+{b}@{effort}{suffix}" + ("" if k == 1 else f"#r{k}"))).glob(
-                 f"{t.split('@')[0]}-{t.split('@')[1]}*.json"))]
+            if not any(run_dir(b, k).glob(f"{t.split('@')[0]}-{t.split('@')[1]}*.json"))]
     est = len(todo) * EST_RUN * (2 if suffix else 1)
     flags = {i: f for i in sorted(touched) if (f := lint(N[i]))}
 
     L = [f"# Vet of {book} (from {base})", "",
-         f"- reviewer: {prompt}+<book>@{effort}{suffix}, {reps} run(s) per sample and book",
-         f"- changed entries: {len(touched)}; evidence comments added: {len(effect)}; "
-         f"base entries replayed for side effects: {len(affected)} ({len(side)} comments"
-         f"{', all entries' if everything else ''})",
+         f"- reviewer: {prompt}+<book>@{effort}{suffix}, {reps} run(s) per sample and book"
+         + ("; failures get one more run" if retry else ""),
+         f"- changed entries: {len(touched)} (revised {len(revised)}, retired {len(retired)}); "
+         f"evidence comments added: {len(effect)}; base entries replayed for side effects: {len(affected)} "
+         f"({len(side)} comments{', all entries' if everything else ''}); revision fixes to check: {len(fixes)}",
          f"- {len(samples)} samples x 2 books, {len(todo)} runs not cached yet, est ${est:.0f}, cap ${max_cost:.0f}", "",
          "## 1. Generality flags", ""]
     L += [f"- {i}: {'; '.join(f)}" for i, f in flags.items()] or ["- none"]
@@ -127,53 +144,102 @@ def vet(book: str, base: str, prompt: str = "v0c", effort: str = "high", suffix:
     if max_cost <= 0:
         return "\n".join(L + ["plan only (max-cost 0)"])
 
+    key = lambda r: (r["entry"], r["target"], tuple(r["comments"]))  # noqa: E731
     rows_b, c_b = replay(base, cases, reps, max_cost / 2, cfg, suffix=suffix)
     rows_n, c_n = replay(book, cases, reps, max_cost - c_b, cfg, suffix=suffix)
-    key = lambda r: (r["entry"], r["comments"][0])  # noqa: E731
     B, Nw = {key(r): r for r in rows_b}, {key(r): r for r in rows_n}
+    ck = lambda i, e: (i, tgt(e), (e,))  # noqa: E731
+    fk = lambda i, t: (i, t, ())  # noqa: E731
+
+    def judge() -> dict:
+        """Classify every case from B and Nw."""
+        works, unknown = set(), set()
+        for i, e in effect:
+            n = Nw.get(ck(i, e), {})
+            if n.get("passed") is None:
+                unknown.add(i)
+            if n.get("passed"):
+                works.add(i)
+        lost, kept, both_miss, s_unknown = [], 0, 0, 0
+        for i, e in side:
+            b, n = B.get(ck(i, e), {}), Nw.get(ck(i, e), {})
+            nb = n.get("any") if i in retired else n.get("passed")  # a retired entry: caught by anything
+            if b.get("passed") is None or nb is None:
+                s_unknown += 1
+            elif b["passed"] and not nb:
+                lost.append((i, e))
+            elif b["passed"]:
+                kept += 1
+            else:
+                both_miss += 1
+        not_fixed = [(i, t) for i, t in fixes if (Nw.get(fk(i, t), {}).get("invalid") or 0) > 0]
+        f_unknown = [(i, t) for i, t in fixes if Nw.get(fk(i, t), {}).get("invalid") is None]
+        no_effect = sorted({i for i, _ in effect} - works - unknown)
+        return {"works": works, "unknown": unknown, "no_effect": no_effect, "lost": lost, "kept": kept,
+                "both_miss": both_miss, "s_unknown": s_unknown, "not_fixed": not_fixed, "f_unknown": f_unknown}
+
+    J, c_r = judge(), 0.0
+    if retry:  # single runs are noisy: a failing case gets one more run with NEW before it counts
+        again = ([(i, {"target": tgt(e), "with": w, "comments": [e]}) for i, e in effect if i in J["no_effect"]]
+                 + [(i, {"target": tgt(e), "with": w, "comments": [e]}) for i, e in J["lost"]]
+                 + [(i, {"target": t, "with": w, "comments": []}) for i, t in J["not_fixed"]])
+        if again:
+            rows_r, c_r = replay(book, again, reps + 1, max(0.0, max_cost - c_b - c_n), cfg, suffix=suffix)
+            Nw |= {key(r): r for r in rows_r if r["passed"] is not None}
+            J = judge()
 
     def mark(x: bool | None) -> str:
         return {True: "hit", False: "miss", None: "not run"}[x]
 
-    # 2. effect
-    per_entry: dict[str, list[str]] = {}
-    works, unknown, fair = set(), set(), []
-    eff_lines = []
+    eff_lines, fair = [], 0
     for i, e in effect:
-        b, n = B.get((i, e), {}), Nw.get((i, e), {})
+        b, n = B.get(ck(i, e), {}), Nw.get(ck(i, e), {})
         nc, ba = n.get("passed"), b.get("any")
-        if nc is None:
-            unknown.add(i)
-        if nc:
-            works.add(i)
         res = ("not run" if nc is None else "corrected" if nc and ba is False else "both hit" if nc and ba
                else "fires, base not run" if nc else "new finds it, no citation" if n.get("any") else "miss")
-        if i in O and b.get("passed"):  # entry existed in base: a base hit citing it is a fair hit
-            fair.append((i, e))
-        per_entry.setdefault(i, []).append(res)
+        is_fair = i in O and bool(b.get("passed"))  # entry existed in base: a base hit citing it is fair
+        fair += is_fair
         eff_lines.append(f"- {i} #{tgt(e)} c{e} ({cm[e]['author']}): {res}; base {mark(ba)}"
-                         + (" (base cites it: fair hit)" if (i, e) in fair else ""))
-    no_effect = [i for i in per_entry if i not in works and i not in unknown]
-
-    # 3. side effects
-    lost, kept, both_miss, side_unknown = [], 0, 0, 0
-    for i, e in side:
-        b, n = B.get((i, e), {}).get("passed"), Nw.get((i, e), {}).get("passed")
-        if b is None or n is None:
-            side_unknown += 1
-        elif b and not n:
-            lost.append((i, e))
-        elif b:
-            kept += 1
-        else:
-            both_miss += 1
-
-    verdict = "FAIL" if lost or no_effect else ("INCOMPLETE" if unknown or side_unknown else "PASS")
+                         + (" (base cites it: fair hit)" if is_fair else ""))
+    fails = J["no_effect"] or J["lost"] or J["not_fixed"]
+    verdict = "FAIL" if fails else ("INCOMPLETE" if J["unknown"] or J["s_unknown"] or J["f_unknown"] else "PASS")
+    n_eff = len({i for i, _ in effect})
     L += ["## 2. Effect (leaky: rules on their own source comments)", "",
-          f"entries working: {len(works)}/{len(per_entry)}; not working: {no_effect or 'none'}"
-          + (f"; fair hits (existing entry on a new PR): {len(fair)}" if fair else ""), ""] + eff_lines + [""]
-    L += ["## 3. Side effects", "", f"kept {kept}, lost {len(lost)}, missed by both {both_miss}, not run {side_unknown}"]
-    L += [f"- LOST {i} #{tgt(e)} c{e} ({cm[e]['author']}: {cm[e]['body'][:100]!r})" for i, e in lost]
-    L = L[:2] + [f"**{verdict}** · cost ${c_b + c_n:.2f}", ""] + L[2:]
+          f"entries working: {len(J['works'])}/{n_eff}; not working: {J['no_effect'] or 'none'}"
+          + (f"; fair hits (existing entry on a new PR): {fair}" if fair else ""), ""] + eff_lines + [""]
+    if fixes:
+        L += ["## 2b. Revisions: the invalid findings that triggered them", ""]
+        L += [f"- {i} #{t}: base {B.get(fk(i, t), {}).get('invalid')} invalid citing finding(s), "
+              f"new {Nw.get(fk(i, t), {}).get('invalid')}" for i, t in fixes] + [""]
+    L += ["## 3. Side effects", "", f"kept {J['kept']}, lost {len(J['lost'])}, missed by both {J['both_miss']}, "
+          f"not run {J['s_unknown']}"]
+    L += [f"- LOST {i}{' (retired)' if i in retired else ''} #{tgt(e)} c{e} ({cm[e]['author']}: "
+          f"{cm[e]['body'][:100]!r})" for i, e in J["lost"]]
+    if write:
+        kept_book = _passing(new_rules, old_rules, O, J, rel)
+        (RULES / f"{write}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in kept_book))
+        L += ["", f"wrote rules/{write}.jsonl: {len(kept_book)} entries (failing changes dropped or reverted)"]
+    L = L[:2] + [f"**{verdict}** · cost ${c_b + c_n + c_r:.2f}", ""] + L[2:]
     (REPORTS / f"vet_{book}.md").write_text("\n".join(L) + "\n")
     return "\n".join(L)
+
+
+def _passing(new_rules: list[dict], old_rules: list[dict], O: dict, J: dict, rel: dict) -> list[dict]:
+    """NEW without the changes vet failed: new entries that never worked are dropped; entries that lost
+    a source hit or whose revision did not fix its trigger go back to their base version, and new
+    entries linked to a lost entry are dropped with it (vet cannot tell which link caused the loss)."""
+    old_all = {r["id"]: r for r in old_rules}
+    lost = {i for i, _ in J["lost"]} | {i for i, _ in J["not_fixed"]}
+    drop = {i for i in J["no_effect"] if i not in O}
+    drop |= {x for i in lost for x in rel.get(i, set()) if x not in old_all}
+    out = []
+    for r in new_rules:
+        if r["id"] in drop:
+            continue
+        r = dict(old_all[r["id"]]) if r["id"] in lost and r["id"] in old_all else dict(r)
+        if r.get("principle") in drop:
+            r["principle"] = old_all.get(r["id"], {}).get("principle")
+        if r.get("members"):
+            r["members"] = [m for m in r["members"] if m not in drop]
+        out.append(r)
+    return out

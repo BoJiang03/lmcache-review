@@ -153,20 +153,31 @@ Answer with one JSON block only, in the same format as the drafts:
 ```"""
 
 REVISE = """Below are groups of an LMCache review rulebook being updated. Each group holds existing
-entries (keys "b...", with id, text and examples) and/or new candidate rules (keys "c...", from human
-review comments the reviewer missed), grouped as one concern. Decide how the rulebook changes. Every
+entries (keys "b...", with id, text and examples), new candidate rules (keys "c...", from human
+review comments the reviewer missed) and failure signals of existing entries (keys "s...": a finding
+that cited the entry and was judged invalid), grouped as one concern. Decide how the rulebook changes. Every
 key of a group appears in exactly one decision of that group:
 - "keep": an existing entry stays as written (no candidate concerns it).
 - "evidence": candidates are already instances of an existing entry AS WRITTEN: a reviewer applying it
   to their change would have raised their point. The entry's text stays.
 - "generalize": candidates ask for the same kind of change as an existing entry, but its "when" or
-  "expect" is too narrow to make a reviewer raise their point. Rewrite the entry at the lowest level
-  that covers its old examples AND the candidates; never drop what it asked for before; keep its old
-  examples and add one for the candidates.
-- "merge": two or more existing entries are one concern; write the one entry that covers them all.
+  "expect" is too narrow to make a reviewer raise their point. Write the broader entry at the lowest
+  level that covers the existing entry AND the candidates; it becomes a new parent principle, and the
+  existing entry stays as written under it.
+- "merge": two or more existing entries are one concern; write the one parent entry that covers them
+  all (they stay as written under it).
 - "add": candidates ask for a different change than every existing entry; write a new entry.
-- "contradict": candidates ask for the OPPOSITE of an existing entry. Do not rewrite it; say why.
-Fields of a written entry (generalize, merge, add): "kind" (principle | knowledge), "when", "expect",
+- "revise": the existing entry's text is WRONG as shown by the group's failure signals ("s..." keys:
+  findings that cite the entry and were judged invalid) or by candidates that ask for the opposite.
+  Rewrite it so it would not have produced those findings (or would agree with the reviewers), while
+  still covering everything its examples asked for. List the keys that show it is wrong in "members".
+- "retire": the existing entry is wrong and no rewrite fixes it, or another entry already covers it
+  completely ("replaced_by": that id). Same evidence requirement as "revise".
+- "contradict": candidates ask for the opposite of an existing entry, but it is unclear who is right.
+  Do not rewrite it; say why.
+Only "revise" and "retire" change an existing entry, and only with a failure signal or a contradicting
+candidate in "members"; without one, use the other decisions.
+Fields of a written entry (generalize, merge, add, revise): "kind" (principle | knowledge), "when", "expect",
 "why" (one line), "examples" (short concrete instances), "paths" (globs, [] = anywhere).
 
 """ + GENERAL + """
@@ -176,9 +187,9 @@ Groups:
 
 Answer with one JSON block only, one object per decision:
 ```json
-[{"group": 0, "op": "keep|evidence|generalize|merge|add|contradict", "rules": ["<existing id>"],
-  "members": ["c123"], "kind": "...", "when": "...", "expect": "...", "why": "...", "examples": ["..."],
-  "paths": []}]
+[{"group": 0, "op": "keep|evidence|generalize|merge|add|revise|retire|contradict", "rules": ["<existing id>"],
+  "members": ["c123", "s1"], "kind": "...", "when": "...", "expect": "...", "why": "...", "examples": ["..."],
+  "paths": [], "replaced_by": "<id, retire only>"}]
 ```"""
 
 COVERAGE = """Below is a rulebook of LMCache review rules (id: when -> expect), then human review comments
@@ -330,20 +341,20 @@ def _regress(rule: dict, old_ev: list[int], cm: dict, effort: str, cfg: Config, 
 
 def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evid: dict, out: str, cm: dict,
                     effort: str, cfg: Config, spend: list[float], max_cost: float,
-                    workers: int = 4, n: int = 3, append_only: bool = True) -> tuple[list[dict], list[dict]]:
+                    workers: int = 4, n: int = 3, signals: dict | None = None) -> tuple[list[dict], list[dict]]:
     """Apply new candidates (`items` keys "c...", grouped with the base entries "b<id>") to a rulebook.
 
     Groups of new candidates only become new entries (ABSTRACT, run `n` times and merged by
     MERGE_ABSTRACT: the level of abstraction varies from run to run). Groups that mix existing entries
-    with candidates, or hold several existing entries, go to REVISE: keep | evidence | generalize |
-    merge | add | contradict. A generalized or merged entry keeps its id, gets version + 1 and
-    a history line, and must still explain all its old evidence (else the rewrite is rejected and
-    becomes a new entry). Merged-away entries are retired, never deleted.
+    with candidates or failure signals, or hold several existing entries, go to REVISE: keep | evidence
+    | generalize | merge | add | revise | retire | contradict. A revised entry must still explain its
+    old evidence and corrected tests (else the revision is rejected).
 
-    With `append_only` (the default) existing entries are never rewritten or retired: a generalize or
-    merge becomes a new parent entry (a principle with "members") above them, and each member gets a
-    "principle" link if it has none. Only additions remain, so `lmreview regress --backtest` can check
-    every side effect by re-reviewing the entries' source PRs.
+    Existing entries change only on evidence that they are wrong: "revise" (rewrite, version + 1, the
+    old text kept in "history") and "retire" are accepted only when the decision names a failure signal
+    ("s..." keys; `signals` maps them to their records) or a contradicting candidate. Generalize and
+    merge never rewrite: they add a parent principle with "members", and each member without one gets
+    a "principle" link. `lmreview vet` then checks every kind of change on the source PRs.
 
     Returns:
         (the whole rulebook: base entries, changed or not, then new ones; the list of changes)
@@ -402,39 +413,43 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
         ch = {"op": op, "rules": [base[b]["id"] for b in bkeys], "members": mem, "concern": g["concern"]}
         if op == "evidence" and bkeys:
             base[bkeys[0]]["evidence"] = _uniq(list(base[bkeys[0]].get("evidence") or []) + ev)
-        elif op in ("generalize", "merge") and bkeys and d.get("expect") and append_only:
+        elif op in ("generalize", "merge") and bkeys and d.get("expect"):
             kids = [base[b]["id"] for b in bkeys]
             parent = _entry(d) | {"kind": "principle", "members": kids,
                                   "tests": [{**t, "from": base[b]["id"]} for b in bkeys for t in base[b].get("tests") or []]}
             added.append((parent, _uniq([e for b in bkeys for e in base[b].get("evidence") or []] + ev), g["concern"]))
             ch |= {"op": f"{op}-as-parent"}
-        elif op in ("generalize", "merge") and bkeys and d.get("expect"):
-            r = base[bkeys[0]]
-            old_ev = _uniq(e for b in bkeys for e in base[b].get("evidence") or [])
-            tested = _uniq(c for b in bkeys for t in base[b].get("tests") or [] if t["result"] == "corrected"
-                           for c in t.get("comments") or [])
-            if spend[0] >= max_cost:  # no budget left to verify the rewrite: keep the entries as they are
-                ch |= {"op": f"{op}-skipped", "why": "cost cap reached before the regression check"}
+        elif op in ("revise", "retire") and bkeys:
+            sig = [k for k in d.get("members") or [] if k in g["members"] and k.startswith("s")
+                   and (signals or {}).get(k, {}).get("rule") == base[bkeys[0]]["id"]]
+            if not sig and not mem:  # no evidence that the entry is wrong: an existing entry is not touched
+                ch |= {"op": f"{op}-refused", "why": "no failure signal or contradicting candidate"}
                 changes.append(ch)
                 continue
-            # the rewrite must still explain what the entries stood for, and what they were shown to fix
-            lost = _regress({"id": r["id"], **_entry(d)}, _uniq(old_ev + tested), cm, effort, cfg, spend)
-            if lost:  # the rewrite would stop explaining what the entry stood for: keep it, add the rewrite
-                ch |= {"op": f"{op}-rejected", "lost": lost}
-                if ev:  # a rewrite with no new evidence would only duplicate the entries kept
-                    added.append((_entry(d) | {"kind": d.get("kind") or r.get("kind")}, ev, g["concern"]))
+            r = base[bkeys[0]]
+            why = {"signals": [(signals or {})[k] for k in sig], "comments": ev, "why": d.get("why")}
+            if op == "retire":
+                r["status"] = "retired"
+                r["retired"] = {"date": today, "by": out, "replaced_by": d.get("replaced_by"), **why}
+                ch |= {"why": d.get("why"), "replaced_by": d.get("replaced_by")}
+            elif not d.get("expect"):
+                continue
+            elif spend[0] >= max_cost:  # no budget left to verify the rewrite: keep the entry as it is
+                ch |= {"op": "revise-skipped", "why": "cost cap reached before the text check"}
             else:
-                r["history"].append({"version": r["version"], "until": today, "by": out, "reason": op,
-                                     **{k: r.get(k) for k in ("when", "expect", "examples", "paths")}})
-                r.update({k: v for k, v in _entry(d).items() if v is not None})
-                r["version"] += 1
-                r["evidence"] = _uniq(old_ev + ev)
-                for b in bkeys[1:]:  # the merged entry inherits the tests, so `lmreview regress` replays them
-                    r["tests"] = list(r.get("tests") or []) + [{**t, "from": base[b]["id"]}
-                                                               for t in base[b].get("tests") or []]
-                    base[b]["status"] = "retired"
-                    base[b]["retired"] = {"date": today, "by": out, "reason": f"merged into {r['id']}"}
-                ch |= {"version": r["version"], "when": r["when"], "expect": r["expect"]}
+                old_ev = list(r.get("evidence") or [])
+                tested = _uniq(c for t in r.get("tests") or [] if t["result"] == "corrected" for c in t.get("comments") or [])
+                lost = _regress({"id": r["id"], **_entry(d)}, _uniq(old_ev + tested), cm, effort, cfg, spend)
+                if lost:  # the rewrite would stop explaining what the entry stood for
+                    ch |= {"op": "revise-rejected", "lost": lost}
+                else:
+                    r["history"].append({"version": r["version"], "until": today, "by": out, "reason": "revise",
+                                         **{k: r.get(k) for k in ("when", "expect", "examples", "paths")}})
+                    r.update({k: v for k, v in _entry(d).items() if v is not None})
+                    r["version"] += 1
+                    r["evidence"] = _uniq(old_ev + ev)
+                    r["revised"] = {"date": today, "by": out, **why}  # vet re-checks these cases
+                    ch |= {"version": r["version"], "when": r["when"], "expect": r["expect"]}
         elif op == "add" and d.get("expect") and mem:
             added.append((_entry(d) | {"kind": d.get("kind") or "principle"}, ev, g["concern"]))
         elif op == "contradict" and bkeys:
@@ -443,6 +458,11 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
         else:
             continue
         changes.append(ch)
+
+    for k, x in (signals or {}).items():  # considered once: later distills do not reopen them
+        b = base.get(f"b{x['rule']}")
+        if b is not None and any(k in g["members"] for g in groups):
+            b["signals_seen"] = list(b.get("signals_seen") or []) + [[x["reviewer"], x["target"], x["finding"]]]
 
     def finish(r: dict) -> dict:
         ev = [e for e in r.get("evidence") or [] if e in cm]
@@ -463,7 +483,7 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
             if m in by_id and not by_id[m].get("principle"):
                 by_id[m]["principle"] = r["id"]
     for ch in changes:  # name new entries in the change log
-        if ch["op"] in ("add",) or ch["op"].endswith(("-rejected", "-as-parent")):
+        if ch["op"] in ("add",) or ch["op"].endswith("-as-parent"):
             ch["new"] = [r["id"] for r in new if set(r["evidence"]) & {e for k in ch["members"] for e in evid.get(k, [])}]
     return [finish(r) for r in base.values()] + new, changes
 
@@ -562,19 +582,95 @@ def induce(rules: list[dict], cm: dict, effort: str, cfg: Config, spend: list[fl
     return rules, changes
 
 
+def failure_signals(rules: list[dict], cfg: Config, per_rule: int = 3) -> tuple[dict, dict]:
+    """Findings that cited an entry of `rules` and were judged invalid, from every judged run on disk.
+
+    Returns:
+        (key "s<n>" -> prompt text, key -> record {rule, reviewer, target, finding, why}).
+    """
+    from .reviewer import parse_reviewer
+    ids = {r["id"] for r in rules if r.get("status", "active") == "active"}
+    # runs from before an entry's last revision judged its old text: they are not signals any more
+    since = {r["id"]: dt.datetime.fromisoformat(r["revised"]["date"]).timestamp() for r in rules if r.get("revised")}
+    done = {(r["id"], *x) for r in rules for x in r.get("signals_seen") or []}  # already decided on
+    text, rec, n, seen = {}, {}, C.Counter(), set()
+    for d in sorted((cfg.data / "runs").iterdir()):
+        try:
+            if not parse_reviewer(d.name.split("#")[0])[1]:
+                continue
+        except ValueError:
+            continue
+        for f in sorted(d.glob("*.json")):
+            sp = cfg.data / "scores" / d.name / f.name
+            if not sp.exists():
+                continue
+            bad = {a["id"]: a.get("why") for a in json.loads(sp.read_text()).get("ai") or [] if a.get("valid") is False}
+            run = json.loads(f.read_text())
+            for x in run.get("findings") or []:
+                r = x.get("rule")
+                key = (r, run["pr"], (x.get("title") or "")[:60])
+                if r in ids and x["id"] in bad and n[r] < per_rule and key not in seen \
+                        and f.stat().st_mtime >= since.get(r, 0) \
+                        and (r, d.name, f"{run['pr']}@{run['commit'][:8]}", x["id"]) not in done:
+                    n[r] += 1
+                    seen.add(key)
+                    k = f"s{len(rec) + 1}"
+                    rec[k] = {"rule": r, "reviewer": d.name, "target": f"{run['pr']}@{run['commit'][:8]}",
+                              "finding": x["id"], "why": bad[x["id"]]}
+                    text[k] = (f"failure signal of {r}: a finding citing it on PR #{run['pr']} was judged invalid. "
+                               f"Finding: {x.get('title')}: {' '.join((x.get('body') or '').split())[:300]} "
+                               f"| judge: {bad[x['id']]}")
+    return text, rec
+
+
+def screen(cs: list[dict], book: str, prompt: str, effort: str, suffix: str, max_cost: float,
+           cfg: Config) -> tuple[list[dict], float]:
+    """Step 0: re-review the comments' samples with the current book; keep only the comments no finding
+    matches (still missed). Comments not reviewed (cost cap) are kept. Runs are cached and shared with vet.
+
+    Returns:
+        (the comments still missed, cost).
+    """
+    from .regress import replay
+    ss, _ = load_gold(cfg)
+    where = {int(c): k for k, x in ss.items() for c in x["gold_ids"]}
+    cases = [("screen", {"target": f"{where[c['id']][0]}@{where[c['id']][1][:8]}", "with": f"{prompt}@{effort}",
+                         "comments": [c["id"]]}) for c in cs if c["id"] in where]
+    rows, cost = replay(book, cases, 1, max_cost, cfg, suffix=suffix)
+    caught = {r["comments"][0] for r in rows if r["any"]}
+    return [c for c in cs if c["id"] not in caught], cost
+
+
+def attach_signals(groups: list[dict], items: dict, evid: dict, text: dict, rec: dict) -> None:
+    """Put each failure signal into the group of the entry it is about (in place), so REVISE sees it."""
+    for k, r in rec.items():
+        g = next((g for g in groups if f"b{r['rule']}" in g["members"]), None)
+        if g is not None:
+            g["members"].append(k)
+            items[k], evid[k] = text[k], []
+
+
 def distill(out: str, base: str | None = None, misses_of: str | None = None, area: str | None = None,
             limit: int | None = None, effort: str = "high", workers: int = 4, max_cost: float = 5.0,
             reuse: str | None = None, keep_unaddressed: bool = False, cfg: Config | None = None,
-            n: int = 3, append_only: bool = True, do_induce: bool = True) -> str:
+            n: int = 3, do_induce: bool = True, screen_with: str | None = None) -> str:
     """Build rules/<out>.jsonl; returns a short summary. `max_cost` 0 = plan only (prints the estimate).
 
-    Steps: attribute the missed comments, cluster them with the base entries, abstract each group,
-    update the book (append-only unless `append_only` is False), then induce principles over the
+    Steps: (0) with `screen_with` (a prompt such as "v0c"; needs `base`), drop the comments that a review
+    with the base book (`<prompt>+<base>@high-rc`) already catches; attribute the missed comments;
+    cluster them with the base entries and the base entries' failure signals; abstract each group;
+    update the book (additions; revise/retire only on a failure signal); induce principles over the
     standalone entries (`do_induce`). Whether the result is kept is `lmreview vet`'s call."""
     cfg = cfg or Config()
     if (RULES / f"{out}.jsonl").exists():
         raise FileExistsError(f"rules/{out}.jsonl exists; pick a new name")
     cs = inputs(cfg, misses_of, area, "train", keep_unaddressed)[:limit]
+    pre = 0.0
+    if screen_with and base and max_cost > 0:
+        n0 = len(cs)
+        cs, pre = screen(cs, base, screen_with, effort, "-rc", max_cost / 2, cfg)
+        print(f"screen with {screen_with}+{base}@{effort}-rc: {n0} -> {len(cs)} comments still missed (${pre:.2f})",
+              flush=True)
     by_id = {c["id"]: c for c in cs}
     batches = [cs[i:i + BATCH] for i in range(0, len(cs), BATCH)]
     n_cand = int(len(cs) * 0.7)  # pilot: ~75% learnable
@@ -592,7 +688,8 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
         res, spent = [[json.loads(l) for l in (cfg.data / "distill" / reuse / "attribution.jsonl").open()]], 0.0
     else:
         res, spent = capped_map(lambda b: _ask(ATTRIBUTE.format(comments="\n\n".join(map(_fmt, b))), effort, cfg),
-                                batches, workers, max_cost, label=lambda b: f"attribute {len(b)}")
+                                batches, workers, max_cost - pre, label=lambda b: f"attribute {len(b)}")
+        spent += pre
     att = [{**a, "id": _id(a.get("id"))} for r in res if isinstance(r, list) for a in r if isinstance(a, dict)]
     att = [a for a in att if a["id"] in by_id]
     (work / "attribution.jsonl").write_text("".join(json.dumps(a) + "\n" for a in att))
@@ -613,12 +710,13 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
             evid[k] = r.get("evidence") or []
     spend = [spent]
     groups = cluster(items, effort, cfg, spend, max_cost)
-    (work / "clusters.json").write_text(json.dumps(groups, indent=1))
-
     _, cm = load_gold(cfg)
     base_rules = [json.loads(l) for l in (RULES / f"{base}.jsonl").open() if l.strip()] if base else []
+    sig_text, sig = failure_signals(base_rules, cfg) if base_rules else ({}, {})
+    attach_signals(groups, items, evid, sig_text, sig)
+    (work / "clusters.json").write_text(json.dumps(groups, indent=1))
     rules, changes = update_rulebook(base_rules, groups, items, evid, out, cm, effort, cfg, spend, max_cost, workers,
-                                     n=n, append_only=append_only)
+                                     n=n, signals=sig)
     if do_induce:
         rules, more = induce(rules, cm, effort, cfg, spend, max_cost, out)
         changes += more

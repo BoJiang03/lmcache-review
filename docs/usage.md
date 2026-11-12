@@ -110,36 +110,50 @@ remove those samples from that reviewer's test set.
 ### Rule lifecycle
 
 ```
-human-only misses ──distill──> NEW book ──vet NEW --base OLD──> PASS: NEW is the next working book
-                   1 misses only      (append-only)  1 generality flags (free)
-                   2 attribute                       2 effect: source PRs, OLD vs NEW
-                   3 cluster with OLD entries        3 side effects: affected OLD entries' sources
-                   4 abstract (3 drafts merged)      4 verdict
-                   5 update: add | evidence | parent principle over existing entries
-                   6 induce: standalone entries under principles (attach or new parent)
-                                                 ...later: fair-target A/B, whole-book eval -> team-vN
+human-only misses ─┐
+failure signals ───┴─distill──> NEW book ──vet NEW --base OLD --write NEXT──> NEXT (the passing part)
+ (findings citing   0 screen with OLD          1 generality flags (free)
+  an entry, judged  1 attribute                2 effect: source PRs, OLD vs NEW
+  invalid)          2 cluster with OLD entries 2b revisions: their trigger is fixed
+                    3 abstract (3 drafts)      3 side effects: affected OLD entries' sources
+                    4 update: add | evidence | parent principle | revise | retire
+                    5 induce: standalone entries under principles
+                                              ...later: fair-target A/B, whole-book eval -> team-vN
 ```
 
-distill never rewrites or retires an entry by default (`--rewrite` restores that). Generalizing or
-merging adds a parent principle that links the existing entries as `members`; their text stays.
-This keeps side effects checkable: vet replays what the old entries caught and flags anything lost.
+- **distill** (`lmreview distill OUT --base OLD --misses-of R --screen-with v0c`):
+  - Step 0 re-reviews the comments' samples with `v0c+OLD@high-rc` and drops what it already
+    catches (cached; vet reuses the runs).
+  - Additions are the normal case: a new entry, evidence on an existing one, or a parent principle
+    above existing entries, which stay as written and are linked by `principle`/`members`.
+  - An existing entry is rewritten (`revise`: version + 1, old text in `history`) or `retire`d only
+    with evidence that it is wrong: a failure signal (a finding that cited it, judged invalid,
+    collected from every judged run on disk) or a human comment asking for the opposite. A revision
+    must still explain the entry's evidence and corrected tests. A signal is considered once
+    (`signals_seen`).
+- **vet** (`lmreview vet NEW --base OLD [--write NEXT] [--prompt v0c] [--max-cost N] [--all]`;
+  `--max-cost 0` prints the plan and the generality flags for free). It reviews with
+  `<prompt>+<book>@high-rc`:
+  - **effect**: each comment new to the book is re-reviewed (one sample per PR) with OLD and NEW. An
+    entry works if NEW matches one of its comments with a finding citing it. This leaks (the rule was
+    written from that comment), so it shows the reviewer applies the rule, not that it generalizes.
+    An existing entry that gained evidence from another PR, and that OLD already cited there, is a
+    fair hit.
+  - **revisions**: the samples whose invalid findings triggered a revision are re-reviewed; a finding
+    citing the entry judged invalid again means it is not fixed.
+  - **side effects**: OLD entries whose links, text or neighbours changed, and retired ones (`--all`:
+    every entry), are replayed on their own source comments. Caught with a citation under OLD but not
+    under NEW (for a retired entry: not caught at all) = regression.
+  - A failing case gets one more run before it counts (`--no-retry` to skip). Runs are cached under
+    `data/runs/<reviewer>/`, shared with any A/B that used the same names.
+  - The verdict is PASS, FAIL or INCOMPLETE (cost cap), written to `reports/vet_<book>.md`.
+    `--write NEXT` saves NEW without what failed:
+    - entries that never worked are dropped;
+    - lost or unfixed entries go back to their OLD version;
+    - new entries linked to a lost one are dropped.
 
-`lmreview vet NEW --base OLD [--prompt v0c] [--suffix -rc] [--max-cost N] [--all]` (`--max-cost 0`
-prints the plan and the generality flags for free). It reviews with `<prompt>+<book>@high-rc`:
-- **effect**: each comment new to the book is re-reviewed (one sample per PR) with OLD and NEW. An
-  entry works if NEW matches one of its comments with a finding citing it. This leaks (the rule was
-  written from that comment), so it shows the reviewer applies the rule, not that it generalizes.
-  An existing entry that gained evidence from another PR and that OLD already caught there is a fair
-  hit.
-- **side effects**: OLD entries whose links or neighbours changed (`--all`: every entry) are
-  replayed on their own source comments. Caught with a citation under OLD but not NEW = regression.
-- Runs are cached under `data/runs/<reviewer>/`, shared with any A/B that used the same names.
-- Verdict PASS / FAIL (an entry that never works, or a regression) / INCOMPLETE (cost cap); report in
-  `reports/vet_<book>.md`.
-
-- **Screen first.** Before distilling a PR's misses, re-review the PR with the current working book
-  (with `-rc`). Distill only the misses that still slip through. (miss1 #12–#22: pk7 `-rc` already
-  caught 3 of the 15 misses that team-v1 had.)
+- **Screen first** (distill step 0). Misses go stale as the working book grows: pk7 `-rc` already
+  caught 3 of the 15 #12–#22 misses that team-v1 had, and pk8 5 of the 24 #23–#27 ones.
 - **Candidate.** A new or changed entry. distill adds it, or merges it into the entry it generalizes.
   `lmreview eval --rules` (coverage) shows which other train comments it explains. A topic match is not
   enough: the rule's condition has to hold.
@@ -163,7 +177,7 @@ every rulebook change is checked before it can be promoted:
 
 | Layer | When | Checks | Cost |
 | --- | --- | --- | --- |
-| 1. text | inside distill, on every rewrite; again in `regress` | The new text still explains the entry's evidence comments and its corrected test comments. If not, the rewrite is rejected. | ~$0.1 per entry |
+| 1. text | inside distill, on every revision; again in `regress` | The new text still explains the entry's evidence comments and its corrected test comments. If not, the rewrite is rejected. | ~$0.1 per entry |
 | 2. replay | `lmreview regress NEW --base OLD [--suffix=-rc]` | Each corrected test of a changed entry is re-reviewed with NEW (`--reps 2`). Every tested comment must be matched by a finding that cites the entry, in at least one run. | ~$1.6 per run |
 | 3. whole book | before promoting to `team-vN` | `lmreview eval` on test: fewer human-only misses and no rise in findings judged invalid. Catches dilution and over-firing that per-rule tests cannot see. | ~$380 (292 samples) |
 

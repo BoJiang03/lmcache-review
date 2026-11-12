@@ -55,8 +55,8 @@ def main(argv: list[str] | None = None) -> None:
     d.add_argument("out", help="new rulebook name, e.g. r1")
     d.add_argument("--base", help="rulebook to extend")
     d.add_argument("--no-induce", action="store_true", help="skip step 6: principles over standalone entries")
-    d.add_argument("--rewrite", action="store_true",
-                   help="let generalize/merge rewrite and retire base entries (default: append-only parents)")
+    d.add_argument("--screen-with", metavar="PROMPT",
+                   help="step 0: drop comments a review with PROMPT+BASE@<effort>-rc already catches (paid, cached)")
     d.add_argument("--misses-of", help="only comments this reviewer missed (needs its eval on train)")
     d.add_argument("--area", help="only comments on PRs that touch this area; usually omit it, so team-wide standards voiced in other areas count too")
     d.add_argument("--limit", type=int, help="at most this many comments")
@@ -81,6 +81,8 @@ def main(argv: list[str] | None = None) -> None:
     v.add_argument("--max-cost", type=float, default=30.0, help="0 = print the plan only")
     v.add_argument("--all", action="store_true", help="replay every base entry, not only the affected ones")
     v.add_argument("--every-sample", action="store_true", help="new comments in every sample of a PR, not one")
+    v.add_argument("--no-retry", action="store_true", help="count a failing case after one run")
+    v.add_argument("--write", metavar="OUT", help="write rules/OUT.jsonl: RULES without the changes that failed")
     g = sub.add_parser("regress", help="after a rulebook change: check changed entries still explain their "
                                        "evidence and still fix their corrected tests (paid: replays)")
     g.add_argument("rules", help="the changed rulebook")
@@ -116,14 +118,15 @@ def main(argv: list[str] | None = None) -> None:
         print(regress(a.rules, a.base, a.reps, a.max_cost, suffix=a.suffix))
     elif a.cmd == "vet":
         from .vet import vet
-        print(vet(a.rules, a.base, a.prompt, a.effort, a.suffix, a.reps, a.max_cost, a.all, a.every_sample))
+        print(vet(a.rules, a.base, a.prompt, a.effort, a.suffix, a.reps, a.max_cost, a.all, a.every_sample,
+                  retry=not a.no_retry, write=a.write))
     elif a.cmd == "audit":
         from .distill import audit
         print(audit(a.rules))
     else:
         from .distill import distill
         print(distill(a.out, a.base, a.misses_of, a.area, a.limit, a.effort, a.workers, a.max_cost, a.reuse,
-                      a.keep_unaddressed, n=a.n, append_only=not a.rewrite, do_induce=not a.no_induce))
+                      a.keep_unaddressed, n=a.n, do_induce=not a.no_induce, screen_with=a.screen_with))
 
 
 if __name__ == "__main__":

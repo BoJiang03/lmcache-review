@@ -18,7 +18,8 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from lmreview.config import Config  # noqa: E402
 from lmreview.config import RULES  # noqa: E402
-from lmreview.distill import ATTRIBUTE, EST, _ask, _fmt, _id, cluster, induce, update_rulebook  # noqa: E402
+from lmreview.distill import (ATTRIBUTE, EST, _ask, _fmt, _id, attach_signals, cluster, failure_signals,  # noqa: E402
+                              induce, update_rulebook)  # noqa: E402
 from lmreview.score import load_gold  # noqa: E402
 
 # probe sets: id -> role in the probe
@@ -203,7 +204,6 @@ def main() -> None:
     ap.add_argument("--json", help="write the resulting rulebook here")
     ap.add_argument("--n", type=int, default=3, help="abstraction drafts to merge (1 = no ensemble)")
     ap.add_argument("--no-induce", action="store_true", help="skip step 6 (principles over standalone entries)")
-    ap.add_argument("--rewrite", action="store_true", help="allow rewriting/retiring base entries")
     ap.add_argument("--base", help="existing rulebook (rules/<name>.jsonl) to update instead of starting empty")
     a = ap.parse_args()
     cfg = Config()
@@ -233,11 +233,14 @@ def main() -> None:
             items[f"b{r['id']}"] = f"When {r.get('when')}: {r.get('expect')} (existing rule; paths {r.get('paths') or []})"
             evid[f"b{r['id']}"] = r.get("evidence") or []
     groups = cluster(items, a.effort, cfg, spend, a.max_cost)
+    sig_text, sig = failure_signals(base, cfg) if base else ({}, {})
+    attach_signals(groups, items, evid, sig_text, sig)
+    print(f"failure signals attached: {len(sig)}")
     print("\n== cluster")
     for i, g in enumerate(groups):
         print(f"group {i} ({g['concern']}): " + ", ".join(g["members"]))
     rules, changes = update_rulebook(base, groups, items, evid, "probe", cm, a.effort, cfg, spend, a.max_cost, n=a.n,
-                                     append_only=not a.rewrite)
+                                     signals=sig)
     if not a.no_induce:
         rules, more = induce(rules, cm, a.effort, cfg, spend, a.max_cost + 1, "probe")
         changes += more

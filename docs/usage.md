@@ -110,10 +110,32 @@ remove those samples from that reviewer's test set.
 ### Rule lifecycle
 
 ```
-human-only miss ──distill──> candidate ──A/B on a fair target──> corrected ──promotion gate──> team-vN
-                  (add, or merge into an existing entry;          (tests field)
-                   merged-away entries are retired, kept)
+human-only misses ──distill──> NEW book ──vet NEW --base OLD──> PASS: NEW is the next working book
+                   1 misses only      (append-only)  1 generality flags (free)
+                   2 attribute                       2 effect: source PRs, OLD vs NEW
+                   3 cluster with OLD entries        3 side effects: affected OLD entries' sources
+                   4 abstract (3 drafts merged)      4 verdict
+                   5 update: add | evidence | parent principle over existing entries
+                   6 induce: standalone entries under principles (attach or new parent)
+                                                 ...later: fair-target A/B, whole-book eval -> team-vN
 ```
+
+distill never rewrites or retires an entry by default (`--rewrite` restores that). Generalizing or
+merging adds a parent principle that links the existing entries as `members`; their text stays.
+This keeps side effects checkable: vet replays what the old entries caught and flags anything lost.
+
+`lmreview vet NEW --base OLD [--prompt v0c] [--suffix -rc] [--max-cost N] [--all]` (`--max-cost 0`
+prints the plan and the generality flags for free). It reviews with `<prompt>+<book>@high-rc`:
+- **effect**: each comment new to the book is re-reviewed (one sample per PR) with OLD and NEW. An
+  entry works if NEW matches one of its comments with a finding citing it. This leaks (the rule was
+  written from that comment), so it shows the reviewer applies the rule, not that it generalizes.
+  An existing entry that gained evidence from another PR and that OLD already caught there is a fair
+  hit.
+- **side effects**: OLD entries whose links or neighbours changed (`--all`: every entry) are
+  replayed on their own source comments. Caught with a citation under OLD but not NEW = regression.
+- Runs are cached under `data/runs/<reviewer>/`, shared with any A/B that used the same names.
+- Verdict PASS / FAIL (an entry that never works, or a regression) / INCOMPLETE (cost cap); report in
+  `reports/vet_<book>.md`.
 
 - **Screen first.** Before distilling a PR's misses, re-review the PR with the current working book
   (with `-rc`). Distill only the misses that still slip through. (miss1 #12–#22: pk7 `-rc` already
@@ -127,12 +149,12 @@ human-only miss ──distill──> candidate ──A/B on a fair target──>
 - **Record the result** with `lmreview.distill.record_test(book, rule, target, control, with_rule,
   result)`. `result` is one of: corrected, both-hit, both-miss, uncited-gain, regressed.
   `lmreview audit` shows corrected/run per entry, and flags active entries that have no corrected test.
-- **Principles.** distill tends to split one reviewer habit into several one-off rules. Group them
-  under a principle with an operational check (`scripts/induce_principles.py`) and keep the specific
-  rules verbatim as knowledge linked by `principle`. P5 fired on a new PR only after this.
+- **Principles.** distill tends to split one reviewer habit into several one-off rules. Steps 5 and
+  6 group them under principles with an operational check and keep the specific rules verbatim as
+  members linked by `principle`. P5 fired on a new PR only after this. (`scripts/induce_principles.py`
+  is the older whole-book, rewriting version.)
 - **Working books** (`miss1-r4`, `-r5`, ..., `pk1`–`pk8`) are versions too. Runs name them, so keep
-  them. Only promote to `team-vN` through the gate above. The latest is `pk8` (principles P1–P7
-  plus knowledge), meant to be run with `-rc`. It has not passed the whole-book gate yet.
+  them. Only promote to `team-vN` through the gate above. The latest is `pk9` (principles plus knowledge), meant to be run with `-rc`. It has not passed the whole-book gate yet.
 
 ### Keeping rules valid through edits
 
@@ -143,7 +165,7 @@ every rulebook change is checked before it can be promoted:
 | --- | --- | --- | --- |
 | 1. text | inside distill, on every rewrite; again in `regress` | The new text still explains the entry's evidence comments and its corrected test comments. If not, the rewrite is rejected. | ~$0.1 per entry |
 | 2. replay | `lmreview regress NEW --base OLD [--suffix=-rc]` | Each corrected test of a changed entry is re-reviewed with NEW (`--reps 2`). Every tested comment must be matched by a finding that cites the entry, in at least one run. | ~$1.6 per run |
-| 3. whole book | before promoting to `team-vN` | `lmreview eval` on test: fewer human-only misses and no rise in findings judged invalid. Catches dilution and over-firing that per-rule tests cannot see. | ~$30 |
+| 3. whole book | before promoting to `team-vN` | `lmreview eval` on test: fewer human-only misses and no rise in findings judged invalid. Catches dilution and over-firing that per-rule tests cannot see. | ~$380 (292 samples) |
 
 Tests follow merges: the surviving entry inherits the tests of the entries it absorbed, so they are
 replayed under its id. Replays are cached under `data/runs`, so rerunning `regress` costs nothing.

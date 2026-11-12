@@ -18,7 +18,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from lmreview.config import Config  # noqa: E402
 from lmreview.config import RULES  # noqa: E402
-from lmreview.distill import ATTRIBUTE, EST, _ask, _fmt, _id, cluster, update_rulebook  # noqa: E402
+from lmreview.distill import ATTRIBUTE, EST, _ask, _fmt, _id, cluster, induce, update_rulebook  # noqa: E402
 from lmreview.score import load_gold  # noqa: E402
 
 # probe sets: id -> role in the probe
@@ -165,6 +165,32 @@ PROBES["m12to22"] = {
     5009870884: "single    #4709 (train) DongDongJu: Hello @yhl-amd, Thanks for the contribution. Could we add an explicit per-request LOAD_FAI",
     3898883072: "single    #4836 (train) andyluo7: This retains the future, but not its producer `event`. A later store for the same request ",
 }
+PROBES["m23to27"] = {
+    3709696043: "single    #4397 (train) hlin99: pytestmark = pytest.mark.cuda can we skip all the test file in the very beginning?",
+    3709764837: "single    #4397 (train) hlin99: TODO: https://github.com/LMCache/LMCache/pull/4370",
+    3709826116: "single    #4397 (train) hlin99: file to be moved to platform/musa, but could be in seperate PR. just fyi",
+    3709826457: "single    #4397 (train) hlin99: file to be moved to platform/musa, but could be in seperate PR. just fyi",
+    3709826894: "single    #4397 (train) hlin99: file to be moved to platform/musa, but could be in seperate PR. just fyi",
+    3709852296: "single    #4397 (train) hlin99: all device should pass this test, but pending on https://github.com/LMCache/LMCache/pull/4",
+    3448895452: "single    #3776 (train) ApostaC: This part is a bit hard to understand. Maybe replace this with an illustrative example? WD",
+    3448897898: "single    #3776 (train) ApostaC: 1. Remove `used by the hybrid prefix-cache lookup.` since if other modules are going to us",
+    3448899401: "single    #3776 (train) ApostaC: How about we use a CLI args to control the behavior? We don't use any environment variable",
+    3456790188: "single    #3776 (train) ApostaC: We can create a 'good second issue' -- refactor this to only pass the `MPServerConfig`.",
+    3456794779: "single    #3776 (train) ApostaC: Avoid calling private methods in unit tests.",
+    3524440618: "single    #3968 (train) hlin99: move this out to platform specific area or don't call it ascend xxx in python fallback.",
+    3524459326: "single    #3968 (train) hlin99: i know some other devices use the same tuple(k,v) layout. maybe we can treat it as one of ",
+    3525689235: "single    #3968 (train) ApostaC: nit: we prefer avoid union types. For here, it's better to use the newer lmcache mp connec",
+    4630879851: "single    #3968 (train) hlin99: overall looks good. raised some small areas to change @sammshen can you help double check ",
+    3802873867: "single    #3968 (train) hlin99: kv_caches[0] must be tuple in NL_X_TWO_X_NB_BS_NH_HS format, isn't it?",
+    3264164629: "single    #3193 (train) KuntaiDu: Add needle-in-a-haystack benchmark results",
+    3264167400: "single    #3193 (train) KuntaiDu: Would be great if we can infer the head_dim parameters from the tensor.",
+    3184967691: "single    #3193 (train) KuntaiDu: Would be great if we add some basic correctness test. Maybe like asserting the difference ",
+    3221566074: "single    #3193 (train) KuntaiDu: Can you also add user-side doc? It is located under `docs/source`",
+    3299929598: "single    #3248 (train) ApostaC: Let's not have this log here. This is because this function will be called many times, and",
+    3299949667: "single    #3248 (train) ApostaC: Why is this removed?",
+    3450469915: "single    #3248 (train) maobaolong: We can remove this redundant config.",
+    3450487918: "single    #3248 (train) maobaolong: As discussed, although we plan to do not support `pp + tp + mla` within this pr, and you h",
+}
 
 def main() -> None:
     """Run attribute, cluster and rulebook update on one probe set and print the changes."""
@@ -176,6 +202,7 @@ def main() -> None:
     ap.add_argument("--train-only", action="store_true", help="drop the test comments (fair rule for testing on them)")
     ap.add_argument("--json", help="write the resulting rulebook here")
     ap.add_argument("--n", type=int, default=3, help="abstraction drafts to merge (1 = no ensemble)")
+    ap.add_argument("--no-induce", action="store_true", help="skip step 6 (principles over standalone entries)")
     ap.add_argument("--rewrite", action="store_true", help="allow rewriting/retiring base entries")
     ap.add_argument("--base", help="existing rulebook (rules/<name>.jsonl) to update instead of starting empty")
     a = ap.parse_args()
@@ -211,11 +238,15 @@ def main() -> None:
         print(f"group {i} ({g['concern']}): " + ", ".join(g["members"]))
     rules, changes = update_rulebook(base, groups, items, evid, "probe", cm, a.effort, cfg, spend, a.max_cost, n=a.n,
                                      append_only=not a.rewrite)
+    if not a.no_induce:
+        rules, more = induce(rules, cm, a.effort, cfg, spend, a.max_cost + 1, "probe")
+        changes += more
     print("\n== changes")
     for ch in changes:
         print(json.dumps(ch, ensure_ascii=False))
     print("\n== entries added or changed")
-    touched = {x for ch in changes for x in (ch.get("rules") or []) + (ch.get("new") or [])}
+    touched = {x for ch in changes for x in (ch.get("rules") or []) + (ch.get("new") or [])
+               if not ch["op"].startswith("induce")} | {x for ch in changes if ch["op"] == "induce-parent" for x in ch["new"]}
     for r in rules:
         if r["id"] in touched:
             print(json.dumps({k: r.get(k) for k in ("id", "version", "status", "kind", "when", "expect", "examples",

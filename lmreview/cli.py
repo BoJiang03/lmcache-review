@@ -54,6 +54,7 @@ def main(argv: list[str] | None = None) -> None:
     d = sub.add_parser("distill", help="distill train human comments into a new rulebook (paid)")
     d.add_argument("out", help="new rulebook name, e.g. r1")
     d.add_argument("--base", help="rulebook to extend")
+    d.add_argument("--no-induce", action="store_true", help="skip step 6: principles over standalone entries")
     d.add_argument("--rewrite", action="store_true",
                    help="let generalize/merge rewrite and retire base entries (default: append-only parents)")
     d.add_argument("--misses-of", help="only comments this reviewer missed (needs its eval on train)")
@@ -69,6 +70,17 @@ def main(argv: list[str] | None = None) -> None:
 
     sub.add_parser("audit", help="suggest rulebook entries to retire: paths gone, findings judged invalid, "
                                  "contested (free)").add_argument("rules", help="rulebook name")
+    v = sub.add_parser("vet", help="check a distill result before using it: generality flags, effect on its "
+                                   "source comments, side effects on the base entries (paid; cached runs free)")
+    v.add_argument("rules", help="the new rulebook")
+    v.add_argument("--base", required=True, help="the rulebook it was built from")
+    v.add_argument("--prompt", default="v0c")
+    v.add_argument("--effort", default="high")
+    v.add_argument("--suffix", default="-rc", help="reviewer suffix ('' for no rule check)")
+    v.add_argument("--reps", type=int, default=1)
+    v.add_argument("--max-cost", type=float, default=30.0, help="0 = print the plan only")
+    v.add_argument("--all", action="store_true", help="replay every base entry, not only the affected ones")
+    v.add_argument("--every-sample", action="store_true", help="new comments in every sample of a PR, not one")
     g = sub.add_parser("regress", help="after a rulebook change: check changed entries still explain their "
                                        "evidence and still fix their corrected tests (paid: replays)")
     g.add_argument("rules", help="the changed rulebook")
@@ -76,10 +88,6 @@ def main(argv: list[str] | None = None) -> None:
     g.add_argument("--reps", type=int, default=2, help="runs per replayed test; a case regresses if all miss")
     g.add_argument("--max-cost", type=float, default=10.0, help="0 = print the plan and estimate only")
     g.add_argument("--suffix", default="", help="appended to the replay reviewer, e.g. -rc for the rule check")
-    g.add_argument("--backtest", action="store_true",
-                   help="re-review the affected entries' source PRs with --base and with RULES (needs --base)")
-    g.add_argument("--prompt", default="v0c", help="reviewer prompt for --backtest")
-    g.add_argument("--all", action="store_true", help="--backtest every active entry, not only changed + linked")
 
     a = ap.parse_args(argv)
     if getattr(a, "parallel", 1) > 1:
@@ -105,21 +113,17 @@ def main(argv: list[str] | None = None) -> None:
         print(evaluate(a.reviewer, a.vs, a.workers, a.judge_effort, a.max_cost))
     elif a.cmd == "regress":
         from .regress import regress
-        if a.backtest:
-            from .regress import backtest
-            if not a.base:
-                ap.error("--backtest needs --base")
-            print(backtest(a.rules, a.base, a.prompt, suffix=a.suffix or "-rc", reps=a.reps if a.reps != 2 else 1,
-                           max_cost=a.max_cost, everything=a.all))
-        else:
-            print(regress(a.rules, a.base, a.reps, a.max_cost, suffix=a.suffix))
+        print(regress(a.rules, a.base, a.reps, a.max_cost, suffix=a.suffix))
+    elif a.cmd == "vet":
+        from .vet import vet
+        print(vet(a.rules, a.base, a.prompt, a.effort, a.suffix, a.reps, a.max_cost, a.all, a.every_sample))
     elif a.cmd == "audit":
         from .distill import audit
         print(audit(a.rules))
     else:
         from .distill import distill
         print(distill(a.out, a.base, a.misses_of, a.area, a.limit, a.effort, a.workers, a.max_cost, a.reuse,
-                      a.keep_unaddressed, n=a.n, append_only=not a.rewrite))
+                      a.keep_unaddressed, n=a.n, append_only=not a.rewrite, do_induce=not a.no_induce))
 
 
 if __name__ == "__main__":

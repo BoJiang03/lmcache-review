@@ -61,7 +61,6 @@ def main(argv: list[str] | None = None) -> None:
 
     sub.add_parser("status", help="book in use, candidate, ledger counts (free)")
     j = sub.add_parser("judge", help="judge the current reviewer's runs and file the comments in the ledger (paid, cached)")
-    j.add_argument("--split", default="train", choices=["train", "test", "new"])
     j.add_argument("--prs", type=int, nargs="+")
     j.add_argument("--max-cost", type=float, default=10.0)
     o = sub.add_parser("round", help="review + judge + distill + vet on these samples (paid)")
@@ -127,7 +126,9 @@ def main(argv: list[str] | None = None) -> None:
         note(f"lmreview {' '.join(argv if argv is not None else sys.argv[1:])} | log: {tee(a.cmd, Config().data)}")
     if getattr(a, "parallel", 1) > 1:
         name, sep, rep = a.reviewer.partition("#")  # keep a repeat tag such as #r2
-        a.reviewer = re.sub(r"x\d+$", "", name) + f"x{a.parallel}" + sep + rep
+        rc = "-rc" if name.endswith("-rc") else ""
+        name = re.sub(r"x\d+$", "", name.removesuffix("-rc"))
+        a.reviewer = f"{name}x{a.parallel}{rc}" + sep + rep
     if a.cmd == "sync":
         from .sync import sync
         print(sync(a.since))
@@ -154,7 +155,7 @@ def main(argv: list[str] | None = None) -> None:
         if a.cmd == "status":
             print(state.status())
         elif a.cmd == "judge":
-            print(state.judge(a.split, set(a.prs or []) or None, a.max_cost))
+            print(state.judge("train", set(a.prs or []) or None, a.max_cost))
         elif a.cmd == "round":
             print(state.round_(a.prs, a.review_cost, a.judge_cost, a.distill_cost, a.vet_cost))
         elif a.cmd == "rollback":

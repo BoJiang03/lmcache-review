@@ -777,7 +777,7 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
         cs, seen = [cm0[i] for i in comments if i in cm0], set()
     else:
         cs = inputs(cfg, misses_of, area, "train", keep_unaddressed)
-        seen = set(book_meta(base)["seen"]) if base else set()  # comments an earlier distill already processed
+        seen = set(book_meta(base).get("seen") or []) if base else set()  # comments an earlier distill already processed
     if prs:
         cs = [c for c in cs if c["pr"] in set(prs)]
     n_seen = sum(c["id"] in seen for c in cs)

@@ -58,7 +58,11 @@ def text_check(rules: list[dict], ids: list[str], cm: dict, cfg: Config, effort:
         if not cs:
             continue
         text = f"{i}: when {r.get('when')} -> {r.get('expect')}"
-        res, c = _ask(COVERAGE.format(rules=text, comments="\n\n".join(_fmt(x, False) for x in cs)), effort, cfg)
+        try:
+            res, c = _ask(COVERAGE.format(rules=text, comments="\n\n".join(_fmt(x, False) for x in cs)), effort, cfg)
+        except Exception as e:  # a failed check must not sink the replays; count it as all lost, as distill does
+            print(f"text check of {i} failed: {e}")
+            res, c = None, 0.0
         cost += c
         ok = {_id(x.get("id")) for x in res if isinstance(x, dict) and i in (x.get("rules") or [])} \
             if isinstance(res, list) else set()
@@ -85,7 +89,9 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
         """Review (unless cached) and judge `target` with reviewer `rv`, run k; None if over the cap."""
         rv, target, k = job
         pr, c = target.split("@")
-        key = next(x for x in ss if x[0] == int(pr) and x[1].startswith(c))
+        key = next((x for x in ss if x[0] == int(pr) and x[1].startswith(c)), None)
+        if key is None:
+            raise ValueError(f"test target {target} is not a sample in the gold set")
         s, name = ss[key], f"{pr}-{key[1][:8]}.json"
         d = cfg.data / "runs" / (rv if k == 1 else f"{rv}#r{k}")
         d.mkdir(parents=True, exist_ok=True)
@@ -129,7 +135,7 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
                 continue
             cites = {f["id"] for f in res["run"]["findings"] if f.get("rule") in ok_ids}
             gold = res["score"]["gold_ids"]
-            hit = {gold[h["id"]] for h in res["score"]["human"] if cites & set(h.get("matched_ai") or [])}
+            hit = {int(gold[int(h["id"])]) for h in res["score"]["human"] if cites & set(h.get("matched_ai") or [])}
             flags.append(all(c in hit for c in t["comments"]))
         rows.append({"entry": i, "target": t["target"], "reviewer": rv, "runs": flags,
                      "passed": any(f for f in flags if f is not None) if any(f is not None for f in flags) else None})

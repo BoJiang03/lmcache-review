@@ -35,6 +35,8 @@ def parse_reviewer(name: str) -> tuple[str, str | None, str]:
     m = _NAME.fullmatch(name)
     if not m:
         raise ValueError(f"bad reviewer name {name!r}; expected <prompt>[+<rules>][@<effort>][x<n>][-rc]")
+    if m[5] and not m[3]:  # else "v0b+foo-rc" is ambiguous: rulebook "foo-rc", or "foo" with the rule check
+        raise ValueError(f"bad reviewer name {name!r}: -rc needs an explicit @<effort> before it")
     return m[1], m[2], m[3] or "high"
 
 

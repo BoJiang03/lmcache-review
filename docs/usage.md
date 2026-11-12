@@ -115,6 +115,9 @@ human-only miss ──distill──> candidate ──A/B on a fair target──>
                    merged-away entries are retired, kept)
 ```
 
+- **Screen first.** Before distilling a PR's misses, re-review the PR with the current working book
+  (with `-rc`). Distill only the misses that still slip through. (miss1 #12–#22: pk7 `-rc` already
+  caught 3 of the 15 misses that team-v1 had.)
 - **Candidate.** A new or changed entry. distill adds it, or merges it into the entry it generalizes.
   `lmreview eval --rules` (coverage) shows which other train comments it explains. A topic match is not
   enough: the rule's condition has to hold.
@@ -124,8 +127,12 @@ human-only miss ──distill──> candidate ──A/B on a fair target──>
 - **Record the result** with `lmreview.distill.record_test(book, rule, target, control, with_rule,
   result)`. `result` is one of: corrected, both-hit, both-miss, uncited-gain, regressed.
   `lmreview audit` shows corrected/run per entry, and flags active entries that have no corrected test.
-- **Working books** (`miss1-r4`, `-r5`, ...) are versions too. Runs name them, so keep them. Only
-  promote to `team-vN` through the gate above.
+- **Principles.** distill tends to split one reviewer habit into several one-off rules. Group them
+  under a principle with an operational check (`scripts/induce_principles.py`) and keep the specific
+  rules verbatim as knowledge linked by `principle`. P5 fired on a new PR only after this.
+- **Working books** (`miss1-r4`, `-r5`, ..., `pk1`–`pk8`) are versions too. Runs name them, so keep
+  them. Only promote to `team-vN` through the gate above. The latest is `pk8` (principles P1–P7
+  plus knowledge), meant to be run with `-rc`. It has not passed the whole-book gate yet.
 
 ### Keeping rules valid through edits
 

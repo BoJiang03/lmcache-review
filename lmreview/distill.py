@@ -632,6 +632,21 @@ def failure_signals(rules: list[dict], cfg: Config, per_rule: int = 3, reviewer:
     return text, rec
 
 
+def book_meta(name: str) -> dict:
+    """rules/<name>.meta.json: how the book was made ({"base", "runs", "prs", "samples", "seen"}).
+    A book without one (made before) counts its evidence comments as seen."""
+    p = RULES / f"{name}.meta.json"
+    if p.exists():
+        return json.loads(p.read_text())
+    rules = [json.loads(l) for l in (RULES / f"{name}.jsonl").open() if l.strip()]
+    return {"seen": sorted({int(e) for r in rules for e in r.get("evidence") or []})}
+
+
+def write_meta(name: str, meta: dict) -> None:
+    """Write rules/<name>.meta.json."""
+    (RULES / f"{name}.meta.json").write_text(json.dumps(meta, indent=1) + "\n")
+
+
 def judge_runs(cfg: Config, reviewer: str, prs: set[int] | None, split: str, max_cost: float) -> tuple[list, float]:
     """Step 1 of distill: judge `reviewer`'s runs on `split` (only `prs`, if given) against the human
     comments; already judged runs are read from disk. Runs over the cost cap stay unjudged and are skipped.
@@ -695,7 +710,11 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     cs = inputs(cfg, misses_of, area, "train", keep_unaddressed)
     if prs:
         cs = [c for c in cs if c["pr"] in set(prs)]
-    cs = cs[:limit]
+    seen = set(book_meta(base)["seen"]) if base else set()  # comments an earlier distill already processed
+    n_seen = sum(c["id"] in seen for c in cs)
+    cs = [c for c in cs if c["id"] not in seen][:limit]
+    if n_seen:
+        print(f"skipping {n_seen} comments already processed into {base} or its ancestors", flush=True)
     by_id = {c["id"]: c for c in cs}
     batches = [cs[i:i + BATCH] for i in range(0, len(cs), BATCH)]
     n_cand = int(len(cs) * 0.7)  # pilot: ~75% learnable
@@ -750,6 +769,9 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     (work / "changes.json").write_text(json.dumps(changes, indent=1))
     RULES.mkdir(exist_ok=True)
     (RULES / f"{out}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rules))
+    write_meta(out, {"base": base, "runs": misses_of, "prs": sorted(prs or []) or None,
+                     "samples": sorted({f"{r['pr']}@{r['commit'][:8]}" for r, _ in judged or []}),
+                     "seen": sorted(seen | {a["id"] for a in att})})  # vet reads this; the next distill skips "seen"
 
     kinds = C.Counter(a.get("kind") for a in att)
     md = [f"# Rulebook {out}", "",

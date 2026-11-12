@@ -33,7 +33,8 @@ import re
 
 from .config import RULES, Config
 from .regress import EST_RUN, FIELDS, replay
-from .reviewer import load_rules
+from .distill import book_meta, write_meta
+from .reviewer import load_rules, parse_reviewer, rulecheck_of
 from .score import REPORTS, load_gold
 
 LINKS = ("principle", "members")
@@ -67,15 +68,18 @@ def lint(r: dict) -> list[str]:
     return out
 
 
-def vet(book: str, base: str, prompt: str = "v0c", effort: str = "high", suffix: str = "-rc", reps: int = 1,
+def vet(book: str, base: str | None = None, prompt: str | None = None, effort: str | None = None,
+        suffix: str | None = None, reps: int = 1,
         max_cost: float = 30.0, everything: bool = False, every_sample: bool = False, retry: bool = True,
         write: str | None = None, cfg: Config | None = None) -> str:
     """Vet rulebook `book` against `base`; see the module docstring.
 
     Args:
         book: the new rulebook (a distill result).
-        base: the rulebook it was built from.
+        base: the rulebook it was built from (default: from rules/<book>.meta.json).
         prompt, effort, suffix: the reviewer is `<prompt>+<book>@<effort><suffix>`, and the same with base.
+            Default: those of the runs distill learned from (meta "runs"), so their cached runs and
+            scores of base are reused; else v0c, high, -rc.
         reps: runs per sample and book; a comment counts as matched if any run matches it.
         max_cost: cap for all runs together; 0 prints the plan only.
         everything: replay every active entry of base on its sources, not only the affected ones.
@@ -88,6 +92,15 @@ def vet(book: str, base: str, prompt: str = "v0c", effort: str = "high", suffix:
         The report, also written to reports/vet_<book>.md.
     """
     cfg = cfg or Config()
+    meta = book_meta(book)
+    base = base or meta.get("base")
+    if not base:
+        raise ValueError(f"no base for {book}: pass --base (rules/{book}.meta.json names none)")
+    if meta.get("runs"):
+        version, _, eff = parse_reviewer(meta["runs"].split("#")[0])
+        prompt, effort = prompt or version, effort or eff
+        suffix = suffix if suffix is not None else ("-rc" if rulecheck_of(meta["runs"]) else "")
+    prompt, effort, suffix = prompt or "v0c", effort or "high", "-rc" if suffix is None else suffix
     act = lambda rs: {r["id"]: r for r in rs if r.get("status", "active") == "active"}  # noqa: E731
     new_rules, old_rules = load_rules(book), load_rules(base)
     N, O = act(new_rules), act(old_rules)
@@ -218,6 +231,7 @@ def vet(book: str, base: str, prompt: str = "v0c", effort: str = "high", suffix:
     if write:
         kept_book = _passing(new_rules, old_rules, O, J, rel)
         (RULES / f"{write}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in kept_book))
+        write_meta(write, {**meta, "base": base, "vetted_from": book})  # keeps "seen" for the next distill
         L += ["", f"wrote rules/{write}.jsonl: {len(kept_book)} entries (failing changes dropped or reverted)"]
     L = L[:2] + [f"**{verdict}** · cost ${c_b + c_n + c_r:.2f}", ""] + L[2:]
     (REPORTS / f"vet_{book}.md").write_text("\n".join(L) + "\n")

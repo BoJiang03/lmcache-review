@@ -317,7 +317,7 @@ def discard() -> str:
 # ---- the steps -----------------------------------------------------------------------------------
 
 def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: str = "high", workers: int = 4,
-                 max_cost: float = 5.0, cfg: Config | None = None) -> str:
+                 max_cost: float = 5.0, cfg: Config | None = None, induce: bool = False) -> str:
     """Distill the ledger's to_distill comments (only on `prs`, if given) into a candidate built on the
     book in use. Earlier failed attempts are passed on, so the next one is written differently.
     Comments distill finds not learnable (context, not an issue, declined) become not_rulable."""
@@ -343,7 +343,7 @@ def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: 
         try:
             msg = distill(name, vname(parent), reviewer(), effort=effort, workers=workers,
                           max_cost=max_cost, cfg=cfg, comments=ids, prs=sorted({r["pr"] for r in todo}),
-                          notes={r["comment"]: tries_note(r) for r in todo if r.get("tries")})
+                          notes={r["comment"]: tries_note(r) for r in todo if r.get("tries")}, do_induce=induce)
         except BaseException:
             clear_candidate()
             raise
@@ -475,7 +475,7 @@ def pick_samples(prs: list[int | str], cfg: Config | None = None) -> list[str]:
 
 
 def round_(prs: list[int | str], review_cost: float = 30.0, judge_cost: float = 10.0, distill_cost: float = 5.0,
-           vet_cost: float = 30.0, cfg: Config | None = None) -> str:
+           vet_cost: float = 30.0, cfg: Config | None = None, induce: bool = False) -> str:
     """One round on samples `prs` (PR:commit, or PR numbers: see pick_samples): review with the book in use, judge, then
     distill + vet until their comments are all resolved / not rulable / needs_human (at most MAX_TRIES)."""
     from .replay import replay
@@ -497,7 +497,7 @@ def round_(prs: list[int | str], review_cost: float = 30.0, judge_cost: float = 
                 note("nothing left to distill on these samples")
                 break
             with step(f"attempt {k + 1}/{MAX_TRIES}", f"{len(left)} comments to distill"):
-                out.append(distill_step(nums, max_cost=distill_cost, cfg=cfg))
+                out.append(distill_step(nums, max_cost=distill_cost, cfg=cfg, induce=induce))
                 if not candidate():
                     break
                 out.append(vet_step(vet_cost, cfg=cfg).split("\n\n")[-1])

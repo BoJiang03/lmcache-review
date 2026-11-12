@@ -17,6 +17,7 @@ import pathlib
 
 from . import llm
 from .budget import capped_map
+from .progress import note
 from .config import Config
 from .reviewer import prompt_template, rule_evidence
 from .schema import load_findings
@@ -143,21 +144,21 @@ def judge(version: str, workers: int = 4, effort: str = "high", max_cost: float 
     runs = [r for r in runs if r["findings"] is not None]
     stale = [r for r in runs if (r["pr"], r["commit"]) not in ss]
     if stale:  # the dataset was rebuilt and the sample no longer exists (e.g. its commit was corrected)
-        print(f"skipping {len(stale)} runs whose sample no longer exists: "
-              + ", ".join(f"#{r['pr']}-{r['commit'][:8]}" for r in stale), flush=True)
+        note(f"skipping {len(stale)} runs whose sample no longer exists: "
+              + ", ".join(f"#{r['pr']}-{r['commit'][:8]}" for r in stale))
         runs = [r for r in runs if (r["pr"], r["commit"]) in ss]
     ev = rule_evidence(version)
     leak = [r for r in runs if ev & set(ss[(r["pr"], r["commit"])]["gold_ids"])]
     if leak:  # see replay: the rulebook was distilled from these samples' own human comments
-        print(f"skipping {len(leak)} runs whose sample the rulebook came from", flush=True)
+        note(f"skipping {len(leak)} runs whose sample the rulebook came from")
         runs = [r for r in runs if r not in leak]
     sdir = cfg.data / "scores" / version
     path = lambda r: sdir / f"{r['pr']}-{r['commit'][:8]}.json"  # noqa: E731
     def fresh(r: dict) -> bool:  # judged against the sample's current gold (it changes when the dataset is rebuilt)
         return path(r).exists() and json.loads(path(r).read_text()).get("gold_ids") == ss[(r["pr"], r["commit"])]["gold_ids"]
     todo = [r for r in runs if not fresh(r)]
-    print(f"judge {version}: {len(runs)} runs, {len(todo)} to judge (est ${len(todo) * EST_COST:.0f}, "
-          f"cap ${max_cost:.0f})", flush=True)
+    note(f"judge {version}: {len(runs)} runs, {len(todo)} to judge (est ${len(todo) * EST_COST:.0f}, "
+         f"cap ${max_cost:.0f})")
 
     def one(r):
         k = (r["pr"], r["commit"])

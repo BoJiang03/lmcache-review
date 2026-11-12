@@ -120,6 +120,11 @@ def main(argv: list[str] | None = None) -> None:
     g.add_argument("--suffix", default="", help="appended to the replay reviewer, e.g. -rc for the rule check")
 
     a = ap.parse_args(argv)
+    if a.cmd in ("judge", "round", "regress", "eval") or (a.cmd in ("review", "distill", "vet") and not (
+            a.cmd == "review" and a.pr) and getattr(a, "max_cost", 1) > 0):
+        from .config import Config
+        from .progress import note, tee
+        note(f"lmreview {' '.join(argv if argv is not None else sys.argv[1:])} | log: {tee(a.cmd, Config().data)}")
     if getattr(a, "parallel", 1) > 1:
         name, sep, rep = a.reviewer.partition("#")  # keep a repeat tag such as #r2
         a.reviewer = re.sub(r"x\d+$", "", name) + f"x{a.parallel}" + sep + rep

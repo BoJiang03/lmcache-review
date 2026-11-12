@@ -12,11 +12,13 @@ import json
 import pathlib
 
 from .budget import capped_map
+from .progress import note
 from .config import Config
-from .reviewer import DEFAULT_REVIEWER, load_rules, parse_reviewer, reviewer_context, rule_evidence, run_reviewer
+from .reviewer import DEFAULT_REVIEWER, load_rules, rulecheck_of, parse_reviewer, reviewer_context, rule_evidence, run_reviewer
 from .workspace import cached_pr, sample_workspace
 
-EST_COST = 1.3  # $/sample for a high-effort review, from earlier runs; used only for the estimate
+EST_COST = 1.2  # $/sample for a high-effort review, from earlier runs; used only for the estimate
+EST_RC = 3.3    # with the rule check and vLLM context (v0c+pk8/pk9@high-rc: $3.0-3.5)
 
 
 def _picked(s: dict, prs: list) -> bool:
@@ -71,12 +73,12 @@ def replay(reviewer: str = DEFAULT_REVIEWER, split: str = "test", limit: int | N
     ev = rule_evidence(reviewer)
     leak = [s for s in ss if ev & set(s["gold_ids"])]
     if leak:  # its rulebook was distilled from these samples' own human comments
-        print(f"skipping {len(leak)} samples whose comments the rulebook came from: "
-              + ", ".join(f"#{s['pr']}-{s['commit'][:8]}" for s in leak), flush=True)
+        note(f"skipping {len(leak)} samples whose comments the rulebook came from: "
+              + ", ".join(f"#{s['pr']}-{s['commit'][:8]}" for s in leak))
         ss = [s for s in ss if s not in leak]
     todo = [s for s in ss if not run_path(cfg, reviewer, s).exists()]
-    print(f"{reviewer} on {split}" + (f" ({area})" if area else "") + f": {len(ss)} samples, {len(ss) - len(todo)} cached, {len(todo)} to run "
-          f"(est ${len(todo) * EST_COST:.0f}, cap ${max_cost:.0f})", flush=True)
+    note(f"{reviewer} on {split}" + (f" ({area})" if area else "") + f": {len(ss)} samples, {len(ss) - len(todo)} cached, {len(todo)} to run "
+          f"(est ${len(todo) * (EST_RC if rulecheck_of(reviewer) else EST_COST):.0f}, cap ${max_cost:.0f})")
     _, spent = capped_map(lambda s: replay_one(cfg, s, reviewer), todo, workers, max_cost,
                           label=lambda s: f"#{s['pr']}-{s['commit'][:8]}")
     return spent

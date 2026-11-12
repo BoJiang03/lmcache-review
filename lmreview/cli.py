@@ -75,7 +75,7 @@ def main(argv: list[str] | None = None) -> None:
                                    "source comments, side effects on the base entries (paid; cached runs free)")
     v.add_argument("rules", help="the new rulebook")
     v.add_argument("--base", help="the rulebook it was built from (default: from rules/RULES.meta.json)")
-    v.add_argument("--prompt", help="default: that of the runs distill learned from, else v0c")
+    v.add_argument("--prompt", help="default: that of the runs distill learned from, else v0f")
     v.add_argument("--effort", help="default: as --prompt, else high")
     v.add_argument("--suffix", help="reviewer suffix, '' for no rule check (default: as --prompt, else -rc)")
     v.add_argument("--reps", type=int, default=1)

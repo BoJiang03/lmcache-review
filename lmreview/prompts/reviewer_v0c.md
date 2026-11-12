@@ -1,3 +1,4 @@
+<!-- rules: examples -->
 <!-- context: vllm -->
 You are reviewing pull request #{number} of LMCache (a KV-cache layer for LLM inference engines such as vLLM).
 

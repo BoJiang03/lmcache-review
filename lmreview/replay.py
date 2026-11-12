@@ -80,5 +80,6 @@ def replay(reviewer: str = DEFAULT_REVIEWER, split: str = "test", limit: int | N
     note(f"{reviewer} on {split}" + (f" ({area})" if area else "") + f": {len(ss)} samples, {len(ss) - len(todo)} cached, {len(todo)} to run "
           f"(est ${len(todo) * (EST_RC if rulecheck_of(reviewer) else EST_COST):.0f}, cap ${max_cost:.0f})")
     _, spent = capped_map(lambda s: replay_one(cfg, s, reviewer), todo, workers, max_cost,
-                          label=lambda s: f"#{s['pr']}-{s['commit'][:8]}")
+                          label=lambda s: f"#{s['pr']}-{s['commit'][:8]}",
+                          est=EST_RC if rulecheck_of(reviewer) else EST_COST)
     return spent

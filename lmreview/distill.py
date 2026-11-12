@@ -683,7 +683,7 @@ def judge_runs(cfg: Config, reviewer: str, prs: set[int] | None, split: str, max
         out.append((run, _normalize(sc, run)))
         if not was:
             n = out[-1][1]
-            note(f"judged #{run['pr']}@{run['commit'][:8]}: {sum(h['matched_ai'] for h in n['human'])}/{len(n['human'])} "
+            note(f"judged #{run['pr']}@{run['commit'][:8]}: {sum(bool(h['matched_ai']) for h in n['human'])}/{len(n['human'])} "
                  f"human comments found (${sc.get('cost', 0):.2f}, total ${cost:.2f} of ${max_cost:.0f})")
     return out, cost
 

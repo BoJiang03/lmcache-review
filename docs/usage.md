@@ -65,6 +65,12 @@ It reports everything it finds, so expect more findings than a human would write
 Design: `docs/mechanism.md`.
 
 There are four commands. Reviewers are named `<prompt>[+<rulebook>][@<effort>][x<n>][-rc]`, e.g. `v0b+r2@high`.
+
+The reviewer sees each rule's id, kind, when, expect and why, never its `examples`. Examples carry the
+source PR's particulars (names, values): too specific for the reviewer, and on the source PR they leak
+the answer. They stay in the book for people and for distill. The older prompts (v0, v0b, v0c, v0d,
+v0t) still show the first example (`<!-- rules: examples -->`), so their cached runs stay valid; v0e and
+v0f are v0b and v0c without it.
 `x<n>` runs n reviews in parallel and merges them. `-rc` adds a rule-check run next to the review: one more agent
 that must give a verdict (applies, violated, why) on every applicable rule, merged with the review. It keeps a long
 rulebook from crowding out specific rules (on #3697, m3631-002 fired 0/2 with pk2 and 2/2 with pk2 `-rc`); it
@@ -122,7 +128,7 @@ failure signals ───┴─distill──> NEW book ──vet NEW --base OLD 
 ```
 
 - **review → distill → vet.** review produces runs; distill learns from them; vet decides what to keep.
-- **distill** (`lmreview distill OUT --base OLD --misses-of v0c+OLD@high-rc --prs N ...`) does not
+- **distill** (`lmreview distill OUT --base OLD --misses-of v0f+OLD@high-rc --prs N ...`) does not
   review. First run `lmreview review` with the OLD book on the train PRs to learn from, so the misses
   are OLD's own. distill then:
   - Step 1 judges those runs against the human comments (cached; vet reuses runs and scores). The
@@ -135,7 +141,7 @@ failure signals ───┴─distill──> NEW book ──vet NEW --base OLD 
     collected from every judged run on disk) or a human comment asking for the opposite. A revision
     must still explain the entry's evidence and corrected tests. A signal is considered once
     (`signals_seen`).
-- **vet** (`lmreview vet NEW --base OLD [--write NEXT] [--prompt v0c] [--max-cost N] [--all]`;
+- **vet** (`lmreview vet NEW --base OLD [--write NEXT] [--prompt v0f] [--max-cost N] [--all]`;
   `--max-cost 0` prints the plan and the generality flags for free). It reviews with
   `<prompt>+<book>@high-rc`:
   - **effect**: each comment new to the book is re-reviewed (one sample per PR) with OLD and NEW. An
@@ -190,7 +196,7 @@ replayed under its id. Replays are cached under `data/runs`, so rerunning `regre
 `regress` writes `reports/regress_<book>.md`, with the verdict PASS, REGRESSED or INCOMPLETE (stopped
 by the cost cap).
 
-The current default is `v0b+team-v1@high`. `team-v1` holds five rules, each distilled from one
+The current default is `v0e+team-v1@high`. `team-v1` holds five rules, each distilled from one
 review comment. They were added for out-of-the-box use before passing the promotion gate above.
 
 Reviewers pick up the new version when they upgrade.

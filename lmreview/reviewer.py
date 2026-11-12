@@ -18,7 +18,7 @@ from .workspace import TOOLS, live_workspace, pr_meta
 
 # What people get out of the box. Rulebooks are versioned (team-v1, team-v2, ...): to update, build the
 # next version (`lmreview distill team-v2 --base team-v1`) and point this at it; old versions stay.
-DEFAULT_REVIEWER = os.environ.get("LMREVIEW_REVIEWER", "v0b+team-v1@high")
+DEFAULT_REVIEWER = os.environ.get("LMREVIEW_REVIEWER", "v0e+team-v1@high")
 
 
 _NAME = re.compile(r"([\w.-]+?)(?:\+([\w.-]+?))?(?:@([a-z]+))?(?:x(\d+))?(-rc)?")
@@ -57,11 +57,11 @@ def prompt_template(version: str) -> tuple[str, tuple[str, ...]]:
     """Prompt text of `version` and the extra workspace context it declares.
 
     A prompt may start with directive lines that are not sent to the model:
-    `<!-- context: vllm -->` (extra workspace context) and `<!-- system: trimmed -->` (see
-    prompt_system).
+    `<!-- context: vllm -->` (extra workspace context), `<!-- system: trimmed -->` (see
+    prompt_system) and `<!-- rules: examples -->` (see rule_examples).
     """
     text, ctx = (PROMPTS / f"reviewer_{version}.md").read_text(), ()
-    while m := re.match(r"<!--\s*(context|system):\s*([\w, .-]*?)\s*-->\n", text):
+    while m := re.match(r"<!--\s*(context|system|rules):\s*([\w, .-]*?)\s*-->\n", text):
         if m[1] == "context":
             ctx = tuple(x.strip() for x in m[2].split(",") if x.strip())
         text = text[m.end():]
@@ -73,6 +73,16 @@ def prompt_system(version: str) -> str | None:
     None keeps Claude Code's default."""
     m = re.search(r"^<!--\s*system:\s*([\w.-]+)\s*-->$", (PROMPTS / f"reviewer_{version}.md").read_text(), re.M)
     return (PROMPTS / f"system_{m[1]}.md").read_text() if m else None
+
+
+def rule_examples(version: str) -> bool:
+    """Whether prompt `version` shows each rule's first example (`<!-- rules: examples -->`).
+
+    Off by default: examples carry the source PR's particulars (names, values), which are too specific
+    for the reviewer and leak the answer on the source PR. Only the older prompts (v0, v0b, v0c, v0d,
+    v0t) keep them, so their cached runs stay valid; v0e/v0f are v0b/v0c without them.
+    """
+    return bool(re.search(r"^<!--\s*rules:\s*examples\s*-->$", (PROMPTS / f"reviewer_{version}.md").read_text(), re.M))
 
 
 def reviewer_context(reviewer: str) -> tuple[str, ...]:
@@ -108,27 +118,29 @@ def applicable(rules: list[dict], paths: list[str]) -> list[dict]:
     return [r for r in use if not r.get("paths") or any(fnmatch.fnmatch(p, g) for p in paths for g in r["paths"])]
 
 
-def rule_lines(use: list[dict]) -> list[str]:
-    """One prompt line per rule: id, kind (and principle, if it is a specialization of one), text."""
+def rule_lines(use: list[dict], examples: bool = False) -> list[str]:
+    """One prompt line per rule: id, kind (and principle, if it is a specialization of one), text;
+    with `examples`, also the rule's first example (see rule_examples)."""
     def text(r: dict) -> str:
         t = f"When {r['when']}: {r['expect']}" if r.get("expect") else r.get("rule", "")
         t = t.rstrip(".") + "." + (f" Why: {r['why']}" if r.get("why") else "")
-        return t + (f" E.g. {r['examples'][0]}" if r.get("examples") else "")
+        return t + (f" E.g. {r['examples'][0]}" if examples and r.get("examples") else "")
     return [f"- [{r['id']}] ({r.get('kind', 'principle')}" + (f", under {r['principle']}" if r.get("principle") else "")
             + f") {text(r)}" for r in use]
 
 
-def rules_section(rules: list[dict], paths: list[str]) -> str:
+def rules_section(rules: list[dict], paths: list[str], examples: bool = False) -> str:
     """The prompt section with the active rules that apply to `paths` (rules without paths always apply)."""
     use = applicable(rules, paths)
     if not use:
         return ""
-    lines = rule_lines(use)
+    lines = rule_lines(use, examples)
     return ("\n\nTeam rules distilled from past LMCache reviews. Check the change against the ones "
             "that apply; when a finding follows from a rule, put its id in the finding's \"rule\" "
             "field. A rule finding must be about code this PR adds or changes: do not raise a rule "
-            "against behavior the PR leaves as it was. A rule's example shows one instance, not a "
-            "checklist item: apply the rule's condition, not the example's particulars.\n"
+            "against behavior the PR leaves as it was."
+            + (" A rule's example shows one instance, not a checklist item: apply the rule's condition, "
+               "not the example's particulars." if examples else "") + "\n"
             + "\n".join(lines) + "\n")
 
 
@@ -146,7 +158,7 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER) 
     prompt = prompt_template(version)[0].format(**pr_meta(raw))
     use = applicable(load_rules(rules), changed_paths(wt)) if rules else []
     if rules:
-        sec = rules_section(load_rules(rules), changed_paths(wt))
+        sec = rules_section(load_rules(rules), changed_paths(wt), rule_examples(version))
         prompt = prompt.replace("\nFinish with one JSON block", sec + "\nFinish with one JSON block", 1) \
             if "\nFinish with one JSON block" in prompt else prompt + sec
     system = prompt_system(version)
@@ -158,7 +170,7 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER) 
         return _parsed(llm.run(prompt, effort, cwd=str(wt), tools=TOOLS, system=system))
 
     def rulecheck() -> dict:  # must give a verdict per rule, so a long rulebook cannot crowd rules out
-        p = (PROMPTS / "rulecheck.md").read_text().format(rules="\n".join(rule_lines(use)), **pr_meta(raw))
+        p = (PROMPTS / "rulecheck.md").read_text().format(rules="\n".join(rule_lines(use, rule_examples(version))), **pr_meta(raw))
         return _parsed(llm.run(p, effort, cwd=str(wt), tools=TOOLS, system=system), rulecheck=True)
 
     def merge(ok: list[dict]) -> dict:  # one more agent run on the same workspace: it may read code

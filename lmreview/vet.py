@@ -79,7 +79,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         base: the rulebook it was built from (default: from rules/<book>.meta.json).
         prompt, effort, suffix: the reviewer is `<prompt>+<book>@<effort><suffix>`, and the same with base.
             Default: those of the runs distill learned from (meta "runs"), so their cached runs and
-            scores of base are reused; else v0c, high, -rc.
+            scores of base are reused; else v0f, high, -rc.
         reps: runs per sample and book; a comment counts as matched if any run matches it.
         max_cost: cap for all runs together; 0 prints the plan only.
         everything: replay every active entry of base on its sources, not only the affected ones.
@@ -100,7 +100,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         version, _, eff = parse_reviewer(meta["runs"].split("#")[0])
         prompt, effort = prompt or version, effort or eff
         suffix = suffix if suffix is not None else ("-rc" if rulecheck_of(meta["runs"]) else "")
-    prompt, effort, suffix = prompt or "v0c", effort or "high", "-rc" if suffix is None else suffix
+    prompt, effort, suffix = prompt or "v0f", effort or "high", "-rc" if suffix is None else suffix
     act = lambda rs: {r["id"]: r for r in rs if r.get("status", "active") == "active"}  # noqa: E731
     new_rules, old_rules = load_rules(book), load_rules(base)
     N, O = act(new_rules), act(old_rules)

@@ -10,7 +10,8 @@ Merge them:
 - Findings that raise the same problem (same root cause, even if worded differently or pointing at
   different lines of it) become ONE finding. Keep the clearest title and body, the most precise
   locations (union of the useful ones), and the best suggestion. If any source finding names a
-  "rule", keep that rule id.
+  "rule", keep that rule id on the merged finding, also when it merges into a finding without one
+  (a rule-check finding folded into a main-run finding keeps its id).
 - "support": how many of the {n} runs raised that problem (1..{n}).
 - Severity: when the sources disagree, read the code and pick the one it supports.
 - Do not drop a finding only because one run raised it: a single run is often the one that looked

@@ -185,6 +185,16 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER) 
     return {**out, "cost": sum(x["cost"] for x in e.runs) + merge_cost, **keep, **meta}
 
 
+def _unfiled(verdicts: object, findings: list) -> list[dict]:
+    """PR-level findings for rules judged violated that no rule-check finding cites, built from the
+    verdict's `why`, so a violation the model judged but did not write up still reaches the merge."""
+    cited = {f.get("rule") for f in findings if isinstance(f, dict)}
+    vs = [v for v in verdicts or [] if isinstance(v, dict) and v.get("violated") and v.get("rule")
+          and v["rule"] not in cited]
+    return [{"id": f"rv{i}", "severity": "minor", "scope": "pr", "title": f"Violates team rule {v['rule']}",
+             "body": str(v.get("why") or ""), "locations": [], "rule": v["rule"]} for i, v in enumerate(vs, 1)]
+
+
 def _parsed(r: dict, rulecheck: bool = False) -> dict:
     """One llm.run result as run-file fields: findings (None if unparsable) and the error; a rule check
     (rulecheck.md output: {"verdicts", "findings"}) also keeps its per-rule verdicts."""
@@ -195,6 +205,7 @@ def _parsed(r: dict, rulecheck: bool = False) -> dict:
             if not isinstance(obj, dict):
                 raise SchemaError("rule check output must be an object with verdicts and findings")
             verdicts, obj = obj.get("verdicts"), obj.get("findings") or []
+            obj = obj + _unfiled(verdicts, obj)
         findings = to_dicts(parse_findings(obj))
     except (ValueError, SchemaError) as e:  # SchemaError is a ValueError; kept explicit for clarity
         error = str(e)

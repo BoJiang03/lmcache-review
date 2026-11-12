@@ -13,11 +13,12 @@ HEARTBEAT = 60.0  # seconds between "still running" lines while nothing finishes
 
 def capped_map(fn: Callable[[object], tuple[object, float]], items: Iterable, workers: int,
                max_cost: float, label: Callable[[object], str] = str,
-               show: Callable[[object], str] | None = None) -> tuple[list, float]:
+               show: Callable[[object], str] | None = None, est: float = 0.0) -> tuple[list, float]:
     """Run `fn(item) -> (result, cost)` over items, at most `workers` at a time.
 
-    No new job starts once the spent total reaches `max_cost`; jobs already running finish, so the
-    total can overshoot by up to `workers` jobs. Failures are printed and skipped. Prints one line per
+    No new job starts once the spent total, plus `est` (expected cost of one job) for each job still
+    running, would reach `max_cost`; jobs already running finish. With `est` 0 the total can overshoot
+    by up to `workers` jobs; with a fair `est`, by about the estimate's error. Failures are printed and skipped. Prints one line per
     finished job ([done/total], cost so far against the cap, ETA) and a heartbeat while jobs run.
 
     Returns:
@@ -31,7 +32,8 @@ def capped_map(fn: Callable[[object], tuple[object, float]], items: Iterable, wo
         running: dict = {}
         started: dict = {}
         while items or running:
-            while items and len(running) < workers and spent < max_cost:
+            while items and len(running) < workers and spent + est * (len(running) + 1) <= max(max_cost, est) \
+                    and spent < max_cost:
                 it = items.pop(0)
                 f = ex.submit(fn, it)
                 running[f], started[f] = it, time.time()

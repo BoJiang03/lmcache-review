@@ -27,6 +27,7 @@ import collections as C
 import datetime as dt
 import fnmatch
 import json
+import pathlib
 import subprocess
 import tempfile
 
@@ -649,7 +650,8 @@ def write_meta(name: str, meta: dict) -> None:
     _meta_path(name).write_text(json.dumps(meta, indent=1) + "\n")
 
 
-def _meta_path(name: str):
+def _meta_path(name: str) -> pathlib.Path:
+    """rules/<name>.meta.json, or the .meta.json next to a state book."""
     b = book_path(name)
     return b.with_name(b.stem + ".meta.json")
 
@@ -684,6 +686,51 @@ def judge_runs(cfg: Config, reviewer: str, prs: set[int] | None, split: str, max
             note(f"judged #{run['pr']}@{run['commit'][:8]}: {sum(h['matched_ai'] for h in n['human'])}/{len(n['human'])} "
                  f"human comments found (${sc.get('cost', 0):.2f}, total ${cost:.2f} of ${max_cost:.0f})")
     return out, cost
+
+
+def rule_diff(old: list[dict], new: list[dict], width: int = 160) -> list[tuple[str, str]]:
+    """What changed from rulebook `old` to `new`, as (level, line) for the log (see progress.note).
+
+    `+` a new entry (with its text), `~` a revised entry (old and new text), `-` retired, `=` an existing
+    entry that gained evidence, links (principle / members) or a contest."""
+    def cut(t: str) -> str:
+        t = " ".join(str(t or "").split())
+        return t if len(t) <= width else t[:width - 1] + "…"
+
+    def text(r: dict) -> str:
+        return cut(f"When {r.get('when')}: {r.get('expect')}")
+
+    O = {r["id"]: r for r in old}
+    out: list[tuple[str, str]] = []
+    for r in new:
+        o, i = O.get(r["id"]), r["id"]
+        tag = f"{i} ({r.get('kind', 'principle')}" + (f", under {r['principle']}" if r.get("principle") else "") + ")"
+        if o is None:
+            mem = f"; members {', '.join(r['members'])}" if r.get("members") else ""
+            out += [("add", f"+ {tag}: {len(r.get('evidence') or [])} evidence comments{mem}"), ("add", f"    {text(r)}")]
+            continue
+        if r.get("status", "active") != o.get("status", "active") and r.get("status") == "retired":
+            why = (r.get("retired") or {}).get("why")
+            out.append(("drop", f"- {tag} retired" + (f": {cut(why)}" if why else "")))
+            continue
+        if r.get("version", 1) != o.get("version", 1):
+            out += [("change", f"~ {tag} revised v{o.get('version', 1)} -> v{r.get('version', 1)}"),
+                    ("dim", f"    was: {text(o)}"), ("change", f"    now: {text(r)}")]
+            continue
+        bits = []
+        ev = set(r.get("evidence") or []) - set(o.get("evidence") or [])
+        if ev:
+            bits.append(f"+{len(ev)} evidence")
+        if r.get("principle") != o.get("principle"):
+            bits.append(f"now under {r.get('principle')}")
+        mem = set(r.get("members") or []) - set(o.get("members") or [])
+        if mem:
+            bits.append(f"new members {', '.join(sorted(mem))}")
+        if set(r.get("contested") or []) - set(o.get("contested") or []):
+            bits.append("contested by a new comment")
+        if bits:
+            out.append(("info", f"= {tag}: {'; '.join(bits)}"))
+    return out
 
 
 def attach_signals(groups: list[dict], items: dict, evid: dict, text: dict, rec: dict) -> None:
@@ -799,6 +846,12 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
         changes += more
         note(f"      induce: {dict(C.Counter(ch['op'] for ch in more)) or 'no change'}")
     spent = spend[0]
+    diff = rule_diff(base_rules, rules)
+    note(f"rule changes ({sum(l.startswith('+') for _, l in diff)} new, {sum(l.startswith('~') for _, l in diff)} revised, "
+         f"{sum(l.startswith('-') for _, l in diff)} retired, {sum(l.startswith('=') for _, l in diff)} updated):"
+         if diff else "rule changes: none")
+    for level, line in diff:
+        note("  " + line, level)
     (work / "changes.json").write_text(json.dumps(changes, indent=1))
     book_path(out).parent.mkdir(parents=True, exist_ok=True)
     book_path(out).write_text("".join(json.dumps(r) + "\n" for r in rules))

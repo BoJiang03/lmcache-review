@@ -55,9 +55,10 @@ def main(argv: list[str] | None = None) -> None:
     d.add_argument("out", help="new rulebook name, e.g. r1")
     d.add_argument("--base", help="rulebook to extend")
     d.add_argument("--no-induce", action="store_true", help="skip step 6: principles over standalone entries")
-    d.add_argument("--screen-with", metavar="PROMPT",
-                   help="step 0: drop comments a review with PROMPT+BASE@<effort>-rc already catches (paid, cached)")
-    d.add_argument("--misses-of", help="only comments this reviewer missed (needs its eval on train)")
+    d.add_argument("--prs", type=int, nargs="+", help="only these train PRs")
+    d.add_argument("--misses-of", metavar="REVIEWER",
+                   help="learn from this reviewer's runs (normally <prompt>+BASE@high-rc): its misses and the "
+                        "invalid findings citing BASE entries; unjudged runs are judged here (paid, cached)")
     d.add_argument("--area", help="only comments on PRs that touch this area; usually omit it, so team-wide standards voiced in other areas count too")
     d.add_argument("--limit", type=int, help="at most this many comments")
     d.add_argument("--reuse", help="reuse the attribution of this earlier distill run (same inputs); only re-merge")
@@ -126,7 +127,7 @@ def main(argv: list[str] | None = None) -> None:
     else:
         from .distill import distill
         print(distill(a.out, a.base, a.misses_of, a.area, a.limit, a.effort, a.workers, a.max_cost, a.reuse,
-                      a.keep_unaddressed, n=a.n, do_induce=not a.no_induce, screen_with=a.screen_with))
+                      a.keep_unaddressed, n=a.n, do_induce=not a.no_induce, prs=a.prs))
 
 
 if __name__ == "__main__":

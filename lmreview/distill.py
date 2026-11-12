@@ -1,17 +1,20 @@
-"""`lmreview distill`: turn human review comments into a rulebook; `coverage`: test whether it reuses.
+"""`lmreview distill`: turn what a reviewer missed into rulebook changes; `coverage`: test whether it reuses.
 
-Input: human review comments on train samples. With `misses_of`, only the ones that reviewer
-missed (human-only, from its judge results); that is the intended input: learn what the AI lacks.
-Comments whose file never changed again although the PR got later commits are dropped (likely not
-taken); the rest go in with their outcome and thread replies.
-  1. attribute (batches, no tools): learnable | context | not_issue | rejected (declined in the
+distill does not review: it learns from existing review runs (`misses_of`, normally
+`<prompt>+<base>@high-rc` run on train PRs with `lmreview review`).
+  1. judge the runs against the human comments (cached): missed comments (change requests / nits)
+     are what to learn; findings citing a base entry judged invalid are its failure signals.
+     Comments whose file never changed again although the PR got later commits are dropped.
+  2. attribute (batches, no tools): learnable | context | not_issue | rejected (declined in the
      thread); for learnable ones a candidate rule
-  2. cluster (no tools, all areas together): group candidates by underlying concern
-  3. abstract (batches of clusters, no tools): one entry per cluster, or none
-       principle  a review principle the reviewer applied (one instance is enough)
-       knowledge  a fact / invariant about this codebase or the engine a reviewer must know there
-     evidence = the cluster's comments (computed here, not by the model); n_prs is informational
-Output: rules/<out>.jsonl, rules/<out>.md (readable), <data>/distill/<out>/{attribution,clusters}.json*.
+  3. cluster (no tools): group candidates with the base entries by underlying concern; failure
+     signals join their entry's group
+  4. abstract new-only groups (n drafts merged); REVISE groups with base entries: evidence | parent
+     principle | add | revise / retire (only on a failure signal or an opposite comment) | contradict
+  5. update the book; a revision must still explain the entry's evidence and corrected tests
+  6. induce: place standalone entries under principles (attach, or a new parent)
+Output: rules/<out>.jsonl, rules/<out>.md (readable), <data>/distill/<out>/{attribution,clusters,changes}.json.
+Whether the result is kept is `lmreview vet`'s call (vet.py).
 Never reads test/new samples.
 
 coverage(): for human comments of a split (default test), which entries explain them. Rules that
@@ -582,8 +585,10 @@ def induce(rules: list[dict], cm: dict, effort: str, cfg: Config, spend: list[fl
     return rules, changes
 
 
-def failure_signals(rules: list[dict], cfg: Config, per_rule: int = 3) -> tuple[dict, dict]:
-    """Findings that cited an entry of `rules` and were judged invalid, from every judged run on disk.
+def failure_signals(rules: list[dict], cfg: Config, per_rule: int = 3, reviewer: str | None = None,
+                    prs: set[int] | None = None) -> tuple[dict, dict]:
+    """Findings that cited an entry of `rules` and were judged invalid, from the judged runs of
+    `reviewer` (on `prs`, if given), or from every judged run on disk.
 
     Returns:
         (key "s<n>" -> prompt text, key -> record {rule, reviewer, target, finding, why}).
@@ -595,6 +600,8 @@ def failure_signals(rules: list[dict], cfg: Config, per_rule: int = 3) -> tuple[
     done = {(r["id"], *x) for r in rules for x in r.get("signals_seen") or []}  # already decided on
     text, rec, n, seen = {}, {}, C.Counter(), set()
     for d in sorted((cfg.data / "runs").iterdir()):
+        if reviewer and d.name != reviewer:
+            continue
         try:
             if not parse_reviewer(d.name.split("#")[0])[1]:
                 continue
@@ -606,6 +613,8 @@ def failure_signals(rules: list[dict], cfg: Config, per_rule: int = 3) -> tuple[
                 continue
             bad = {a["id"]: a.get("why") for a in json.loads(sp.read_text()).get("ai") or [] if a.get("valid") is False}
             run = json.loads(f.read_text())
+            if prs and run["pr"] not in prs:
+                continue
             for x in run.get("findings") or []:
                 r = x.get("rule")
                 key = (r, run["pr"], (x.get("title") or "")[:60])
@@ -623,22 +632,30 @@ def failure_signals(rules: list[dict], cfg: Config, per_rule: int = 3) -> tuple[
     return text, rec
 
 
-def screen(cs: list[dict], book: str, prompt: str, effort: str, suffix: str, max_cost: float,
-           cfg: Config) -> tuple[list[dict], float]:
-    """Step 0: re-review the comments' samples with the current book; keep only the comments no finding
-    matches (still missed). Comments not reviewed (cost cap) are kept. Runs are cached and shared with vet.
+def judge_runs(cfg: Config, reviewer: str, prs: set[int] | None, split: str, max_cost: float) -> tuple[list, float]:
+    """Step 1 of distill: judge `reviewer`'s runs on `split` (only `prs`, if given) against the human
+    comments; already judged runs are read from disk. Runs over the cost cap stay unjudged and are skipped.
 
     Returns:
-        (the comments still missed, cost).
+        ([(run, normalized score)], cost).
     """
-    from .regress import replay
-    ss, _ = load_gold(cfg)
-    where = {int(c): k for k, x in ss.items() for c in x["gold_ids"]}
-    cases = [("screen", {"target": f"{where[c['id']][0]}@{where[c['id']][1][:8]}", "with": f"{prompt}@{effort}",
-                         "comments": [c["id"]]}) for c in cs if c["id"] in where]
-    rows, cost = replay(book, cases, 1, max_cost, cfg, suffix=suffix)
-    caught = {r["comments"][0] for r in rows if r["any"]}
-    return [c for c in cs if c["id"] not in caught], cost
+    from .score import score_one
+    ss, cm = load_gold(cfg)
+    out, cost = [], 0.0
+    for f in sorted((cfg.data / "runs" / reviewer).glob("*.json")):
+        run = json.loads(f.read_text())
+        s = ss.get((run["pr"], run["commit"]))
+        if not s or s.get("split") != split or (prs and run["pr"] not in prs) or run.get("findings") is None:
+            continue
+        sp = cfg.data / "scores" / reviewer / f.name
+        if not sp.exists() and cost >= max_cost:
+            continue
+        sp.parent.mkdir(parents=True, exist_ok=True)
+        was = sp.exists()
+        sc = score_one(cfg, run, s, [cm[i] for i in s["gold_ids"]], sp, "high")
+        cost += 0 if was else sc.get("cost", 0)
+        out.append((run, _normalize(sc, run)))
+    return out, cost
 
 
 def attach_signals(groups: list[dict], items: dict, evid: dict, text: dict, rec: dict) -> None:
@@ -653,24 +670,32 @@ def attach_signals(groups: list[dict], items: dict, evid: dict, text: dict, rec:
 def distill(out: str, base: str | None = None, misses_of: str | None = None, area: str | None = None,
             limit: int | None = None, effort: str = "high", workers: int = 4, max_cost: float = 5.0,
             reuse: str | None = None, keep_unaddressed: bool = False, cfg: Config | None = None,
-            n: int = 3, do_induce: bool = True, screen_with: str | None = None) -> str:
+            n: int = 3, do_induce: bool = True, prs: list[int] | None = None) -> str:
     """Build rules/<out>.jsonl; returns a short summary. `max_cost` 0 = plan only (prints the estimate).
 
-    Steps: (0) with `screen_with` (a prompt such as "v0c"; needs `base`), drop the comments that a review
-    with the base book (`<prompt>+<base>@high-rc`) already catches; attribute the missed comments;
-    cluster them with the base entries and the base entries' failure signals; abstract each group;
-    update the book (additions; revise/retire only on a failure signal); induce principles over the
-    standalone entries (`do_induce`). Whether the result is kept is `lmreview vet`'s call."""
+    distill does not review. It learns from review runs that exist: `misses_of` names the reviewer
+    whose runs to use, normally `<prompt>+<base>@high-rc` run with `lmreview review` on the train PRs
+    `prs`, so that the misses are the base book's own.
+    Steps: (1) judge those runs against the human comments (cached); the missed comments are what to
+    learn, and findings citing a base entry that were judged invalid are its failure signals;
+    (2) attribute the missed comments; (3) cluster them with the base entries and their signals;
+    (4) abstract each group; (5) update the book (additions; revise/retire only on a failure signal or
+    an opposite comment); (6) induce principles over the standalone entries (`do_induce`). Whether the
+    result is kept is `lmreview vet`'s call."""
     cfg = cfg or Config()
     if (RULES / f"{out}.jsonl").exists():
         raise FileExistsError(f"rules/{out}.jsonl exists; pick a new name")
-    cs = inputs(cfg, misses_of, area, "train", keep_unaddressed)[:limit]
-    pre = 0.0
-    if screen_with and base and max_cost > 0:
-        n0 = len(cs)
-        cs, pre = screen(cs, base, screen_with, effort, "-rc", max_cost / 2, cfg)
-        print(f"screen with {screen_with}+{base}@{effort}-rc: {n0} -> {len(cs)} comments still missed (${pre:.2f})",
-              flush=True)
+    pre, judged = 0.0, None
+    if misses_of and max_cost > 0:  # step 1: judge the runs (free when already judged)
+        from .reviewer import parse_reviewer
+        if base and parse_reviewer(misses_of.split("#")[0])[1] != base:
+            print(f"note: {misses_of} does not use {base}: its misses are not the base book's own", flush=True)
+        judged, pre = judge_runs(cfg, misses_of, set(prs or []) or None, "train", max_cost / 2)
+        print(f"judge {misses_of}: {len(judged)} runs (${pre:.2f})", flush=True)
+    cs = inputs(cfg, misses_of, area, "train", keep_unaddressed)
+    if prs:
+        cs = [c for c in cs if c["pr"] in set(prs)]
+    cs = cs[:limit]
     by_id = {c["id"]: c for c in cs}
     batches = [cs[i:i + BATCH] for i in range(0, len(cs), BATCH)]
     n_cand = int(len(cs) * 0.7)  # pilot: ~75% learnable
@@ -712,7 +737,8 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     groups = cluster(items, effort, cfg, spend, max_cost)
     _, cm = load_gold(cfg)
     base_rules = [json.loads(l) for l in (RULES / f"{base}.jsonl").open() if l.strip()] if base else []
-    sig_text, sig = failure_signals(base_rules, cfg) if base_rules else ({}, {})
+    sig_text, sig = failure_signals(base_rules, cfg, reviewer=misses_of, prs=set(prs or []) or None) \
+        if base_rules and misses_of else ({}, {})
     attach_signals(groups, items, evid, sig_text, sig)
     (work / "clusters.json").write_text(json.dumps(groups, indent=1))
     rules, changes = update_rulebook(base_rules, groups, items, evid, out, cm, effort, cfg, spend, max_cost, workers,

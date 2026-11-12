@@ -69,6 +69,8 @@ def main(argv: list[str] | None = None) -> None:
     o.add_argument("--judge-cost", type=float, default=10.0)
     o.add_argument("--distill-cost", type=float, default=5.0)
     o.add_argument("--vet-cost", type=float, default=30.0)
+    o.add_argument("--induce", action="store_true", help="distill step 6 (principles over standalone entries); "
+                   "off by default: its parents explain no new comment and are dropped anyway")
     sub.add_parser("rollback", help="make an earlier version the book in use, as a new version").add_argument(
         "version", help="e.g. v0001")
     sub.add_parser("discard", help="drop the candidate without vetting it")
@@ -80,7 +82,8 @@ def main(argv: list[str] | None = None) -> None:
                                        "with OUT: the old named-book mode")
     d.add_argument("out", nargs="?", help="old mode: new rulebook name, e.g. r1")
     d.add_argument("--base", help="rulebook to extend")
-    d.add_argument("--no-induce", action="store_true", help="skip step 6: principles over standalone entries")
+    d.add_argument("--induce", action="store_true", help="run step 6: principles over standalone entries (an "
+                   "experiment: a new parent without evidence of its own is dropped)")
     d.add_argument("--prs", type=int, nargs="+", help="only these train PRs")
     d.add_argument("--misses-of", metavar="REVIEWER",
                    help="learn from this reviewer's runs (normally <prompt>+BASE@high-rc): its misses and the "
@@ -157,7 +160,7 @@ def main(argv: list[str] | None = None) -> None:
         elif a.cmd == "judge":
             print(state.judge("train", set(a.prs or []) or None, a.max_cost))
         elif a.cmd == "round":
-            print(state.round_(a.prs, a.review_cost, a.judge_cost, a.distill_cost, a.vet_cost))
+            print(state.round_(a.prs, a.review_cost, a.judge_cost, a.distill_cost, a.vet_cost, induce=a.induce))
         elif a.cmd == "rollback":
             print(f"book in use: {state.vname(state.rollback(int(a.version.lstrip('v'))))}")
         elif a.cmd == "discard":
@@ -169,7 +172,7 @@ def main(argv: list[str] | None = None) -> None:
         print(vet_step(a.max_cost, a.reps, a.all))
     elif a.cmd == "distill" and not a.out:
         from .state import distill_step
-        print(distill_step(set(a.prs or []) or None, a.limit, a.effort, a.workers, a.max_cost))
+        print(distill_step(set(a.prs or []) or None, a.limit, a.effort, a.workers, a.max_cost, induce=a.induce))
     elif a.cmd == "vet":
         from .vet import vet
         print(vet(a.rules, a.base, a.prompt, a.effort, a.suffix, a.reps, a.max_cost, a.all, a.every_sample,
@@ -180,7 +183,7 @@ def main(argv: list[str] | None = None) -> None:
     else:
         from .distill import distill
         print(distill(a.out, a.base, a.misses_of, a.area, a.limit, a.effort, a.workers, a.max_cost, a.reuse,
-                      a.keep_unaddressed, n=a.n, do_induce=not a.no_induce, prs=a.prs))
+                      a.keep_unaddressed, n=a.n, do_induce=a.induce, prs=a.prs))
 
 
 if __name__ == "__main__":

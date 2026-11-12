@@ -170,8 +170,10 @@ key of a group appears in exactly one decision of that group:
   "expect" is too narrow to make a reviewer raise their point. Write the broader entry at the lowest
   level that covers the existing entry AND the candidates; it becomes a new parent principle, and the
   existing entry stays as written under it.
-- "merge": two or more existing entries are one concern; write the one parent entry that covers them
-  all (they stay as written under it).
+- "merge": two or more existing entries are one concern AND candidates of the group fall between
+  them (none of them as written covers the candidates); write the one parent entry that covers them
+  all (they stay as written under it). Without such candidates, keep them: a parent that explains no
+  new comment is dropped.
 - "add": candidates ask for a different change than every existing entry; write a new entry.
 - "revise": the existing entry's text is WRONG as shown by the group's failure signals ("s..." keys:
   findings that cite the entry and were judged invalid) or by candidates that ask for the opposite.
@@ -597,6 +599,31 @@ def induce(rules: list[dict], cm: dict, effort: str, cfg: Config, spend: list[fl
     return rules, changes
 
 
+def drop_unearned(rules: list[dict], base_ids: set[str]) -> tuple[list[dict], list[dict]]:
+    """Drop each entry new in this distill that has no evidence comment of its own: every comment it
+    cites is already cited by one of its members (a parent made by merge or induce over existing
+    entries). Such an entry catches nothing its members don't, and only adds noise and vet cost.
+    Its members are unlinked from it.
+
+    Returns:
+        (the rulebook, change records "drop-unearned").
+    """
+    by = {r["id"]: r for r in rules}
+    drop = set()
+    for r in rules:
+        if r["id"] in base_ids or not r.get("members"):
+            continue
+        inherited = {e for m in r["members"] if m in by for e in by[m].get("evidence") or []}
+        if not set(r.get("evidence") or []) - inherited:
+            drop.add(r["id"])
+    for r in rules:
+        if r.get("principle") in drop:
+            r.pop("principle")
+    changes = [{"op": "drop-unearned", "rules": [i], "members": by[i]["members"], "concern": by[i].get("name") or "",
+                "why": "no evidence comment of its own"} for i in sorted(drop)]
+    return [r for r in rules if r["id"] not in drop], changes
+
+
 def failure_signals(rules: list[dict], cfg: Config, per_rule: int = 3, reviewer: str | None = None,
                     prs: set[int] | None = None) -> tuple[dict, dict]:
     """Findings that cited an entry of `rules` and were judged invalid, from the judged runs of
@@ -770,7 +797,7 @@ def attach_signals(groups: list[dict], items: dict, evid: dict, text: dict, rec:
 def distill(out: str, base: str | None = None, misses_of: str | None = None, area: str | None = None,
             limit: int | None = None, effort: str = "high", workers: int = 4, max_cost: float = 5.0,
             reuse: str | None = None, keep_unaddressed: bool = False, cfg: Config | None = None,
-            n: int = 3, do_induce: bool = True, prs: list[int] | None = None,
+            n: int = 3, do_induce: bool = False, prs: list[int] | None = None,
             comments: list[int] | None = None, notes: dict[int, str] | None = None) -> str:
     """Build rules/<out>.jsonl; returns a short summary. `max_cost` 0 = plan only (prints the estimate).
 
@@ -781,7 +808,8 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     learn, and findings citing a base entry that were judged invalid are its failure signals;
     (2) attribute the missed comments; (3) cluster them with the base entries and their signals;
     (4) abstract each group; (5) update the book (additions; revise/retire only on a failure signal or
-    an opposite comment); (6) induce principles over the standalone entries (`do_induce`). Whether the
+    an opposite comment); (6) induce principles over the standalone entries (`do_induce`, off by
+    default); then drop every new entry without an evidence comment of its own. Whether the
     result is kept is `lmreview vet`'s call.
 
     `comments`: learn exactly these comments (the ledger's to_distill, see state.py) instead of the misses
@@ -870,6 +898,8 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
         rules, more = induce(rules, cm, effort, cfg, spend, max_cost, out)
         changes += more
         note(f"      induce: {dict(C.Counter(ch['op'] for ch in more)) or 'no change'}")
+    rules, more = drop_unearned(rules, {r["id"] for r in base_rules})
+    changes += more
     spent = spend[0]
     diff = rule_diff(base_rules, rules)
     note(f"rule changes ({sum(l.startswith('+') for _, l in diff)} new, {sum(l.startswith('~') for _, l in diff)} revised, "

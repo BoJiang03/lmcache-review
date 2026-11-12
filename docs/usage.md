@@ -157,7 +157,8 @@ failure signals ───┴─distill──> NEW book ──vet NEW --base OLD 
   invalid)          3 cluster with OLD entries 2b revisions: their trigger is fixed
                     4 abstract (3 drafts)      3 side effects: affected OLD entries' sources
                     5 update: add | evidence | parent principle | revise | retire
-                    6 induce: standalone entries under principles
+                    6 induce (--induce only): standalone entries under principles
+                    every new entry needs a comment of its own, else it is dropped
                                               ...later: fair-target A/B, whole-book eval -> team-vN
 ```
 
@@ -209,7 +210,10 @@ failure signals ───┴─distill──> NEW book ──vet NEW --base OLD 
   `lmreview audit` shows corrected/run per entry, and flags active entries that have no corrected test.
 - **Principles.** distill tends to split one reviewer habit into several one-off rules. Steps 5 and
   6 group them under principles with an operational check and keep the specific rules verbatim as
-  members linked by `principle`. P5 fired on a new PR only after this. (`scripts/induce_principles.py`
+  members linked by `principle`. P5 fired on a new PR only after this. Since 2026-11-12, step 6 is off
+  by default (`--induce`), and any new entry whose evidence all comes from its members is dropped:
+  such a parent explains no comment its members don't. In v0001 the induced P1–P7 had matched 3 human
+  comments in 34 findings (all rules: 12 in 116), and they made most of vet's side-effect replays. (`scripts/induce_principles.py`
   is the older whole-book, rewriting version.)
 - **Working books** (`miss1-r4`, `-r5`, ..., `pk1`–`pk8`) are versions too. Runs name them, so keep
   them. Only promote to `team-vN` through the gate above. The latest is `pk9` (principles plus knowledge), meant to be run with `-rc`. It has not passed the whole-book gate yet.

@@ -176,7 +176,11 @@ key of a group appears in exactly one decision of that group:
 - "revise": the existing entry's text is WRONG as shown by the group's failure signals ("s..." keys:
   findings that cite the entry and were judged invalid) or by candidates that ask for the opposite.
   Rewrite it so it would not have produced those findings (or would agree with the reviewers), while
-  still covering everything its examples asked for. List the keys that show it is wrong in "members".
+  still covering everything its examples asked for. List the keys that show it is wrong in "members",
+  and say in "changed" (one line) which situations the new text no longer covers, or now covers, or
+  what it now asks for differently, such that those findings would not arise. A rewrite that only
+  rephrases (same situations, same request) is not a revise: if the signal came from the reviewer
+  misapplying a correct entry, use "keep" (the signal is still recorded as considered).
 - "retire": the existing entry is wrong and no rewrite fixes it, or another entry already covers it
   completely ("replaced_by": that id). Same evidence requirement as "revise".
 - "contradict": candidates ask for the opposite of an existing entry, but it is unclear who is right.
@@ -195,7 +199,7 @@ Answer with one JSON block only, one object per decision:
 ```json
 [{"group": 0, "op": "keep|evidence|generalize|merge|add|revise|retire|contradict", "rules": ["<existing id>"],
   "members": ["c123", "s1"], "kind": "...", "when": "...", "expect": "...", "why": "...", "examples": ["..."],
-  "paths": [], "replaced_by": "<id, retire only>"}]
+  "paths": [], "changed": "<revise only>", "replaced_by": "<id, retire only>"}]
 ```"""
 
 COVERAGE = """Below is a rulebook of LMCache review rules (id: when -> expect), then human review comments
@@ -441,6 +445,9 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
                 ch |= {"why": d.get("why"), "replaced_by": d.get("replaced_by")}
             elif not d.get("expect"):
                 continue
+            elif not (d.get("changed") or "").strip() or _same_meaning(r, d):
+                # a rephrasing: it costs the entry its failure signals and a re-vet, and fixes nothing
+                ch |= {"op": "revise-refused", "why": "wording only" if d.get("changed") else "no 'changed' given"}
             elif spend[0] >= max_cost:  # no budget left to verify the rewrite: keep the entry as it is
                 ch |= {"op": "revise-skipped", "why": "cost cap reached before the text check"}
             else:
@@ -456,7 +463,7 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
                     r["version"] += 1
                     r["evidence"] = _uniq(old_ev + ev)
                     r["revised"] = {"date": today, "by": out, **why}  # vet re-checks these cases
-                    ch |= {"version": r["version"], "when": r["when"], "expect": r["expect"]}
+                    ch |= {"version": r["version"], "when": r["when"], "expect": r["expect"], "changed": d["changed"]}
         elif op == "add" and d.get("expect") and mem:
             added.append((_entry(d) | {"kind": d.get("kind") or "principle"}, ev, g["concern"]))
         elif op == "contradict" and bkeys:
@@ -587,6 +594,19 @@ def induce(rules: list[dict], cm: dict, effort: str, cfg: Config, spend: list[fl
         placed |= set(mem)
         changes.append({"op": "induce-parent", "new": [pid], "members": mem, "concern": p.get("name") or ""})
     return rules, changes
+
+
+_STOP = set("a an the of or and to in on is are that this its it by for with as such any be".split())
+
+
+def _same_meaning(old: dict, new: dict, at: float = 0.85) -> bool:
+    """Whether a rewrite of `old` ("when" + "expect") keeps nearly every content word in order: a
+    rephrasing, not a change of what the entry covers or asks."""
+    import difflib
+    import re
+    def words(r: dict) -> list[str]:
+        return [w for w in re.findall(r"[a-z0-9_]+", f"{r.get('when')} {r.get('expect')}".lower()) if w not in _STOP]
+    return difflib.SequenceMatcher(None, words(old), words(new)).ratio() >= at
 
 
 def failure_signals(rules: list[dict], cfg: Config, per_rule: int = 3, reviewer: str | None = None,

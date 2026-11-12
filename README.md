@@ -20,9 +20,14 @@ next_book, verdict = vet(old_book, new_book, human_comments)      # keep only wh
   gives PASS / FAIL / INCOMPLETE. With `--write`, it writes next_book: the new entries that work,
   with every change that made something worse reverted.
 - The next round starts with `review(prs', reviewer=(prompt, effort, next_book))`.
+- State: one prompt (`lmreview/prompts/reviewer.md`), one book in use with every version kept, and a
+  ledger of every human comment (covered / to_distill / resolved / not_rulable / needs_human), all in
+  `lmreview/state/`. A failed change is not just reverted: the comment stays to_distill with the
+  failed attempt, and distill tries again (twice, then a person looks).
 - A rule reaches the reviewer as its principle only (when, expect, why), never its examples.
 
-Commands: `lmreview review`, `lmreview distill`, `lmreview vet` (docs/usage.md). Design notes:
+Commands: `lmreview round PR ...` (all steps), or `review`, `judge`, `distill`, `vet`, `status`
+(docs/usage.md). Design notes:
 docs/mechanism.md.
 
 ## Phases
@@ -45,9 +50,8 @@ Reviewers: `lmreview review <PR>` (local only, posts nothing). Full guide for re
     bin/lmreview review 5876                            # review one PR now (local output only)
     bin/lmreview review --reviewer v0b@high --split test --max-cost 15
     bin/lmreview eval --reviewer v0b@high --vs v0@high  # judge + human-only by area + signals + flips
-    bin/lmreview review --reviewer v0f+pk9@high-rc --split train --max-cost 30
-    bin/lmreview distill pk10 --base pk9 --misses-of v0f+pk9@high-rc --prs N,...   # --max-cost 0 = plan
-    bin/lmreview vet pk10 --base pk9 --write pk10v                                 # --max-cost 0 = plan
+    bin/lmreview status                                 # book in use, ledger counts
+    bin/lmreview round 3269 3382:3ebcadbf               # review + judge + distill + vet on these samples
     DRY=1 scripts/misses_pipeline.sh vllm-integration 30  # one misses-driven round (dry run)
 
 Reviewer names: `<prompt>[+<rules>][@<effort>][x<n>][-rc]`. Design: docs/mechanism.md.

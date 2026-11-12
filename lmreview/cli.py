@@ -1,7 +1,15 @@
-"""Command line: `lmreview sync|review|eval|distill|audit|regress`.
+"""Command line. The process (state in lmreview/state/, see state.py):
 
-A reviewer is named <prompt>[+<rules>][@<effort>], e.g. v0b+r1@high (rules = rules/r1.jsonl).
-Paid commands stop starting new LLM calls once --max-cost is reached. Nothing is posted to GitHub.
+    review --split train --only-pr ...   review samples with the book in use
+    judge                                file the human comments: covered / to_distill
+    distill                              to_distill comments -> a candidate book
+    vet                                  promote what works as the next version; record what failed
+    round PR ...                         all four on these samples, distill + vet until settled
+    status | rollback vN | discard       look at / move the state
+
+A reviewer is named <prompt>[+<book>][@<effort>][x<n>][-rc]; the default is the current prompt
+(prompts/reviewer.md) with the book in use. Paid commands stop starting new LLM calls once
+--max-cost is reached (0 = print the plan). Nothing is posted to GitHub.
 """
 
 from __future__ import annotations
@@ -51,8 +59,27 @@ def main(argv: list[str] | None = None) -> None:
     e.add_argument("--workers", type=int, default=4)
     e.add_argument("--max-cost", type=float, default=10.0)
 
-    d = sub.add_parser("distill", help="distill train human comments into a new rulebook (paid)")
-    d.add_argument("out", help="new rulebook name, e.g. r1")
+    sub.add_parser("status", help="book in use, candidate, ledger counts (free)")
+    j = sub.add_parser("judge", help="judge the current reviewer's runs and file the comments in the ledger (paid, cached)")
+    j.add_argument("--split", default="train", choices=["train", "test", "new"])
+    j.add_argument("--prs", type=int, nargs="+")
+    j.add_argument("--max-cost", type=float, default=10.0)
+    o = sub.add_parser("round", help="review + judge + distill + vet on these samples (paid)")
+    o.add_argument("prs", nargs="+", help="PR numbers or PR:commit")
+    o.add_argument("--review-cost", type=float, default=30.0)
+    o.add_argument("--judge-cost", type=float, default=10.0)
+    o.add_argument("--distill-cost", type=float, default=5.0)
+    o.add_argument("--vet-cost", type=float, default=30.0)
+    sub.add_parser("rollback", help="make an earlier version the book in use, as a new version").add_argument(
+        "version", help="e.g. v0001")
+    sub.add_parser("discard", help="drop the candidate without vetting it")
+    i = sub.add_parser("init", help="start the state from rules/<book>.jsonl as v0001")
+    i.add_argument("book")
+    i.add_argument("--note", default="")
+
+    d = sub.add_parser("distill", help="ledger to_distill comments -> candidate book (paid); "
+                                       "with OUT: the old named-book mode")
+    d.add_argument("out", nargs="?", help="old mode: new rulebook name, e.g. r1")
     d.add_argument("--base", help="rulebook to extend")
     d.add_argument("--no-induce", action="store_true", help="skip step 6: principles over standalone entries")
     d.add_argument("--prs", type=int, nargs="+", help="only these train PRs")
@@ -73,7 +100,7 @@ def main(argv: list[str] | None = None) -> None:
                                  "contested (free)").add_argument("rules", help="rulebook name")
     v = sub.add_parser("vet", help="check a distill result before using it: generality flags, effect on its "
                                    "source comments, side effects on the base entries (paid; cached runs free)")
-    v.add_argument("rules", help="the new rulebook")
+    v.add_argument("rules", nargs="?", help="old mode: the new rulebook (default: vet the candidate)")
     v.add_argument("--base", help="the rulebook it was built from (default: from rules/RULES.meta.json)")
     v.add_argument("--prompt", help="default: that of the runs distill learned from, else v0f")
     v.add_argument("--effort", help="default: as --prompt, else high")
@@ -117,6 +144,26 @@ def main(argv: list[str] | None = None) -> None:
     elif a.cmd == "regress":
         from .regress import regress
         print(regress(a.rules, a.base, a.reps, a.max_cost, suffix=a.suffix))
+    elif a.cmd in ("status", "judge", "round", "rollback", "discard", "init"):
+        from . import state
+        if a.cmd == "status":
+            print(state.status())
+        elif a.cmd == "judge":
+            print(state.judge(a.split, set(a.prs or []) or None, a.max_cost))
+        elif a.cmd == "round":
+            print(state.round_(a.prs, a.review_cost, a.judge_cost, a.distill_cost, a.vet_cost))
+        elif a.cmd == "rollback":
+            print(f"book in use: {state.vname(state.rollback(int(a.version.lstrip('v'))))}")
+        elif a.cmd == "discard":
+            print(state.discard())
+        else:
+            print(f"book in use: {state.vname(state.init(a.book, a.note))}")
+    elif a.cmd == "vet" and not a.rules:
+        from .state import vet_step
+        print(vet_step(a.max_cost, a.reps, a.all))
+    elif a.cmd == "distill" and not a.out:
+        from .state import distill_step
+        print(distill_step(set(a.prs or []) or None, a.limit, a.effort, a.workers, a.max_cost))
     elif a.cmd == "vet":
         from .vet import vet
         print(vet(a.rules, a.base, a.prompt, a.effort, a.suffix, a.reps, a.max_cost, a.all, a.every_sample,

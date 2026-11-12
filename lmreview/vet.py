@@ -31,7 +31,8 @@ from __future__ import annotations
 import json
 import re
 
-from .config import RULES, Config
+from .config import Config
+from .state import book_path
 from .regress import EST_RUN, FIELDS, replay
 from .distill import book_meta, write_meta
 from .reviewer import load_rules, parse_reviewer, rulecheck_of
@@ -71,7 +72,7 @@ def lint(r: dict) -> list[str]:
 def vet(book: str, base: str | None = None, prompt: str | None = None, effort: str | None = None,
         suffix: str | None = None, reps: int = 1,
         max_cost: float = 30.0, everything: bool = False, every_sample: bool = False, retry: bool = True,
-        write: str | None = None, cfg: Config | None = None) -> str:
+        write: str | None = None, cfg: Config | None = None, out: dict | None = None) -> str:
     """Vet rulebook `book` against `base`; see the module docstring.
 
     Args:
@@ -87,6 +88,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         retry: give each failing case one more run with the new book before it counts.
         write: also write rules/<write>.jsonl: the new book without the changes that failed.
         cfg: configuration.
+        out: filled with the structured result for state.vet: {"verdict", "J", "effect", "kept", "cost"}.
 
     Returns:
         The report, also written to reports/vet_<book>.md.
@@ -228,9 +230,12 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
           f"not run {J['s_unknown']}"]
     L += [f"- LOST {i}{' (retired)' if i in retired else ''} #{tgt(e)} c{e} ({cm[e]['author']}: "
           f"{cm[e]['body'][:100]!r})" for i, e in J["lost"]]
+    if out is not None:
+        out.update(verdict=verdict, J=J, effect=effect, kept=_passing(new_rules, old_rules, O, J, rel),
+                   cost=c_b + c_n + c_r, retired=retired)
     if write:
         kept_book = _passing(new_rules, old_rules, O, J, rel)
-        (RULES / f"{write}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in kept_book))
+        book_path(write).write_text("".join(json.dumps(r) + "\n" for r in kept_book))
         write_meta(write, {**meta, "base": base, "vetted_from": book})  # keeps "seen" for the next distill
         L += ["", f"wrote rules/{write}.jsonl: {len(kept_book)} entries (failing changes dropped or reverted)"]
     L = L[:2] + [f"**{verdict}** · cost ${c_b + c_n + c_r:.2f}", ""] + L[2:]

@@ -445,9 +445,10 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
                 ch |= {"why": d.get("why"), "replaced_by": d.get("replaced_by")}
             elif not d.get("expect"):
                 continue
-            elif not (d.get("changed") or "").strip() or _same_meaning(r, d):
-                # a rephrasing: it costs the entry its failure signals and a re-vet, and fixes nothing
-                ch |= {"op": "revise-refused", "why": "wording only" if d.get("changed") else "no 'changed' given"}
+            elif not (d.get("changed") or "").strip():
+                # no stated change of what the entry covers or asks: a rephrasing, which costs the entry
+                # its failure signals and a re-vet and fixes nothing
+                ch |= {"op": "revise-refused", "why": "no 'changed' given"}
             elif spend[0] >= max_cost:  # no budget left to verify the rewrite: keep the entry as it is
                 ch |= {"op": "revise-skipped", "why": "cost cap reached before the text check"}
             else:
@@ -594,19 +595,6 @@ def induce(rules: list[dict], cm: dict, effort: str, cfg: Config, spend: list[fl
         placed |= set(mem)
         changes.append({"op": "induce-parent", "new": [pid], "members": mem, "concern": p.get("name") or ""})
     return rules, changes
-
-
-_STOP = set("a an the of or and to in on is are that this its it by for with as such any be".split())
-
-
-def _same_meaning(old: dict, new: dict, at: float = 0.85) -> bool:
-    """Whether a rewrite of `old` ("when" + "expect") keeps nearly every content word in order: a
-    rephrasing, not a change of what the entry covers or asks."""
-    import difflib
-    import re
-    def words(r: dict) -> list[str]:
-        return [w for w in re.findall(r"[a-z0-9_]+", f"{r.get('when')} {r.get('expect')}".lower()) if w not in _STOP]
-    return difflib.SequenceMatcher(None, words(old), words(new)).ratio() >= at
 
 
 def failure_signals(rules: list[dict], cfg: Config, per_rule: int = 3, reviewer: str | None = None,

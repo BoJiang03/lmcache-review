@@ -11,14 +11,19 @@ import re
 
 from . import github, llm
 from .ensemble import ensemble
-from .config import PROMPTS, RULES, Config
+from .config import PROMPTS, Config
+from .state import book_path, prompt_path
 from .schema import SCHEMA_VERSION, SEVERITIES, Finding, SchemaError, load_findings, parse_findings, to_dicts
 from .workspace import TOOLS, live_workspace, pr_meta
 
 
-# What people get out of the box. Rulebooks are versioned (team-v1, team-v2, ...): to update, build the
-# next version (`lmreview distill team-v2 --base team-v1`) and point this at it; old versions stay.
-DEFAULT_REVIEWER = os.environ.get("LMREVIEW_REVIEWER", "v0e+team-v1@high")
+# What people get out of the box: the current prompt and config with the book in use (lmreview/state.py).
+def _default_reviewer() -> str:
+    from .state import reviewer
+    return reviewer()
+
+
+DEFAULT_REVIEWER = os.environ.get("LMREVIEW_REVIEWER") or _default_reviewer()
 
 
 _NAME = re.compile(r"([\w.-]+?)(?:\+([\w.-]+?))?(?:@([a-z]+))?(?:x(\d+))?(-rc)?")
@@ -60,7 +65,7 @@ def prompt_template(version: str) -> tuple[str, tuple[str, ...]]:
     `<!-- context: vllm -->` (extra workspace context), `<!-- system: trimmed -->` (see
     prompt_system) and `<!-- rules: examples -->` (see rule_examples).
     """
-    text, ctx = (PROMPTS / f"reviewer_{version}.md").read_text(), ()
+    text, ctx = prompt_path(version).read_text(), ()
     while m := re.match(r"<!--\s*(context|system|rules):\s*([\w, .-]*?)\s*-->\n", text):
         if m[1] == "context":
             ctx = tuple(x.strip() for x in m[2].split(",") if x.strip())
@@ -71,7 +76,7 @@ def prompt_template(version: str) -> tuple[str, tuple[str, ...]]:
 def prompt_system(version: str) -> str | None:
     """System prompt that prompt `version` asks for with `<!-- system: X -->` (prompts/system_X.md);
     None keeps Claude Code's default."""
-    m = re.search(r"^<!--\s*system:\s*([\w.-]+)\s*-->$", (PROMPTS / f"reviewer_{version}.md").read_text(), re.M)
+    m = re.search(r"^<!--\s*system:\s*([\w.-]+)\s*-->$", prompt_path(version).read_text(), re.M)
     return (PROMPTS / f"system_{m[1]}.md").read_text() if m else None
 
 
@@ -82,7 +87,7 @@ def rule_examples(version: str) -> bool:
     for the reviewer and leak the answer on the source PR. Only the older prompts (v0, v0b, v0c, v0d,
     v0t) keep them, so their cached runs stay valid; v0e/v0f are v0b/v0c without them.
     """
-    return bool(re.search(r"^<!--\s*rules:\s*examples\s*-->$", (PROMPTS / f"reviewer_{version}.md").read_text(), re.M))
+    return bool(re.search(r"^<!--\s*rules:\s*examples\s*-->$", prompt_path(version).read_text(), re.M))
 
 
 def reviewer_context(reviewer: str) -> tuple[str, ...]:
@@ -94,7 +99,7 @@ def load_rules(name: str) -> list[dict]:
     """Rulebook rules/<name>.jsonl: {"id", "when", "expect", "why", "examples", "paths": [glob],
     "evidence": [comment ids], "n_prs", "status", "area",
     "kind": "principle" | "knowledge"}."""
-    return [json.loads(l) for l in (RULES / f"{name}.jsonl").open() if l.strip()]
+    return [json.loads(l) for l in book_path(name).open() if l.strip()]
 
 
 def rule_evidence(reviewer: str) -> set[int]:

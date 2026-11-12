@@ -64,6 +64,44 @@ It reports everything it finds, so expect more findings than a human would write
 
 Design: `docs/mechanism.md`.
 
+### The process and its state
+
+One prompt, one book in use, versions of it, and a ledger of the human comments. Everything that
+changes is in `lmreview/state/` (in git; see `lmreview/state.py`):
+
+| What | Where | Changed by |
+| --- | --- | --- |
+| reviewer prompt, effort, rule check on/off | `lmreview/prompts/reviewer.md`, `lmreview/reviewer.json` | people (git) |
+| book in use / every version | `state/HEAD.json`, `state/book.jsonl` / `state/history/vNNNN.jsonl` (+ `.meta.json`) | `vet`, `rollback` |
+| candidate waiting for vet | `state/candidate/` | `distill` |
+| one row per human comment | `state/ledger.jsonl` | `judge`, `distill`, `vet` |
+| every prompt used, by hash | `state/prompts/p<sha8>.md` | automatic |
+| what happened | `state/log.jsonl` | every step |
+| runs, scores (cache) | `data/runs/p<sha8>+vNNNN@high-rc/`, `data/scores/...` | `review`, `judge` |
+
+A sample is one PR commit a human reviewed (`#3776@33b257aa`); its human comments are the ground
+truth. The ledger files each change-request / nit comment of a judged sample:
+
+```
+review ─> judge ─┬─> covered        (the reviewer found it)
+                 └─> to_distill ─distill─> candidate ─vet─┬─> resolved     (an entry makes the reviewer find it)
+                       ▲     │                            └─> failed attempt ─┐
+                       │     └─> not_rulable (context / not an issue / declined)
+                       └──────────── tries < 2 ───────────────────────────────┤
+                                                       tries = 2 ─> needs_human
+```
+
+- `lmreview round PR[:commit] ...` runs review, judge, then distill + vet until the comments settle.
+  The steps also run one by one: `review --split train --only-pr ...`, `judge`, `distill`, `vet`.
+- `vet` promotes what works as the next version and drops or reverts the rest. A failed comment keeps
+  its attempt (book, entries, why), and the next `distill` is told to write it differently.
+- A sample is solved when all its comments are resolved. `lmreview status` prints the counts.
+- `rollback vN` makes vN the book in use again as a new version; `discard` drops the candidate.
+- The rows from before the ledger (v0001 = pk9) are marked legacy.
+
+The commands below with explicit book names (`distill OUT --base`, `vet BOOK --base`, `regress`) are
+the lower-level tools the process uses; use them for experiments, not for the book in use.
+
 There are four commands. Reviewers are named `<prompt>[+<rulebook>][@<effort>][x<n>][-rc]`, e.g. `v0b+r2@high`.
 
 The reviewer sees each rule's id, kind, when, expect and why, never its `examples`. Examples carry the
@@ -101,13 +139,9 @@ lmreview eval --reviewer v0b+r2@high --vs $CUR             # net fixed > 0  ->  
 
 Promote a reviewer only if it passes the rules in `docs/mechanism.md`: a net gain in per-comment flips on test, and the launch gate on `new`.
 
-To promote it:
-- set `DEFAULT_REVIEWER` in `lmreview/reviewer.py`, or `LMREVIEW_REVIEWER` on the deploy machine;
-- commit the rulebook (`lmreview/rules/`).
-
-The default rulebook is versioned: `team-v1`, `team-v2`, and so on. To update it, build the next
-version from the current one (`lmreview distill team-v2 --base team-v1 ...`) and point the default at
-it. Old versions stay, so their runs can be reproduced.
+The default reviewer is the current prompt with the book in use (`lmreview status`). It moves
+when `vet` promotes a version; commit `lmreview/state/` to ship it. `LMREVIEW_REVIEWER` overrides it
+on a machine.
 
 `review` and `eval` skip samples whose human comments are evidence for an entry of the reviewer's
 rulebook, because that rule was written from the answer. Rules distilled from test comments therefore

@@ -1,0 +1,8 @@
+{
+ "version": 1,
+ "parent": null,
+ "date": "2026-11-12T21:49:24+00:00",
+ "by": "init",
+ "from": "rules/pk9.jsonl",
+ "note": "pk9 (pk8 + train misses 23-27); effect vetted on its sources, side effects never vetted"
+}

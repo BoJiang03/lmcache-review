@@ -33,6 +33,7 @@ import tempfile
 from . import llm
 from .budget import capped_map
 from .config import RULES, Config
+from .state import book_path
 from .ensemble import ensemble
 from .score import REPORTS, _normalize, load_gold
 
@@ -635,16 +636,21 @@ def failure_signals(rules: list[dict], cfg: Config, per_rule: int = 3, reviewer:
 def book_meta(name: str) -> dict:
     """rules/<name>.meta.json: how the book was made ({"base", "runs", "prs", "samples", "seen"}).
     A book without one (made before) counts its evidence comments as seen."""
-    p = RULES / f"{name}.meta.json"
+    p = _meta_path(name)
     if p.exists():
         return json.loads(p.read_text())
-    rules = [json.loads(l) for l in (RULES / f"{name}.jsonl").open() if l.strip()]
+    rules = [json.loads(l) for l in book_path(name).open() if l.strip()]
     return {"seen": sorted({int(e) for r in rules for e in r.get("evidence") or []})}
 
 
 def write_meta(name: str, meta: dict) -> None:
     """Write rules/<name>.meta.json."""
-    (RULES / f"{name}.meta.json").write_text(json.dumps(meta, indent=1) + "\n")
+    _meta_path(name).write_text(json.dumps(meta, indent=1) + "\n")
+
+
+def _meta_path(name: str):
+    b = book_path(name)
+    return b.with_name(b.stem + ".meta.json")
 
 
 def judge_runs(cfg: Config, reviewer: str, prs: set[int] | None, split: str, max_cost: float) -> tuple[list, float]:
@@ -685,7 +691,8 @@ def attach_signals(groups: list[dict], items: dict, evid: dict, text: dict, rec:
 def distill(out: str, base: str | None = None, misses_of: str | None = None, area: str | None = None,
             limit: int | None = None, effort: str = "high", workers: int = 4, max_cost: float = 5.0,
             reuse: str | None = None, keep_unaddressed: bool = False, cfg: Config | None = None,
-            n: int = 3, do_induce: bool = True, prs: list[int] | None = None) -> str:
+            n: int = 3, do_induce: bool = True, prs: list[int] | None = None,
+            comments: list[int] | None = None, notes: dict[int, str] | None = None) -> str:
     """Build rules/<out>.jsonl; returns a short summary. `max_cost` 0 = plan only (prints the estimate).
 
     distill does not review. It learns from review runs that exist: `misses_of` names the reviewer
@@ -696,10 +703,13 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     (2) attribute the missed comments; (3) cluster them with the base entries and their signals;
     (4) abstract each group; (5) update the book (additions; revise/retire only on a failure signal or
     an opposite comment); (6) induce principles over the standalone entries (`do_induce`). Whether the
-    result is kept is `lmreview vet`'s call."""
+    result is kept is `lmreview vet`'s call.
+
+    `comments`: learn exactly these comments (the ledger's to_distill, see state.py) instead of the misses
+    of `misses_of` minus the base's "seen"; `notes`: comment id -> what earlier attempts made of it."""
     cfg = cfg or Config()
-    if (RULES / f"{out}.jsonl").exists():
-        raise FileExistsError(f"rules/{out}.jsonl exists; pick a new name")
+    if book_path(out).exists():
+        raise FileExistsError(f"{book_path(out)} exists; pick a new name")
     pre, judged = 0.0, None
     if misses_of and max_cost > 0:  # step 1: judge the runs (free when already judged)
         from .reviewer import parse_reviewer
@@ -707,10 +717,14 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
             print(f"note: {misses_of} does not use {base}: its misses are not the base book's own", flush=True)
         judged, pre = judge_runs(cfg, misses_of, set(prs or []) or None, "train", max_cost / 2)
         print(f"judge {misses_of}: {len(judged)} runs (${pre:.2f})", flush=True)
-    cs = inputs(cfg, misses_of, area, "train", keep_unaddressed)
+    if comments is not None:
+        _, cm0 = load_gold(cfg)
+        cs, seen = [cm0[i] for i in comments if i in cm0], set()
+    else:
+        cs = inputs(cfg, misses_of, area, "train", keep_unaddressed)
+        seen = set(book_meta(base)["seen"]) if base else set()  # comments an earlier distill already processed
     if prs:
         cs = [c for c in cs if c["pr"] in set(prs)]
-    seen = set(book_meta(base)["seen"]) if base else set()  # comments an earlier distill already processed
     n_seen = sum(c["id"] in seen for c in cs)
     cs = [c for c in cs if c["id"] not in seen][:limit]
     if n_seen:
@@ -743,10 +757,11 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     for a in att:
         if a.get("kind") == "learnable" and a.get("rule"):
             k = f"c{a['id']}"
-            items[k] = f"{a['rule']} (PR #{by_id[a['id']]['pr']}; paths {a.get('paths') or []})"
+            items[k] = f"{a['rule']} (PR #{by_id[a['id']]['pr']}; paths {a.get('paths') or []})" + (
+                f" [earlier attempts failed, write it differently: {notes[a['id']]}]" if (notes or {}).get(a["id"]) else "")
             evid[k] = [a["id"]]
     if base:
-        for r in map(json.loads, (RULES / f"{base}.jsonl").open()):
+        for r in map(json.loads, filter(str.strip, book_path(base).open())):
             if r.get("status", "active") != "active":  # retired entries are carried over untouched
                 continue
             k = f"b{r['id']}"
@@ -755,7 +770,7 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     spend = [spent]
     groups = cluster(items, effort, cfg, spend, max_cost)
     _, cm = load_gold(cfg)
-    base_rules = [json.loads(l) for l in (RULES / f"{base}.jsonl").open() if l.strip()] if base else []
+    base_rules = [json.loads(l) for l in book_path(base).open() if l.strip()] if base else []
     sig_text, sig = failure_signals(base_rules, cfg, reviewer=misses_of, prs=set(prs or []) or None) \
         if base_rules and misses_of else ({}, {})
     attach_signals(groups, items, evid, sig_text, sig)
@@ -767,8 +782,8 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
         changes += more
     spent = spend[0]
     (work / "changes.json").write_text(json.dumps(changes, indent=1))
-    RULES.mkdir(exist_ok=True)
-    (RULES / f"{out}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rules))
+    book_path(out).parent.mkdir(parents=True, exist_ok=True)
+    book_path(out).write_text("".join(json.dumps(r) + "\n" for r in rules))
     write_meta(out, {"base": base, "runs": misses_of, "prs": sorted(prs or []) or None,
                      "samples": sorted({f"{r['pr']}@{r['commit'][:8]}" for r, _ in judged or []}),
                      "seen": sorted(seen | {a["id"] for a in att})})  # vet reads this; the next distill skips "seen"
@@ -790,7 +805,7 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
                    f"  - why: {r.get('why') or ''}; paths: {r.get('paths') or 'any'}",
                    f"  - e.g. {' / '.join(r.get('examples') or [])}", f"  - evidence: {ev}"]
         md.append("")
-    (RULES / f"{out}.md").write_text("\n".join(md) + "\n")
+    book_path(out).with_suffix(".md").write_text("\n".join(md) + "\n")
     return (f"rules/{out}.jsonl: {len(rules)} entries ({dict(C.Counter(r['kind'] for r in rules))}) from "
             f"{len(cs)} comments ({dict(kinds)}), {len(groups)} groups, ${spent:.2f}")
 
@@ -800,7 +815,7 @@ def coverage(rules_name: str, split: str = "test", area: str | None = None, miss
     """Which rulebook entries explain the human comments of `split` (only those `misses_of` missed, if
     given). Writes reports/coverage_<rules>_<split>.md (and .json: the explained comments); returns its headline. `max_cost` 0 = plan only."""
     cfg = cfg or Config()
-    rules = [r for r in map(json.loads, filter(str.strip, (RULES / f"{rules_name}.jsonl").open()))
+    rules = [r for r in map(json.loads, filter(str.strip, book_path(rules_name).open()))
              if r.get("status", "active") == "active"]
     cs = inputs(cfg, misses_of, area, split, keep_unaddressed=True)
     batches = [cs[i:i + BATCH] for i in range(0, len(cs), BATCH)]
@@ -849,7 +864,7 @@ def record_test(name: str, rule: str, target: str, control: str, treated: str, r
     """
     if result not in TEST_RESULTS:
         raise ValueError(f"result must be one of {TEST_RESULTS}")
-    path = RULES / f"{name}.jsonl"
+    path = book_path(name)
     rules = [json.loads(l) for l in path.open() if l.strip()]
     hit = [r for r in rules if r["id"] == rule]
     if not hit:
@@ -873,7 +888,7 @@ def audit(name: str, cfg: Config | None = None) -> str:
     """
     from .reviewer import parse_reviewer
     cfg = cfg or Config()
-    rules = [json.loads(l) for l in (RULES / f"{name}.jsonl").open() if l.strip()]
+    rules = [json.loads(l) for l in book_path(name).open() if l.strip()]
     files = subprocess.run(["git", "-C", str(cfg.repo), "ls-tree", "-r", "--name-only", "origin/dev"],
                            capture_output=True, text=True, check=True).stdout.split()
     cited, valid = C.Counter(), C.Counter()

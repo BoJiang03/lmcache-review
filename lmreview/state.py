@@ -436,8 +436,8 @@ def vet_step(max_cost: float = 30.0, reps: int = 1, everything: bool = False, cf
 
 def pick_samples(prs: list[int | str], cfg: Config | None = None) -> list[str]:
     """Expand a round's sample specs: "PR:commit" stays as it is; a bare PR number becomes the commits of
-    that PR where some judged run on disk (any reviewer) missed a change request / nit that is not yet in
-    the ledger. A PR with no judged run on any of its samples keeps all of them (nothing is known yet).
+    that PR where some judged run on disk (any reviewer) missed a change request / nit that is not in the
+    ledger yet or is still to_distill there. A PR with no judged run on any of its samples keeps all of them (nothing is known yet).
 
     Returns:
         "PR:commit8" specs, in the given order.
@@ -464,7 +464,8 @@ def pick_samples(prs: list[int | str], cfg: Config | None = None) -> list[str]:
                 missed |= {int(gold[h["id"]]) for h in sc.get("human") or []
                            if h.get("type") in ("change_request", "nit") and not h.get("matched_ai")
                            and isinstance(h.get("id"), int) and h["id"] < len(gold)}
-            if missed - set(rows):
+            # still open: not in the ledger yet, or there and waiting to be distilled
+            if any(c not in rows or rows[c]["status"] == "to_distill" for c in missed):
                 keep.append(f"{pr}:{c[:8]}")
         picked = keep if judged else [f"{pr}:{c[:8]}" for c, _ in mine]
         note(f"#{pr}: {len(picked)} of {len(mine)} samples" + ("" if judged else " (none judged yet: all)")

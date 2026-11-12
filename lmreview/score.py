@@ -160,7 +160,7 @@ def judge(version: str, workers: int = 4, effort: str = "high", max_cost: float 
     note(f"judge {version}: {len(runs)} runs, {len(todo)} to judge (est ${len(todo) * EST_COST:.0f}, "
          f"cap ${max_cost:.0f})")
 
-    def one(r):
+    def one(r: dict) -> tuple[str, float]:
         k = (r["pr"], r["commit"])
         s = score_one(cfg, r, ss[k], [cm[i] for i in ss[k]["gold_ids"]], path(r), effort)
         return "judged", s["cost"]

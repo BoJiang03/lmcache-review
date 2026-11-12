@@ -29,6 +29,7 @@ fail the book. `write` saves NEW without the failing changes, as the next workin
 from __future__ import annotations
 
 import json
+import pathlib
 import re
 
 from .config import Config
@@ -140,7 +141,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
              + [(i, {"target": t, "with": w, "comments": []}) for i, t in fixes])
     samples = {t["target"] for _, t in cases}
 
-    def run_dir(b: str, k: int):
+    def run_dir(b: str, k: int) -> pathlib.Path:
         return cfg.data / "runs" / (f"{prompt}+{b}@{effort}{suffix}" + ("" if k == 1 else f"#r{k}"))
     todo = [(b, t, k) for b in (base, book) for t in samples for k in range(1, reps + 1)
             if not any(run_dir(b, k).glob(f"{t.split('@')[0]}-{t.split('@')[1]}*.json"))]
@@ -248,7 +249,8 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         L += ["", f"wrote rules/{write}.jsonl: {len(kept_book)} entries (failing changes dropped or reverted)"]
     L = L[:2] + [f"**{verdict}** · cost ${c_b + c_n + c_r:.2f}", ""] + L[2:]
     note(f"{verdict}: entries working {len(J['works'])}/{n_eff}, lost {len(J['lost'])}, "
-         f"revisions not fixed {len(J['not_fixed'])}; ${c_b + c_n + c_r:.2f}; report reports/vet_{book}.md")
+         f"revisions not fixed {len(J['not_fixed'])}; ${c_b + c_n + c_r:.2f}; report reports/vet_{book}.md",
+         {"PASS": "ok", "FAIL": "err"}.get(verdict, "warn"))
     (REPORTS / f"vet_{book}.md").write_text("\n".join(L) + "\n")
     return "\n".join(L)
 

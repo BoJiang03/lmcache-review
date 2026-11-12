@@ -33,7 +33,9 @@ import pathlib
 import re
 import shutil
 
-from .config import PROMPTS, RULES
+from typing import Iterator
+
+from .config import PROMPTS, RULES, Config
 from .progress import note, step
 
 STATE = pathlib.Path(os.environ.get("LMREVIEW_STATE", pathlib.Path(__file__).resolve().parent / "state"))
@@ -70,7 +72,7 @@ def _jsonl(rows: list[dict]) -> str:
 
 
 @contextlib.contextmanager
-def lock():
+def lock() -> Iterator[None]:
     """Only one state-changing step at a time (judge, distill, vet, rollback)."""
     STATE.mkdir(parents=True, exist_ok=True)
     with open(STATE / ".lock", "w") as f:
@@ -91,6 +93,7 @@ def log(step: str, **kw: object) -> None:
 # ---- books --------------------------------------------------------------------------------------
 
 def vname(n: int) -> str:
+    """Version name: 3 -> v0003."""
     return f"v{n:04d}"
 
 
@@ -111,10 +114,12 @@ def head() -> int:
 
 
 def load_book(name: str) -> list[dict]:
+    """The entries of rulebook `name` (see book_path)."""
     return [json.loads(l) for l in book_path(name).open() if l.strip()]
 
 
 def version_meta(n: int) -> dict:
+    """history/vNNNN.meta.json of version `n` ({} if none)."""
     p = _meta(STATE / "history" / f"{vname(n)}.jsonl")
     return json.loads(p.read_text()) if p.exists() else {}
 
@@ -176,19 +181,23 @@ def reviewer(book: str | None = None) -> str:
 # ---- the ledger -------------------------------------------------------------------------------------
 
 def ledger() -> dict[int, dict]:
+    """The ledger rows by comment id (see LEDGER)."""
     p = STATE / "ledger.jsonl"
     return {r["comment"]: r for r in map(json.loads, p.open()) if r} if p.exists() else {}
 
 
 def save_ledger(rows: dict[int, dict]) -> None:
+    """Write the ledger, sorted by sample and comment."""
     _write(STATE / "ledger.jsonl", _jsonl(sorted(rows.values(), key=lambda r: (r["pr"], r["commit"], r["comment"]))))
 
 
 def sample(r: dict) -> str:
+    """The sample of a ledger row: #pr@commit8."""
     return f"#{r['pr']}@{r['commit'][:8]}"
 
 
 def to_distill(rows: dict[int, dict] | None = None, prs: set[int] | None = None) -> list[dict]:
+    """Ledger rows still to learn (only on `prs`, if given)."""
     rows = ledger() if rows is None else rows
     return [r for r in rows.values() if r["status"] == "to_distill" and (not prs or r["pr"] in prs)]
 
@@ -200,12 +209,11 @@ def tries_note(r: dict) -> str:
 
 
 def judge(split: str = "train", prs: set[int] | None = None, max_cost: float = 10.0, rv: str | None = None,
-          cfg=None) -> str:
+          cfg: Config | None = None) -> str:
     """Judge the current reviewer's runs on `split` against the human comments and file every
     change-request / nit comment in the ledger: found -> covered, missed -> to_distill. A comment
     already in the ledger keeps its row, except that a to_distill comment found now becomes resolved
     (the book in use found it). Samples without such comments count as no ground truth."""
-    from .config import Config
     from .distill import judge_runs
     cfg, rv = cfg or Config(), rv or reviewer()
     with lock(), step("judge", f"runs of {rv} on {split}" + (f", PRs {sorted(prs)}" if prs else "")
@@ -265,6 +273,7 @@ def status() -> str:
 # ---- candidate -----------------------------------------------------------------------------------
 
 def candidate() -> dict | None:
+    """candidate/meta.json ({"name", "parent", "comments", "created"}), or None."""
     c = STATE / "candidate" / "meta.json"
     return json.loads(c.read_text()) if c.exists() else None
 
@@ -277,6 +286,7 @@ def candidate_name() -> str:
 
 
 def clear_candidate() -> None:
+    """Remove candidate/."""
     shutil.rmtree(STATE / "candidate", ignore_errors=True)
 
 
@@ -301,11 +311,10 @@ def discard() -> str:
 # ---- the steps -----------------------------------------------------------------------------------
 
 def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: str = "high", workers: int = 4,
-                 max_cost: float = 5.0, cfg=None) -> str:
+                 max_cost: float = 5.0, cfg: Config | None = None) -> str:
     """Distill the ledger's to_distill comments (only on `prs`, if given) into a candidate built on the
     book in use. Earlier failed attempts are passed on, so the next one is written differently.
     Comments distill finds not learnable (context, not an issue, declined) become not_rulable."""
-    from .config import Config
     from .distill import distill
     cfg = cfg or Config()
     with lock():
@@ -346,7 +355,7 @@ def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: 
         return f"candidate {name}: {msg}; {n_out} comments not rulable. Next: `lmreview vet`"
 
 
-def vet_step(max_cost: float = 30.0, reps: int = 1, everything: bool = False, cfg=None) -> str:
+def vet_step(max_cost: float = 30.0, reps: int = 1, everything: bool = False, cfg: Config | None = None) -> str:
     """Vet the candidate against the book in use. What works becomes the next version (the rest is
     dropped or reverted, see vet._passing); each comment of the candidate is then resolved, or gets a
     failed attempt (needs_human after MAX_TRIES). INCOMPLETE (cost cap) keeps the candidate for a rerun."""
@@ -404,14 +413,21 @@ def vet_step(max_cost: float = 30.0, reps: int = 1, everything: bool = False, cf
         log("vet", name=c["name"], verdict=res["verdict"], cost=round(res["cost"], 2), version=n,
             **{k: len(v) for k, v in out.items()})
         note(f"✓ vet {res['verdict']}: " + (f"promoted {vname(n)}" if changed else f"book stays {vname(n)}") + "; "
-             + ", ".join(f"{k} {len(v)}" for k, v in out.items()) + f"; ${res['cost']:.2f}")
+             + ", ".join(f"{k} {len(v)}" for k, v in out.items()) + f"; ${res['cost']:.2f}",
+             "ok" if out["resolved"] and not out["needs_human"] else "warn")
+        for i in out["resolved"]:
+            note(f"  resolved #{rows[i]['pr']}@{rows[i]['commit'][:8]} c{i} by {rows[i]['resolved_by']['entry']}", "add")
+        for i in out["failed"] + out["needs_human"]:
+            t = rows[i]["tries"][-1]
+            note(f"  {'needs_human' if i in out['needs_human'] else 'retry later'} #{rows[i]['pr']}@{rows[i]['commit'][:8]} "
+                 f"c{i}: {t['why']}", "drop" if i in out["needs_human"] else "change")
         return (report + f"\n\n{'promoted ' + vname(n) if changed else 'no change kept; book stays ' + vname(n)}: "
                 + ", ".join(f"{k} {len(v)}" for k, v in out.items())
                 + ("; failed comments stay to_distill: `lmreview distill` tries again" if out["failed"] else ""))
 
 
-def round_(prs: list, review_cost: float = 30.0, judge_cost: float = 10.0, distill_cost: float = 5.0,
-           vet_cost: float = 30.0, cfg=None) -> str:
+def round_(prs: list[int | str], review_cost: float = 30.0, judge_cost: float = 10.0, distill_cost: float = 5.0,
+           vet_cost: float = 30.0, cfg: Config | None = None) -> str:
     """One round on samples `prs` (PR numbers or PR:commit): review with the book in use, judge, then
     distill + vet until their comments are all resolved / not rulable / needs_human (at most MAX_TRIES)."""
     from .replay import replay

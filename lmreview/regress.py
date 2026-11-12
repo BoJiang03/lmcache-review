@@ -19,8 +19,8 @@ from __future__ import annotations
 
 import json
 import threading
-from concurrent.futures import ThreadPoolExecutor
 
+from .budget import capped_map
 from .config import Config
 from .distill import COVERAGE, _ask, _fmt, _id
 from .reviewer import load_rules, parse_reviewer, reviewer_context, run_reviewer
@@ -87,9 +87,10 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
         version, _, effort = parse_reviewer(t["with"].split("#")[0])
         return f"{version}+{book}@{effort}{suffix}"
 
-    def one(job: tuple[str, str, int]) -> tuple[str, str, int, dict | None]:
+    def one(job: tuple[str, str, int]) -> tuple[tuple[str, str, int, dict | None], float]:
         """Review (unless cached) and judge `target` with reviewer `rv`, run k; None if over the cap."""
         rv, target, k = job
+        mine = 0.0
         pr, c = target.split("@")
         key = next((x for x in ss if x[0] == int(pr) and x[1].startswith(c)), None)
         if key is None:
@@ -97,28 +98,34 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
         s, name = ss[key], f"{pr}-{key[1][:8]}.json"
         d = cfg.data / "runs" / (rv if k == 1 else f"{rv}#r{k}")
         d.mkdir(parents=True, exist_ok=True)
-        if not (d / name).exists():
+        cached = (d / name).exists()
+        if not cached:
             with lock:
                 if spent[0] >= max_cost:
-                    return rv, target, k, None
+                    return (rv, target, k, None), 0.0
             with sample_workspace(cfg, s, f"regress{k}", reviewer_context(rv)) as (wt, base):
                 r = run_reviewer(wt, cached_pr(cfg, key[0], s["time"]), rv)
             (d / name).write_text(json.dumps({"pr": key[0], "commit": key[1], "base": base, **r}, indent=1))
             with lock:
                 spent[0] += r["cost"]
+            mine += r["cost"]
         run = json.loads((d / name).read_text())
         if run.get("findings") is None:
-            return rv, target, k, {"run": run, "score": None}
+            return (rv, target, k, {"run": run, "score": None}), mine
         sp = cfg.data / "scores" / d.name / name
         judged = sp.exists()
         sc = score_one(cfg, run, s, [cm[i] for i in s["gold_ids"]], sp, "high")
         with lock:
             spent[0] += 0 if judged else sc.get("cost", 0)
-        return rv, target, k, {"run": run, "score": sc}
+        mine += 0 if judged else sc.get("cost", 0)
+        return (rv, target, k, {"run": run, "score": sc, "cached": cached}), mine
 
     jobs = sorted({(reviewer_of(t), t["target"], k) for _, t in cases for k in range(1, reps + 1)})
-    with ThreadPoolExecutor(workers) as ex:
-        done = {(rv, tg, k): res for rv, tg, k, res in ex.map(one, jobs)}
+    res, _ = capped_map(one, jobs, workers, float("inf"),  # one() enforces max_cost itself
+                        label=lambda j: f"{book} #{j[1]}" + (f" r{j[2]}" if j[2] > 1 else ""),
+                        show=lambda x: "over the cap, not run" if x[3] is None else
+                        ("cached" if x[3].get("cached") else "reviewed") + f", {len(x[3]['run'].get('findings') or [])} findings")
+    done = {(rv, tg, k): r for rv, tg, k, r in res}
 
     by = {r["id"]: r for r in load_rules(book)}
 

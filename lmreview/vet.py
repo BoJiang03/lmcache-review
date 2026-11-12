@@ -33,6 +33,7 @@ import re
 
 from .config import Config
 from .state import book_path
+from .progress import note
 from .regress import EST_RUN, FIELDS, replay
 from .distill import book_meta, write_meta
 from .reviewer import load_rules, parse_reviewer, rulecheck_of
@@ -160,7 +161,11 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         return "\n".join(L + ["plan only (max-cost 0)"])
 
     key = lambda r: (r["entry"], r["target"], tuple(r["comments"]))  # noqa: E731
+    for x in L[2:5]:
+        note(x.lstrip("- "))
+    note(f"[1/3] review {len(samples)} samples with the old book {base}")
     rows_b, c_b = replay(base, cases, reps, max_cost / 2, cfg, suffix=suffix)
+    note(f"[2/3] review the same samples with the new book {book} (${c_b:.2f} so far)")
     rows_n, c_n = replay(book, cases, reps, max_cost - c_b, cfg, suffix=suffix)
     B, Nw = {key(r): r for r in rows_b}, {key(r): r for r in rows_n}
     ck = lambda i, e: (i, tgt(e), (e,))  # noqa: E731
@@ -194,11 +199,14 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
                 "both_miss": both_miss, "s_unknown": s_unknown, "not_fixed": not_fixed, "f_unknown": f_unknown}
 
     J, c_r = judge(), 0.0
+    note(f"      first pass: works {sorted(J['works'])}, not working {J['no_effect']}, lost {len(J['lost'])}, "
+         f"revisions not fixed {len(J['not_fixed'])}")
     if retry:  # single runs are noisy: a failing case gets one more run with NEW before it counts
         again = ([(i, {"target": tgt(e), "with": w, "comments": [e]}) for i, e in effect if i in J["no_effect"]]
                  + [(i, {"target": tgt(e), "with": w, "comments": [e]}) for i, e in J["lost"]]
                  + [(i, {"target": t, "with": w, "comments": []}) for i, t in J["not_fixed"]])
         if again:
+            note(f"[3/3] {len(again)} failing case(s) get one more run with {book} (${c_b + c_n:.2f} so far)")
             rows_r, c_r = replay(book, again, reps + 1, max(0.0, max_cost - c_b - c_n), cfg, suffix=suffix)
             Nw |= {key(r): r for r in rows_r if r["passed"] is not None}
             J = judge()
@@ -239,6 +247,8 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         write_meta(write, {**meta, "base": base, "vetted_from": book})  # keeps "seen" for the next distill
         L += ["", f"wrote rules/{write}.jsonl: {len(kept_book)} entries (failing changes dropped or reverted)"]
     L = L[:2] + [f"**{verdict}** · cost ${c_b + c_n + c_r:.2f}", ""] + L[2:]
+    note(f"{verdict}: entries working {len(J['works'])}/{n_eff}, lost {len(J['lost'])}, "
+         f"revisions not fixed {len(J['not_fixed'])}; ${c_b + c_n + c_r:.2f}; report reports/vet_{book}.md")
     (REPORTS / f"vet_{book}.md").write_text("\n".join(L) + "\n")
     return "\n".join(L)
 

@@ -35,6 +35,7 @@ from .budget import capped_map
 from .config import RULES, Config
 from .state import book_path
 from .ensemble import ensemble
+from .progress import note
 from .score import REPORTS, _normalize, load_gold
 
 BATCH = 30          # comments per attribution / coverage call
@@ -660,10 +661,12 @@ def judge_runs(cfg: Config, reviewer: str, prs: set[int] | None, split: str, max
     Returns:
         ([(run, normalized score)], cost).
     """
+    from .progress import note
     from .score import score_one
     ss, cm = load_gold(cfg)
     out, cost = [], 0.0
-    for f in sorted((cfg.data / "runs" / reviewer).glob("*.json")):
+    files = sorted((cfg.data / "runs" / reviewer).glob("*.json"))
+    for f in files:
         run = json.loads(f.read_text())
         s = ss.get((run["pr"], run["commit"]))
         if not s or s.get("split") != split or (prs and run["pr"] not in prs) or run.get("findings") is None:
@@ -676,6 +679,10 @@ def judge_runs(cfg: Config, reviewer: str, prs: set[int] | None, split: str, max
         sc = score_one(cfg, run, s, [cm[i] for i in s["gold_ids"]], sp, "high")
         cost += 0 if was else sc.get("cost", 0)
         out.append((run, _normalize(sc, run)))
+        if not was:
+            n = out[-1][1]
+            note(f"judged #{run['pr']}@{run['commit'][:8]}: {sum(h['matched_ai'] for h in n['human'])}/{len(n['human'])} "
+                 f"human comments found (${sc.get('cost', 0):.2f}, total ${cost:.2f} of ${max_cost:.0f})")
     return out, cost
 
 
@@ -715,8 +722,9 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
         from .reviewer import parse_reviewer
         if base and parse_reviewer(misses_of.split("#")[0])[1] != base:
             print(f"note: {misses_of} does not use {base}: its misses are not the base book's own", flush=True)
+        note(f"[1/6] judge the runs of {misses_of} (cached ones are free)")
         judged, pre = judge_runs(cfg, misses_of, set(prs or []) or None, "train", max_cost / 2)
-        print(f"judge {misses_of}: {len(judged)} runs (${pre:.2f})", flush=True)
+        note(f"      {len(judged)} runs judged (${pre:.2f})")
     if comments is not None:
         _, cm0 = load_gold(cfg)
         cs, seen = [cm0[i] for i in comments if i in cm0], set()
@@ -735,8 +743,8 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     est = (0 if reuse else len(batches) * EST["attribute"]) + (n_cand // CLUSTER_CHUNK + 1) * EST["cluster"] \
         + (n_cand * 0.6 // ABSTRACT_BATCH + 1) * EST["abstract"] * (n + 1 if n > 1 else 1) \
         + (EST["abstract"] if do_induce else 0)  # n drafts + merge; one induce call
-    print(f"distill {out}: {len(cs)} comments" + (f" missed by {misses_of}" if misses_of else "")
-          + f", {len(batches)} attribution batches; est ${est:.1f}, cap ${max_cost:.1f}", flush=True)
+    note(f"distill {out}: {len(cs)} comments" + (f" missed by {misses_of}" if misses_of else "")
+         + f", {len(batches)} attribution batches; est ${est:.1f}, cap ${max_cost:.1f}")
     if max_cost <= 0:
         return "plan only (max-cost 0); nothing written"
 
@@ -745,12 +753,14 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     if reuse:  # attribution of an earlier run (same inputs): only cluster + abstract are re-done
         res, spent = [[json.loads(l) for l in (cfg.data / "distill" / reuse / "attribution.jsonl").open()]], 0.0
     else:
+        note(f"[2/6] attribute {len(cs)} comments in {len(batches)} batches")
         res, spent = capped_map(lambda b: _ask(ATTRIBUTE.format(comments="\n\n".join(map(_fmt, b))), effort, cfg),
                                 batches, workers, max_cost - pre, label=lambda b: f"attribute {len(b)}")
         spent += pre
     att = [{**a, "id": _id(a.get("id"))} for r in res if isinstance(r, list) for a in r if isinstance(a, dict)]
     att = [a for a in att if a["id"] in by_id]
     (work / "attribution.jsonl").write_text("".join(json.dumps(a) + "\n" for a in att))
+    note(f"      attribution: {dict(C.Counter(a.get('kind') for a in att))}; {len(cs) - len(att)} not attributed")
 
     # candidates: learnable comments + entries of the base rulebook (which carry their evidence)
     items, evid = {}, {}
@@ -768,18 +778,26 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
             items[k] = f"When {r.get('when')}: {r.get('expect')} (existing rule; paths {r.get('paths') or []})"
             evid[k] = r.get("evidence") or []
     spend = [spent]
+    note(f"[3/6] cluster {sum(k.startswith('c') for k in items)} candidates with {sum(k.startswith('b') for k in items)} "
+         f"existing entries (${spend[0]:.2f} so far)")
     groups = cluster(items, effort, cfg, spend, max_cost)
     _, cm = load_gold(cfg)
     base_rules = [json.loads(l) for l in book_path(base).open() if l.strip()] if base else []
     sig_text, sig = failure_signals(base_rules, cfg, reviewer=misses_of, prs=set(prs or []) or None) \
         if base_rules and misses_of else ({}, {})
     attach_signals(groups, items, evid, sig_text, sig)
+    note(f"      {len(groups)} groups, {sum(any(m.startswith('c') for m in g['members']) for g in groups)} with new "
+         f"candidates; {len(sig)} failure signals attached")
+    note(f"[4-5/6] abstract new groups and update the book (${spend[0]:.2f} so far)")
     (work / "clusters.json").write_text(json.dumps(groups, indent=1))
     rules, changes = update_rulebook(base_rules, groups, items, evid, out, cm, effort, cfg, spend, max_cost, workers,
                                      n=n, signals=sig)
+    note(f"      changes: {dict(C.Counter(ch['op'] for ch in changes))}")
     if do_induce:
+        note(f"[6/6] induce principles over standalone entries (${spend[0]:.2f} so far)")
         rules, more = induce(rules, cm, effort, cfg, spend, max_cost, out)
         changes += more
+        note(f"      induce: {dict(C.Counter(ch['op'] for ch in more)) or 'no change'}")
     spent = spend[0]
     (work / "changes.json").write_text(json.dumps(changes, indent=1))
     book_path(out).parent.mkdir(parents=True, exist_ok=True)

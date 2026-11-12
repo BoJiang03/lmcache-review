@@ -34,6 +34,7 @@ import re
 import shutil
 
 from .config import PROMPTS, RULES
+from .progress import note, step
 
 STATE = pathlib.Path(os.environ.get("LMREVIEW_STATE", pathlib.Path(__file__).resolve().parent / "state"))
 CONFIG = pathlib.Path(__file__).resolve().parent / "reviewer.json"
@@ -207,8 +208,10 @@ def judge(split: str = "train", prs: set[int] | None = None, max_cost: float = 1
     from .config import Config
     from .distill import judge_runs
     cfg, rv = cfg or Config(), rv or reviewer()
-    with lock():
+    with lock(), step("judge", f"runs of {rv} on {split}" + (f", PRs {sorted(prs)}" if prs else "")
+                      + f"; cap ${max_cost:.0f}") as st:
         judged, cost = judge_runs(cfg, rv, prs, split, max_cost)
+        st.cost = cost
         rows, n = ledger(), {"covered": 0, "to_distill": 0, "resolved": 0, "no_gt": 0}
         from .score import load_gold
         _, cm = load_gold(cfg)
@@ -231,6 +234,7 @@ def judge(split: str = "train", prs: set[int] | None = None, max_cost: float = 1
                     n["resolved"] += 1
         save_ledger(rows)
         log("judge", reviewer=rv, runs=len(judged), cost=round(cost, 2), **n)
+        st.result = ", ".join(f"{k} {v}" for k, v in n.items())
     return f"judged {len(judged)} runs of {rv} (${cost:.2f}): " + ", ".join(f"{k} {v}" for k, v in n.items())
 
 
@@ -313,6 +317,10 @@ def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: 
             return "nothing to distill: no to_distill comments" + (f" on {sorted(prs)}" if prs else "")
         name, parent = candidate_name(), head()
         ids = [r["comment"] for r in todo]
+        n_retry = sum(bool(r.get("tries")) for r in todo)
+        note(f"▶ distill {len(ids)} comments on {len({sample(r) for r in todo})} samples"
+             + (f" ({n_retry} retried after a failed attempt)" if n_retry else "")
+             + f" into candidate {name} on {vname(parent) if parent else 'an empty book'}; cap ${max_cost:.0f}")
         _write(STATE / "candidate" / "meta.json", json.dumps(
             {"name": name, "parent": parent, "comments": ids, "created": _now()}, indent=1) + "\n")
         try:
@@ -334,6 +342,7 @@ def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: 
                 n_out += 1
         save_ledger(rows)
         log("distill", name=name, parent=parent, comments=len(ids), not_rulable=n_out, summary=msg)
+        note(f"✓ distill: {msg}; {n_out} not rulable")
         return f"candidate {name}: {msg}; {n_out} comments not rulable. Next: `lmreview vet`"
 
 
@@ -349,6 +358,7 @@ def vet_step(max_cost: float = 30.0, reps: int = 1, everything: bool = False, cf
         if c["parent"] != head():
             raise RuntimeError(f"the book moved to {vname(head())} since {c['name']} was distilled: `lmreview discard`")
         res: dict = {}
+        note(f"▶ vet {c['name']} against {vname(c['parent'])} ({len(c['comments'])} comments); cap ${max_cost:.0f}")
         conf = config()
         report = vet(c["name"], vname(c["parent"]), prompt_id(), conf["effort"], "-rc" if conf["rulecheck"] else "",
                      reps=reps, max_cost=max_cost, everything=everything, cfg=cfg, out=res)
@@ -393,6 +403,8 @@ def vet_step(max_cost: float = 30.0, reps: int = 1, everything: bool = False, cf
         clear_candidate()
         log("vet", name=c["name"], verdict=res["verdict"], cost=round(res["cost"], 2), version=n,
             **{k: len(v) for k, v in out.items()})
+        note(f"✓ vet {res['verdict']}: " + (f"promoted {vname(n)}" if changed else f"book stays {vname(n)}") + "; "
+             + ", ".join(f"{k} {len(v)}" for k, v in out.items()) + f"; ${res['cost']:.2f}")
         return (report + f"\n\n{'promoted ' + vname(n) if changed else 'no change kept; book stays ' + vname(n)}: "
                 + ", ".join(f"{k} {len(v)}" for k, v in out.items())
                 + ("; failed comments stay to_distill: `lmreview distill` tries again" if out["failed"] else ""))
@@ -404,16 +416,28 @@ def round_(prs: list, review_cost: float = 30.0, judge_cost: float = 10.0, disti
     distill + vet until their comments are all resolved / not rulable / needs_human (at most MAX_TRIES)."""
     from .replay import replay
     rv = reviewer()
-    out = [f"review {rv}: ${replay(rv, 'train', None, 4, review_cost, prs, cfg=cfg):.2f}"]
-    out.append(judge("train", {int(str(p).split(':')[0]) for p in prs}, judge_cost, rv, cfg))
     nums = {int(str(p).split(":")[0]) for p in prs}
-    for _ in range(MAX_TRIES):
-        if not to_distill(prs=nums):
-            break
-        out.append(distill_step(nums, max_cost=distill_cost, cfg=cfg))
-        if not candidate():
-            break
-        out.append(vet_step(vet_cost, cfg=cfg).split("\n\n")[-1])
-        if candidate():  # INCOMPLETE
-            break
-    return "\n".join(out + [status()])
+    out = []
+    with step("round", f"{len(prs)} sample spec(s) {' '.join(map(str, prs))}; book {vname(head())}; caps review "
+              f"${review_cost:.0f}, judge ${judge_cost:.0f}, distill ${distill_cost:.0f}, vet ${vet_cost:.0f} "
+              f"(per attempt, at most {MAX_TRIES})") as st:
+        with step("review", rv) as s1:
+            s1.cost = replay(rv, "train", None, 4, review_cost, prs, cfg=cfg)
+        st.cost += s1.cost
+        out.append(f"review {rv}: ${s1.cost:.2f}")
+        out.append(judge("train", nums, judge_cost, rv, cfg))
+        for k in range(MAX_TRIES):
+            left = to_distill(prs=nums)
+            if not left:
+                note("nothing left to distill on these samples")
+                break
+            with step(f"attempt {k + 1}/{MAX_TRIES}", f"{len(left)} comments to distill"):
+                out.append(distill_step(nums, max_cost=distill_cost, cfg=cfg))
+                if not candidate():
+                    break
+                out.append(vet_step(vet_cost, cfg=cfg).split("\n\n")[-1])
+                if candidate():  # INCOMPLETE
+                    note("vet INCOMPLETE (cost cap): candidate kept; rerun `lmreview vet` with a higher --max-cost")
+                    break
+        st.result = f"book {vname(head())}"
+    return "\n".join(out + ["", status()])

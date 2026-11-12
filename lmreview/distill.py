@@ -468,11 +468,109 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
     return [finish(r) for r in base.values()] + new, changes
 
 
+INDUCE = """Below is an LMCache review rulebook. Its principles each group several rules ("members") under
+one operational check. The other entries stand alone. A reviewer does not carry dozens of one-off
+rules; they carry a few principles and apply them with knowledge of the codebase.
+
+Place the standalone entries:
+- "attach": a standalone entry whose violation the check of an EXISTING principle would have caught
+  goes under that principle. Attach only when the same question asked of the diff exposes it.
+- "principles": two or more standalone entries that one NEW check would have caught together get a
+  new principle. It must be applicable to any PR and must not be a platitude ("write clean code"); give
+  it an operational check, a concrete question to ask of the diff whose answer exposes a violation.
+  Read the reviewers' own words in the evidence, not just the rule text.
+- Everything else stays standalone; do not force it. Nothing is rewritten or removed.
+
+""" + GENERAL + """
+
+Principles:
+{principles}
+
+Standalone entries:
+{standalone}
+
+Answer with one JSON block only:
+```json
+{{"attach": [{{"rule": "id", "principle": "id"}}],
+ "principles": [{{"name": "short name", "when": "...", "expect": "...", "check": "the question to ask of the diff",
+   "why": "one line", "members": ["ids"]}}]}}
+```"""
+
+
+def induce(rules: list[dict], cm: dict, effort: str, cfg: Config, spend: list[float], max_cost: float,
+           out: str) -> tuple[list[dict], list[dict]]:
+    """Step 6 of distill: place standalone entries under principles, append-only.
+
+    One call over the whole book: a standalone entry may be attached to an existing principle (its
+    `principle` link and the principle's `members` grow; no text changes), and standalone entries that
+    one new check covers get a new parent principle (evidence and tests inherited, as in
+    update_rulebook). Over the cost cap it does nothing.
+
+    Returns:
+        (the rulebook, change records).
+    """
+    act = [r for r in rules if r.get("status", "active") == "active"]
+    ps = [r for r in act if r.get("members")]
+    lone = [r for r in act if not r.get("members") and not r.get("principle")]
+    if len(lone) < 2 or spend[0] >= max_cost:
+        return rules, []
+
+    def show(r: dict) -> str:
+        ev = " | ".join(" ".join(cm[e]["body"].split())[:160] for e in (r.get("evidence") or [])[:2] if e in cm)
+        return f"[{r['id']}] When {r.get('when')}: {r.get('expect')}" + (f"\n  comments: {ev}" if ev else "")
+
+    try:
+        res, c = _ask(INDUCE.format(principles="\n".join(map(show, ps)) or "(none)",
+                                    standalone="\n".join(map(show, lone))), effort, cfg)
+    except Exception as e:  # a failed induction leaves the book as it is
+        print(f"induce failed: {e}")
+        return rules, []
+    spend[0] += c
+    if not isinstance(res, dict):
+        return rules, []
+    by = {r["id"]: r for r in rules}
+    pids, lids = {r["id"] for r in ps}, {r["id"] for r in lone}
+    changes, placed = [], set()
+    for a in res.get("attach") or []:
+        r, p = a.get("rule"), a.get("principle")
+        if r in lids and p in pids and r not in placed:
+            by[r]["principle"] = p
+            by[p]["members"] = [*by[p]["members"], r]
+            placed.add(r)
+            changes.append({"op": "induce-attach", "rules": [p], "members": [r], "concern": by[p].get("name") or p})
+    used, i = set(by), 0
+    for p in res.get("principles") or []:
+        mem = [m for m in p.get("members") or [] if m in lids and m not in placed]
+        if len(mem) < 2 or not p.get("when") or not p.get("expect"):
+            continue
+        i += 1
+        while f"{out}-P{i}" in used:
+            i += 1
+        pid = f"{out}-P{i}"
+        used.add(pid)
+        ms = [by[m] for m in mem]
+        rules.append({"id": pid, "version": 1, "status": "active", "kind": "principle", "name": p.get("name"),
+                      "when": p["when"], "expect": p["expect"] + (f" Check: {p['check']}" if p.get("check") else ""),
+                      "why": p.get("why"), "examples": [f"{m['id']}: {m['when'][:160]}" for m in ms][:4],
+                      "paths": [], "members": mem,
+                      "evidence": _uniq([e for m in ms for e in m.get("evidence") or []]),
+                      "tests": [{**t, "from": m["id"]} for m in ms for t in m.get("tests") or []]})
+        for m in ms:
+            m["principle"] = pid
+        placed |= set(mem)
+        changes.append({"op": "induce-parent", "new": [pid], "members": mem, "concern": p.get("name") or ""})
+    return rules, changes
+
+
 def distill(out: str, base: str | None = None, misses_of: str | None = None, area: str | None = None,
             limit: int | None = None, effort: str = "high", workers: int = 4, max_cost: float = 5.0,
             reuse: str | None = None, keep_unaddressed: bool = False, cfg: Config | None = None,
-            n: int = 3, append_only: bool = True) -> str:
-    """Build rules/<out>.jsonl; returns a short summary. `max_cost` 0 = plan only (prints the estimate)."""
+            n: int = 3, append_only: bool = True, do_induce: bool = True) -> str:
+    """Build rules/<out>.jsonl; returns a short summary. `max_cost` 0 = plan only (prints the estimate).
+
+    Steps: attribute the missed comments, cluster them with the base entries, abstract each group,
+    update the book (append-only unless `append_only` is False), then induce principles over the
+    standalone entries (`do_induce`). Whether the result is kept is `lmreview vet`'s call."""
     cfg = cfg or Config()
     if (RULES / f"{out}.jsonl").exists():
         raise FileExistsError(f"rules/{out}.jsonl exists; pick a new name")
@@ -481,7 +579,8 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     batches = [cs[i:i + BATCH] for i in range(0, len(cs), BATCH)]
     n_cand = int(len(cs) * 0.7)  # pilot: ~75% learnable
     est = (0 if reuse else len(batches) * EST["attribute"]) + (n_cand // CLUSTER_CHUNK + 1) * EST["cluster"] \
-        + (n_cand * 0.6 // ABSTRACT_BATCH + 1) * EST["abstract"] * (n + 1 if n > 1 else 1)  # n drafts + merge
+        + (n_cand * 0.6 // ABSTRACT_BATCH + 1) * EST["abstract"] * (n + 1 if n > 1 else 1) \
+        + (EST["abstract"] if do_induce else 0)  # n drafts + merge; one induce call
     print(f"distill {out}: {len(cs)} comments" + (f" missed by {misses_of}" if misses_of else "")
           + f", {len(batches)} attribution batches; est ${est:.1f}, cap ${max_cost:.1f}", flush=True)
     if max_cost <= 0:
@@ -520,6 +619,9 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     base_rules = [json.loads(l) for l in (RULES / f"{base}.jsonl").open() if l.strip()] if base else []
     rules, changes = update_rulebook(base_rules, groups, items, evid, out, cm, effort, cfg, spend, max_cost, workers,
                                      n=n, append_only=append_only)
+    if do_induce:
+        rules, more = induce(rules, cm, effort, cfg, spend, max_cost, out)
+        changes += more
     spent = spend[0]
     (work / "changes.json").write_text(json.dumps(changes, indent=1))
     RULES.mkdir(exist_ok=True)

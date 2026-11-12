@@ -10,12 +10,7 @@ break a rule that worked. Each entry keeps its A/B records in "tests" (distill.r
    entry passes a case if, in some run, every tested comment is matched by a finding citing the entry
    (or its principle, or for a principle one of its members).
 
-Backtest (`backtest`, for append-only edits): re-review the source PRs of the affected entries (the
-samples their evidence comments come from) with the old and the new rulebook. These runs leak (the
-entries were written from those comments), so they do not show that a rule works; they show whether
-the edit stopped an entry from firing where it did before. A source comment matched by a finding
-citing the entry (or a linked principle/member) under the old book but not under the new one is a
-regression. Entries new in the new book have no old baseline; their source hits are listed as info.
+`lmreview vet` (vet.py) checks a distill result as a whole and uses `replay` for its runs.
 
 The third layer, a whole-book eval on test before promotion, is `lmreview eval` (docs/usage.md).
 """
@@ -134,7 +129,7 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
 
     rows = []
     for i, t in cases:
-        rv, flags, ok_ids = reviewer_of(t), [], related(i)
+        rv, flags, anys, ok_ids = reviewer_of(t), [], [], related(i)
         for k in range(1, reps + 1):
             res = done.get((rv, t["target"], k))
             if res is None or res["score"] is None:
@@ -143,9 +138,13 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
             cites = {f["id"] for f in res["run"]["findings"] if f.get("rule") in ok_ids}
             gold = res["score"]["gold_ids"]
             hit = {int(gold[int(h["id"])]) for h in res["score"]["human"] if cites & set(h.get("matched_ai") or [])}
+            hit_any = {int(gold[int(h["id"])]) for h in res["score"]["human"] if h.get("matched_ai")}
             flags.append(all(c in hit for c in t["comments"]))
+            anys.append(all(c in hit_any for c in t["comments"]))
+        ran = [f for f in flags if f is not None]
         rows.append({"entry": i, "target": t["target"], "comments": t["comments"], "reviewer": rv, "runs": flags,
-                     "passed": any(f for f in flags if f is not None) if any(f is not None for f in flags) else None})
+                     "passed": any(ran) if ran else None,  # matched by a finding citing the entry (or linked)
+                     "any": any(anys) if anys else None})  # matched by any finding
     return rows, spent[0]
 
 
@@ -186,91 +185,3 @@ def regress(book: str, base: str | None = None, reps: int = 2, max_cost: float =
     return "\n".join(L)
 
 
-
-def _related_ids(rules: list[dict]) -> dict[str, set[str]]:
-    """Entry id -> ids linked to it by principle/members in either direction."""
-    m: dict[str, set[str]] = {r["id"]: {r["id"]} for r in rules}
-    for r in rules:
-        for x in ([r["principle"]] if r.get("principle") else []) + list(r.get("members") or []):
-            m.setdefault(r["id"], {r["id"]}).add(x)
-            m.setdefault(x, {x}).add(r["id"])
-    return m
-
-
-def backtest(book: str, base: str, prompt: str = "v0c", effort: str = "high", suffix: str = "-rc",
-             reps: int = 1, max_cost: float = 30.0, everything: bool = False, cfg: Config | None = None) -> str:
-    """Backtest an append-only edit of `base` into `book` on the source PRs; see the module docstring.
-
-    Args:
-        book: the new rulebook.
-        base: the rulebook it was built from.
-        prompt, effort, suffix: the reviewer is `<prompt>+<book>@<effort><suffix>` (and the same with base).
-        reps: runs per source sample and book; an entry passes a comment if any run matches it.
-        max_cost: cap for both books together; 0 prints the plan only.
-        everything: backtest every active entry (catches dilution anywhere), not only the affected ones.
-        cfg: configuration.
-
-    Returns:
-        The report, also written to reports/backtest_<book>.md.
-    """
-    cfg = cfg or Config()
-    new, old = load_rules(book), load_rules(base)
-    old_ids = {r["id"] for r in old if r.get("status", "active") == "active"}
-    ch = set(changed(new, old))
-    rel = _related_ids(new)
-    if everything:
-        ids = [r["id"] for r in new if r.get("status", "active") == "active"]
-    else:  # changed entries, and the entries linked to them (their rendering and neighbours changed)
-        ids = [r["id"] for r in new if r.get("status", "active") == "active"
-               and (r["id"] in ch or rel.get(r["id"], set()) & ch)]
-    ss, cm = load_gold(cfg)
-    where = {int(c): k for k, s in ss.items() for c in s["gold_ids"]}
-    by = {r["id"]: r for r in new}
-    cases = []  # (entry id, pseudo test) per evidence comment
-    for i in ids:
-        for e in by[i].get("evidence") or []:
-            if int(e) in where:
-                k = where[int(e)]
-                cases.append((i, {"target": f"{k[0]}@{k[1][:8]}", "with": f"{prompt}@{effort}", "comments": [int(e)]}))
-    targets = {t["target"] for _, t in cases}
-    est = len(targets) * reps * EST_RUN * 2 * (2 if suffix else 1)
-    head = [f"# Backtest of {book} against {base} on source PRs", "",
-            f"- reviewer: {prompt}+<book>@{effort}{suffix}, {reps} run(s) per sample",
-            f"- entries: {len(ids)} ({'all active' if everything else 'changed + linked'}); "
-            f"source comments: {len(cases)} in {len(targets)} samples; est ${est:.0f} (cached runs are free), "
-            f"cap ${max_cost:.0f}", ""]
-    if max_cost <= 0:
-        return "\n".join(head + ["plan only (max-cost 0)"])
-    old_cases = [(i, t) for i, t in cases if i in old_ids]
-    rows_old, c_old = replay(base, old_cases, reps, max_cost / 2, cfg, suffix=suffix)
-    rows_new, c_new = replay(book, cases, reps, max_cost - c_old, cfg, suffix=suffix)
-    key = lambda r: (r["entry"], r["target"], tuple(r["comments"]))  # noqa: E731
-    o = {key(r): r["passed"] for r in rows_old}
-    reg, kept, both_miss, info, unknown = [], [], [], [], []
-    for r in rows_new:
-        k, p = key(r), r["passed"]
-        if k not in o:
-            info.append((r, p))
-        elif p is None or o[k] is None:
-            unknown.append(r)
-        elif o[k] and not p:
-            reg.append(r)
-        elif o[k]:
-            kept.append(r)
-        else:
-            both_miss.append(r)
-    verdict = "REGRESSED" if reg else ("INCOMPLETE" if unknown else "PASS")
-    L = head + [f"**{verdict}** · cost ${c_old + c_new:.2f} · old hits kept {len(kept)}, lost {len(reg)}, "
-                f"missed by both {len(both_miss)}, not run {len(unknown)}", ""]
-    if reg:
-        L += ["## Lost (old book fired here, new book did not)", ""]
-        L += [f"- {r['entry']} on #{r['target']} ({cm[c]['author']}: {cm[c]['body'][:100]!r})"
-              for r in reg for c in [int(r["comments"][0])]]
-        L.append("")
-    if info:
-        L += ["## New entries on their own sources (info; leaks by construction)", ""]
-        L += [f"- {r['entry']} #{r['target']} c{r['comments'][0]}: "
-              f"{'fires' if p else 'does not fire' if p is False else 'not run'}"
-              for r, p in info]
-    (REPORTS / f"backtest_{book}.md").write_text("\n".join(L) + "\n")
-    return "\n".join(L)

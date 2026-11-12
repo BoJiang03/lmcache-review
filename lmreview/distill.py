@@ -378,9 +378,10 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
             r = base[k]
             return (f"- {k} = existing entry {r['id']} (v{r['version']}, {r.get('kind')}): When {r.get('when')}: "
                     f"{r.get('expect')} | examples: {'; '.join(r.get('examples') or [])} | paths {r.get('paths') or []}")
-        # the human words too: the candidate may already be narrower than the principle the reviewer stated
-        said = " | ".join(" ".join((cm[e].get("body") or "").split())[:400] for e in evid.get(k, []) if e in cm)
-        return f"- {k}: {items[k]}" + (f"\n    reviewer said: \"{said}\"" if said else "")
+        # the human comments too, with the code they were on (the same view as attribution): the
+        # candidate may already be narrower than the principle the reviewer stated
+        said = "\n".join("    " + _fmt(cm[e], rich=False).replace("\n", "\n    ") for e in evid.get(k, []) if e in cm)
+        return f"- {k}: {items[k]}" + (f"\n  evidence:\n{said}" if said else "")
 
     def text(gb: list) -> str:
         return "\n\n".join(f"Group {i} ({g['concern']}):\n" + "\n".join(map(show, g["members"])) for i, g in gb)
@@ -631,8 +632,24 @@ def failure_signals(rules: list[dict], cfg: Config, per_rule: int = 3, reviewer:
                               "finding": x["id"], "why": bad[x["id"]]}
                     text[k] = (f"failure signal of {r}: a finding citing it on PR #{run['pr']} was judged invalid. "
                                f"Finding: {x.get('title')}: {' '.join((x.get('body') or '').split())[:300]} "
-                               f"| judge: {bad[x['id']]}")
+                               f"| judge: {bad[x['id']]}" + _code_at(cfg, run["commit"], x.get("locations") or []))
     return text, rec
+
+
+def _code_at(cfg: Config, commit: str, locs: list[dict], ctx: int = 15) -> str:
+    """The code around a finding's primary location at the reviewed commit, as a prompt block; "" when
+    there is no line location or the file can't be read."""
+    loc = next((l for l in locs if l.get("role", "primary") == "primary" and l.get("start")), None)
+    if not loc or loc.get("side", "new") != "new":
+        return ""
+    try:
+        src = subprocess.run(["git", "-C", str(cfg.repo), "show", f"{commit}:{loc['path']}"],
+                             capture_output=True, text=True, check=True, timeout=30).stdout.splitlines()
+    except (subprocess.SubprocessError, OSError):
+        return ""
+    lo, hi = max(1, loc["start"] - ctx), min(len(src), (loc.get("end") or loc["start"]) + ctx)
+    body = "\n".join(f"{i:5d} {src[i - 1]}" for i in range(lo, hi + 1))
+    return f"\n    code at {loc['path']}:{loc['start']}:\n{body}" if body else ""
 
 
 def book_meta(name: str) -> dict:

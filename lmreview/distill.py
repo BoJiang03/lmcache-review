@@ -444,7 +444,7 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
                 changes.append(ch)
                 continue
             # a replacement: the old entries are retired once it has an id; their members move under it
-            kids = _uniq([m for r in olds for m in r.get("members") or []])
+            kids = _uniq([m for r in olds for m in r.get("members") or [] if m not in {o["id"] for o in olds}])
             rep = _entry(d) | {"kind": d.get("kind") or "principle", "replaces": [r["id"] for r in olds],
                                "tests": [{**t, "from": r["id"]} for r in olds for t in r.get("tests") or []]}
             if kids:

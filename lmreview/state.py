@@ -273,7 +273,19 @@ def status() -> str:
          + (f" ({n_leg} of them from before the ledger)" if (n_leg := sum(bool((r.get('resolved_by') or {}).get('legacy'))
                                                                            or 'legacy' in (r.get('note') or '') for r in rows.values())) else ""),
          f"samples: {len(solved)} solved by the book, {len(open_)} with comments to distill"]
+    if n:
+        L.append("size (active entries, words, comments explained; fewer words per comment = more general): "
+                 + " | ".join(f"{vname(v)}: " + ", ".join(map(str, book_size(load_book(vname(v)))))
+                              for v in range(max(1, n - 3), n + 1)))
     return "\n".join(L)
+
+
+def book_size(rules: list[dict]) -> tuple[int, int, int]:
+    """(active entries, words of their when/expect/why, distinct evidence comments): a book that explains
+    the same comments in fewer words generalizes better."""
+    act = [r for r in rules if r.get("status", "active") == "active"]
+    words = sum(len(str(r.get(k) or "").split()) for r in act for k in ("when", "expect", "why"))
+    return len(act), words, len({e for r in act for e in r.get("evidence") or []})
 
 
 # ---- candidate -----------------------------------------------------------------------------------
@@ -317,7 +329,8 @@ def discard() -> str:
 # ---- the steps -----------------------------------------------------------------------------------
 
 def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: str = "high", workers: int = 4,
-                 max_cost: float = 5.0, cfg: Config | None = None, induce: bool = False) -> str:
+                 max_cost: float = 5.0, cfg: Config | None = None, induce: bool = False,
+                 compress: bool = False) -> str:
     """Distill the ledger's to_distill comments (only on `prs`, if given) into a candidate built on the
     book in use. Earlier failed attempts are passed on, so the next one is written differently.
     Comments distill finds not learnable (context, not an issue, declined) become not_rulable."""
@@ -330,7 +343,7 @@ def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: 
             raise RuntimeError(f"candidate {candidate()['name']} is waiting: `lmreview vet` it or `lmreview discard`")
         rows = ledger()
         todo = sorted(to_distill(rows, prs), key=lambda r: (r["pr"], r["commit"], r["comment"]))[:limit]
-        if not todo:
+        if not todo and not compress:
             return "nothing to distill: no to_distill comments" + (f" on {sorted(prs)}" if prs else "")
         name, parent = candidate_name(), head()
         ids = [r["comment"] for r in todo]
@@ -342,7 +355,7 @@ def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: 
             {"name": name, "parent": parent, "comments": ids, "created": _now()}, indent=1) + "\n")
         try:
             msg = distill(name, vname(parent), reviewer(), effort=effort, workers=workers,
-                          max_cost=max_cost, cfg=cfg, comments=ids, prs=sorted({r["pr"] for r in todo}),
+                          max_cost=max_cost, cfg=cfg, comments=ids, prs=sorted({r["pr"] for r in todo}) or None,
                           notes={r["comment"]: tries_note(r) for r in todo if r.get("tries")}, do_induce=induce)
         except BaseException:
             clear_candidate()

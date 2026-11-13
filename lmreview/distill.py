@@ -170,12 +170,15 @@ key of a group appears in exactly one decision of that group:
   to their change would have raised their point. The entry's text stays.
 - "generalize": candidates ask for the same kind of change as an existing entry, but its "when" or
   "expect" is too narrow to make a reviewer raise their point. Write the broader entry at the lowest
-  level that covers the existing entry AND the candidates; it becomes a new parent principle, and the
-  existing entry stays as written under it.
-- "merge": two or more existing entries are one concern AND candidates of the group fall between
-  them (none of them as written covers the candidates); write the one parent entry that covers them
-  all (they stay as written under it). Without such candidates, keep them: a parent that explains no
-  new comment is dropped.
+  level that covers the existing entry AND the candidates. It REPLACES the existing entry (which is
+  retired), so it must still make a reviewer raise everything the existing entry asked for.
+- "merge": two or more existing entries ask for the same kind of change; write the one entry that
+  REPLACES them all (they are retired). It must make a reviewer raise everything each of them asked
+  for, and be shorter than they are together; otherwise keep them. Candidates the merged entry covers
+  may be listed in "members" too.
+A smaller rulebook that explains the same comments generalizes better: prefer "evidence", then
+"generalize" or "merge", over "add". Every replacement is checked later against all the comments the
+replaced entries came from; one that loses any of them is undone.
 - "add": candidates ask for a different change than every existing entry; write a new entry.
 - "revise": the existing entry's text is WRONG as shown by the group's failure signals ("s..." keys:
   findings that cite the entry and were judged invalid) or by candidates that ask for the opposite.
@@ -420,6 +423,7 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
                            max(0.0, max_cost - spend[0]), label=lambda gb: f"revise {len(gb)} groups")
     spend[0] += cost
     waiting: set[str] = set()  # signals of a refused revise/retire: kept open for a later distill
+    replaced: set[str] = set()  # base keys a generalize / merge replaces
     for d in (x for part in res if isinstance(part, list) for x in part):
         if not isinstance(d, dict) or not isinstance(d.get("group"), int) or not 0 <= d["group"] < len(groups):
             continue
@@ -431,11 +435,23 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
         if op == "evidence" and bkeys:
             base[bkeys[0]]["evidence"] = _uniq(list(base[bkeys[0]].get("evidence") or []) + ev)
         elif op in ("generalize", "merge") and bkeys and d.get("expect"):
-            kids = [base[b]["id"] for b in bkeys]
-            parent = _entry(d) | {"kind": "principle", "members": kids,
-                                  "tests": [{**t, "from": base[b]["id"]} for b in bkeys for t in base[b].get("tests") or []]}
-            added.append((parent, _uniq([e for b in bkeys for e in base[b].get("evidence") or []] + ev), g["concern"]))
-            ch |= {"op": f"{op}-as-parent"}
+            bkeys = [b for b in bkeys if base[b].get("status", "active") == "active" and b not in replaced]
+            olds = [base[b] for b in bkeys]
+            if not olds or (op == "merge" and len(olds) < 2):
+                continue
+            if op == "merge" and _size(d) >= sum(map(_size, olds)):
+                ch |= {"op": "merge-refused", "why": f"not shorter ({_size(d)} words vs {sum(map(_size, olds))})"}
+                changes.append(ch)
+                continue
+            # a replacement: the old entries are retired once it has an id; their members move under it
+            kids = _uniq([m for r in olds for m in r.get("members") or []])
+            rep = _entry(d) | {"kind": d.get("kind") or "principle", "replaces": [r["id"] for r in olds],
+                               "tests": [{**t, "from": r["id"]} for r in olds for t in r.get("tests") or []]}
+            if kids:
+                rep["members"] = kids
+            added.append((rep, _uniq([e for r in olds for e in r.get("evidence") or []] + ev), g["concern"]))
+            replaced |= set(bkeys)
+            ch |= {"op": f"{op}-replace", "words": [sum(map(_size, olds)), _size(d)]}
         elif op in ("revise", "retire") and bkeys:
             sig = [k for k in d.get("members") or [] if k in g["members"] and k.startswith("s")
                    and (signals or {}).get(k, {}).get("rule") == base[bkeys[0]]["id"]]
@@ -504,12 +520,18 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
             i += 1
         r["id"] = f"{out}-{i:03d}"
     by_id = {r["id"]: r for r in base.values()}
-    for r in new:  # append-only parents: link their members, whose text stays as it was
+    for r in new:  # replacements retire what they replace (vet undoes it if a source comment is lost)
+        for o in r.get("replaces") or []:
+            by_id[o]["status"] = "retired"
+            by_id[o]["retired"] = {"date": today, "by": out, "replaced_by": r["id"], "why": "replaced"}
+            by_id[o].pop("members", None)
+    for r in new:  # link members to their principle (a member of a replaced entry moves to its replacement)
         for m in r.get("members") or []:
-            if m in by_id and not by_id[m].get("principle"):
+            if m in by_id and (not by_id[m].get("principle")
+                               or by_id.get(by_id[m]["principle"], {}).get("status") == "retired"):
                 by_id[m]["principle"] = r["id"]
     for ch in changes:  # name new entries in the change log
-        if ch["op"] in ("add",) or ch["op"].endswith("-as-parent"):
+        if ch["op"] in ("add",) or ch["op"].endswith("-replace"):
             ch["new"] = [r["id"] for r in new if set(r["evidence"]) & {e for k in ch["members"] for e in evid.get(k, [])}]
     return [finish(r) for r in base.values()] + new, changes
 
@@ -606,6 +628,11 @@ def induce(rules: list[dict], cm: dict, effort: str, cfg: Config, spend: list[fl
         placed |= set(mem)
         changes.append({"op": "induce-parent", "new": [pid], "members": mem, "concern": p.get("name") or ""})
     return rules, changes
+
+
+def _size(r: dict) -> int:
+    """Length of an entry in words (when, expect, why): the cost side of compression."""
+    return sum(len(str(r.get(k) or "").split()) for k in ("when", "expect", "why"))
 
 
 def drop_unearned(rules: list[dict], base_ids: set[str]) -> tuple[list[dict], list[dict]]:

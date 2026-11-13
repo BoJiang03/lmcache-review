@@ -50,7 +50,8 @@ def _related_ids(rules: list[dict]) -> dict[str, set[str]]:
     """Entry id -> ids linked to it by principle/members in either direction (itself included)."""
     m: dict[str, set[str]] = {r["id"]: {r["id"]} for r in rules}
     for r in rules:
-        for x in ([r["principle"]] if r.get("principle") else []) + list(r.get("members") or []):
+        for x in ([r["principle"]] if r.get("principle") else []) + list(r.get("members") or []) \
+                + list(r.get("replaces") or []):
             m.setdefault(r["id"], {r["id"]}).add(x)
             m.setdefault(x, {x}).add(r["id"])
     return m
@@ -151,7 +152,8 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     for i in affected:
         cs = [e for e in sorted(old_ev[i]) if e in where and (i, e) not in eff_set]
         cs.sort(key=lambda e: (tgt(e) not in have, not has_new(tgt(e))))
-        side += [(i, e) for e in (cs if everything else cs[:SIDE_PER_ENTRY])]
+        # a retired (replaced) entry: every source comment, since the replacement must keep them all
+        side += [(i, e) for e in (cs if everything or i in retired else cs[:SIDE_PER_ENTRY])]
         have |= {tgt(e) for e in cs[:SIDE_PER_ENTRY]}
     fixes = list(dict.fromkeys((i, x["target"]) for i in revised
                                for x in (N[i].get("revised") or {}).get("signals") or []))
@@ -288,11 +290,14 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
 def _passing(new_rules: list[dict], old_rules: list[dict], O: dict, J: dict, rel: dict) -> list[dict]:
     """NEW without the changes vet failed: new entries that never worked are dropped; entries that lost
     a source hit or whose revision did not fix its trigger go back to their base version, and new
-    entries linked to a lost entry are dropped with it (vet cannot tell which link caused the loss)."""
+    entries linked to a lost entry are dropped with it (vet cannot tell which link caused the loss).
+    A dropped replacement restores every entry it replaced."""
     old_all = {r["id"]: r for r in old_rules}
     lost = {i for i, _ in J["lost"]} | {i for i, _ in J["not_fixed"]}
     drop = {i for i in J["no_effect"] if i not in O}
     drop |= {x for i in lost for x in rel.get(i, set()) if x not in old_all}
+    # a dropped replacement gives back every entry it replaced, not only the one that lost a comment
+    lost |= {r["id"] for r in new_rules if (r.get("retired") or {}).get("replaced_by") in drop}
     out = []
     for r in new_rules:
         if r["id"] in drop:

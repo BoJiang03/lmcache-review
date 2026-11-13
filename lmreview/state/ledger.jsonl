@@ -13,6 +13,21 @@
 {"comment": 3450487918, "pr": 3248, "commit": "c8da370004fe1cbc2ee71bd91475df792bd611d3", "status": "resolved", "reviewer": null, "tries": [], "resolved_by": {"book": "v0001", "entry": "m23-x14", "legacy": true}}
 {"comment": 3277103036, "pr": 3336, "commit": "d25636339ee9b231a97d278db7f772b0f61878cb", "status": "resolved", "reviewer": null, "tries": [], "resolved_by": {"book": "v0001", "entry": "m23-x03", "legacy": true}}
 {"comment": 3326817114, "pr": 3359, "commit": "120a37e2854c43442aac70ee4016c0afd3a7e860", "status": "resolved", "reviewer": null, "tries": [], "resolved_by": {"book": "v0001", "entry": "m23-x03", "legacy": true}}
+{"comment": 3329619225, "pr": 3359, "commit": "ba9e244bea692628ab06754a227f682a17bac126", "status": "not_rulable", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": [], "note": "context: "}
+{"comment": 3300118404, "pr": 3359, "commit": "eeeb301ff1b51aa5a8c01007a180d9de6fcd4c40", "status": "covered", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3300147310, "pr": 3359, "commit": "eeeb301ff1b51aa5a8c01007a180d9de6fcd4c40", "status": "covered", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3300150188, "pr": 3359, "commit": "eeeb301ff1b51aa5a8c01007a180d9de6fcd4c40", "status": "covered", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3300152618, "pr": 3359, "commit": "eeeb301ff1b51aa5a8c01007a180d9de6fcd4c40", "status": "covered", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3300166167, "pr": 3359, "commit": "eeeb301ff1b51aa5a8c01007a180d9de6fcd4c40", "status": "to_distill", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 4358964350, "pr": 3359, "commit": "eeeb301ff1b51aa5a8c01007a180d9de6fcd4c40", "status": "covered", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3349199721, "pr": 3461, "commit": "a58f5c9c63feb8caca2ccaf0daf5ff077b9a9b3f", "status": "covered", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3349205238, "pr": 3461, "commit": "a58f5c9c63feb8caca2ccaf0daf5ff077b9a9b3f", "status": "not_rulable", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": [], "note": "not_issue: "}
+{"comment": 3349206433, "pr": 3461, "commit": "a58f5c9c63feb8caca2ccaf0daf5ff077b9a9b3f", "status": "covered", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3338573831, "pr": 3461, "commit": "c0b563295885b7974b57263cbf2f3bb3b089b64b", "status": "not_rulable", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": [], "note": "context: "}
+{"comment": 3338657574, "pr": 3461, "commit": "c0b563295885b7974b57263cbf2f3bb3b089b64b", "status": "not_rulable", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": [], "note": "context: "}
+{"comment": 3338659219, "pr": 3461, "commit": "c0b563295885b7974b57263cbf2f3bb3b089b64b", "status": "not_rulable", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": [], "note": "context: "}
+{"comment": 3338664670, "pr": 3461, "commit": "c0b563295885b7974b57263cbf2f3bb3b089b64b", "status": "not_rulable", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": [], "note": "context: "}
+{"comment": 3338699490, "pr": 3461, "commit": "c0b563295885b7974b57263cbf2f3bb3b089b64b", "status": "not_rulable", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": [], "note": "context: "}
 {"comment": 3336521050, "pr": 3477, "commit": "e257a459ab1a7f4fb952f81e8b120709c9b357cc", "status": "resolved", "reviewer": null, "tries": [], "resolved_by": {"book": "v0001", "entry": "m3477-x6", "legacy": true}}
 {"comment": 3397484415, "pr": 3485, "commit": "4352a8cb334a03637a2daf4f58c289bd8b50efea", "status": "resolved", "reviewer": null, "tries": [], "resolved_by": {"book": "v0001", "entry": "m23-x01", "legacy": true}}
 {"comment": 3397500084, "pr": 3485, "commit": "4352a8cb334a03637a2daf4f58c289bd8b50efea", "status": "resolved", "reviewer": null, "tries": [], "resolved_by": {"book": "v0001", "entry": "m23-x01", "legacy": true}}
@@ -20,6 +35,11 @@
 {"comment": 3424928429, "pr": 3485, "commit": "693843eba016be7c76010f86a5bb34673200fc4f", "status": "resolved", "reviewer": null, "tries": [], "resolved_by": {"book": "v0001", "entry": "m3485-002", "legacy": true}}
 {"comment": 3424943905, "pr": 3485, "commit": "693843eba016be7c76010f86a5bb34673200fc4f", "status": "resolved", "reviewer": null, "tries": [], "resolved_by": {"book": "v0001", "entry": "m3485-001", "legacy": true}}
 {"comment": 3406260333, "pr": 3584, "commit": "324a2ba08c73d272b2d397b9d0bd7f5ef28c9242", "status": "resolved", "reviewer": null, "tries": [], "resolved_by": {"book": "v0001", "entry": "m23-x02", "legacy": true}}
+{"comment": 3399320298, "pr": 3630, "commit": "7bdb8fd59c97f8090b45efe3bb04a004afe2bc98", "status": "to_distill", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3399339859, "pr": 3630, "commit": "7bdb8fd59c97f8090b45efe3bb04a004afe2bc98", "status": "to_distill", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3399355695, "pr": 3630, "commit": "7bdb8fd59c97f8090b45efe3bb04a004afe2bc98", "status": "to_distill", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3399368788, "pr": 3630, "commit": "7bdb8fd59c97f8090b45efe3bb04a004afe2bc98", "status": "covered", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 4480781539, "pr": 3630, "commit": "7bdb8fd59c97f8090b45efe3bb04a004afe2bc98", "status": "covered", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
 {"comment": 3405496325, "pr": 3631, "commit": "95ec8fb959b191b51ee267d476fe7fcd279ad2eb", "status": "resolved", "reviewer": null, "tries": [], "resolved_by": {"book": "v0001", "entry": "m3631-001", "legacy": true}}
 {"comment": 3405567725, "pr": 3631, "commit": "95ec8fb959b191b51ee267d476fe7fcd279ad2eb", "status": "resolved", "reviewer": null, "tries": [], "resolved_by": {"book": "v0001", "entry": "m3631-002", "legacy": true}}
 {"comment": 3448895452, "pr": 3776, "commit": "33b257aa528f80b2dedd31cf36e1757f172b2297", "status": "resolved", "reviewer": null, "tries": [], "resolved_by": {"book": "v0001", "entry": "m23-x04", "legacy": true}}
@@ -41,9 +61,37 @@
 {"comment": 3525689235, "pr": 3968, "commit": "433a5b330544850546d8a23a4e342aa09100d179", "status": "resolved", "reviewer": null, "tries": [], "resolved_by": {"book": "v0001", "entry": "m23-x03", "legacy": true}}
 {"comment": 4630879851, "pr": 3968, "commit": "433a5b330544850546d8a23a4e342aa09100d179", "status": "not_rulable", "reviewer": null, "tries": [], "note": "legacy: processed by distill before the ledger; no entry kept"}
 {"comment": 3802873867, "pr": 3968, "commit": "dd2aaa28a99fdf6cfbcbe748986ac20cb928415d", "status": "resolved", "reviewer": null, "tries": [], "resolved_by": {"book": "v0001", "entry": "m23-x09", "legacy": true}}
+{"comment": 3539865831, "pr": 4015, "commit": "92382f2848355e6d00257e79feb8c1bf699f591c", "status": "to_distill", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3539876147, "pr": 4015, "commit": "92382f2848355e6d00257e79feb8c1bf699f591c", "status": "to_distill", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3539879567, "pr": 4015, "commit": "92382f2848355e6d00257e79feb8c1bf699f591c", "status": "to_distill", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3539883298, "pr": 4015, "commit": "92382f2848355e6d00257e79feb8c1bf699f591c", "status": "to_distill", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3539895431, "pr": 4015, "commit": "92382f2848355e6d00257e79feb8c1bf699f591c", "status": "covered", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 4638271867, "pr": 4015, "commit": "c2252d8f741aaf1e4077225066d5cc488add9d1f", "status": "covered", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
 {"comment": 3633033001, "pr": 4042, "commit": "b5c5b22209171ad22d9ad0f3719b970b8ff7050d", "status": "resolved", "reviewer": null, "tries": [], "resolved_by": {"book": "v0001", "entry": "m23-x01", "legacy": true}}
 {"comment": 3633043948, "pr": 4042, "commit": "b5c5b22209171ad22d9ad0f3719b970b8ff7050d", "status": "resolved", "reviewer": null, "tries": [], "resolved_by": {"book": "v0001", "entry": "m23-x01", "legacy": true}}
 {"comment": 3633046216, "pr": 4042, "commit": "b5c5b22209171ad22d9ad0f3719b970b8ff7050d", "status": "resolved", "reviewer": null, "tries": [], "resolved_by": {"book": "v0001", "entry": "m23-x01", "legacy": true}}
+{"comment": 3573838659, "pr": 4075, "commit": "32f83f35a48cbcdec86ef36cb8e98ae76c0a0600", "status": "to_distill", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3573865205, "pr": 4075, "commit": "32f83f35a48cbcdec86ef36cb8e98ae76c0a0600", "status": "to_distill", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3573880227, "pr": 4075, "commit": "32f83f35a48cbcdec86ef36cb8e98ae76c0a0600", "status": "to_distill", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3573884744, "pr": 4075, "commit": "32f83f35a48cbcdec86ef36cb8e98ae76c0a0600", "status": "covered", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3573888088, "pr": 4075, "commit": "32f83f35a48cbcdec86ef36cb8e98ae76c0a0600", "status": "covered", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3573894706, "pr": 4075, "commit": "32f83f35a48cbcdec86ef36cb8e98ae76c0a0600", "status": "not_rulable", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": [], "note": "rejected: "}
+{"comment": 3573911228, "pr": 4075, "commit": "32f83f35a48cbcdec86ef36cb8e98ae76c0a0600", "status": "to_distill", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3573933752, "pr": 4075, "commit": "32f83f35a48cbcdec86ef36cb8e98ae76c0a0600", "status": "to_distill", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3573945841, "pr": 4075, "commit": "32f83f35a48cbcdec86ef36cb8e98ae76c0a0600", "status": "covered", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3573958406, "pr": 4075, "commit": "32f83f35a48cbcdec86ef36cb8e98ae76c0a0600", "status": "covered", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3573966105, "pr": 4075, "commit": "32f83f35a48cbcdec86ef36cb8e98ae76c0a0600", "status": "not_rulable", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": [], "note": "not_issue: "}
+{"comment": 3575868130, "pr": 4075, "commit": "32f83f35a48cbcdec86ef36cb8e98ae76c0a0600", "status": "not_rulable", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": [], "note": "rejected: "}
+{"comment": 3557008798, "pr": 4075, "commit": "56b83b740797e5963f14a98095f0bdc977d15fe6", "status": "to_distill", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3631744221, "pr": 4075, "commit": "650ba8907a2bb307a4867ecb0ecb858c472361ca", "status": "to_distill", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3634665958, "pr": 4075, "commit": "650ba8907a2bb307a4867ecb0ecb858c472361ca", "status": "covered", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3634682304, "pr": 4075, "commit": "650ba8907a2bb307a4867ecb0ecb858c472361ca", "status": "to_distill", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3634690146, "pr": 4075, "commit": "650ba8907a2bb307a4867ecb0ecb858c472361ca", "status": "covered", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3556933836, "pr": 4075, "commit": "808d32a0edea7d5bf8928eb28764919dd37ddbcf", "status": "not_rulable", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": [], "note": "not_issue: "}
+{"comment": 3585206314, "pr": 4075, "commit": "cb33f86f394130818b56e207be6d32ef3905640b", "status": "not_rulable", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": [], "note": "rejected: "}
+{"comment": 3585302381, "pr": 4075, "commit": "cb33f86f394130818b56e207be6d32ef3905640b", "status": "not_rulable", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": [], "note": "rejected: "}
+{"comment": 3622571623, "pr": 4075, "commit": "eb2f573d609ac230edcc8584cfab382a9874203a", "status": "covered", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
+{"comment": 3622591774, "pr": 4075, "commit": "eb2f573d609ac230edcc8584cfab382a9874203a", "status": "covered", "reviewer": "pcd13a0ae+v0001@high-rc", "tries": []}
 {"comment": 3611472206, "pr": 4077, "commit": "3a53984586286fecf0d81a2ebf9fad6c55c89e5d", "status": "resolved", "reviewer": null, "tries": [], "resolved_by": {"book": "v0001", "entry": "m3231-006", "legacy": true}}
 {"comment": 3745856118, "pr": 4079, "commit": "65be83fb95aff734ed6caa30520be9a547ce359b", "status": "resolved", "reviewer": null, "tries": [], "resolved_by": {"book": "v0001", "entry": "m4079-001", "legacy": true}}
 {"comment": 3745857294, "pr": 4079, "commit": "65be83fb95aff734ed6caa30520be9a547ce359b", "status": "resolved", "reviewer": null, "tries": [], "resolved_by": {"book": "v0001", "entry": "m4079-001", "legacy": true}}

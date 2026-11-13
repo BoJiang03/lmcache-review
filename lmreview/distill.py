@@ -949,7 +949,7 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     book_path(out).write_text("".join(json.dumps(r) + "\n" for r in rules))
     write_meta(out, {"base": base, "runs": misses_of, "prs": sorted(prs or []) or None,
                      "samples": sorted({f"{r['pr']}@{r['commit'][:8]}" for r, _ in judged or []}),
-                     "seen": sorted(seen | {a["id"] for a in att})})  # vet reads this; the next distill skips "seen"
+                     "seen": sorted(seen | {a["id"] for a in att}, key=str)})  # point keys mix ints and "<id>:<k>"; vet reads this; the next distill skips "seen"
 
     kinds = C.Counter(a.get("kind") for a in att)
     md = [f"# Rulebook {out}", "",

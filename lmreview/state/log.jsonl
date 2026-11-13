@@ -9,3 +9,12 @@
 {"time": "2026-11-12T23:10:51+00:00", "step": "distill", "name": "v0002c2", "parent": 1, "comments": 16, "not_rulable": 0, "summary": "rules/v0002c2.jsonl: 67 entries ({'principle': 57, 'knowledge': 10}) from 16 comments ({'learnable': 16}), 54 groups, $1.54"}
 {"time": "2026-11-13T02:51:12+00:00", "step": "discard", "name": "v0002c2"}
 {"time": "2026-11-13T02:51:12+00:00", "step": "promote", "version": 2, "parent": 1, "by": "retire_unearned"}
+{"time": "2026-11-13T02:52:14+00:00", "step": "judge", "reviewer": "pcd13a0ae+v0002@high-rc", "runs": 0, "cost": 0.0, "covered": 0, "to_distill": 0, "resolved": 0, "no_gt": 0}
+{"time": "2026-11-13T02:54:28+00:00", "step": "distill", "name": "v0003c1", "parent": 2, "comments": 16, "not_rulable": 0, "summary": "rules/v0003c1.jsonl: 68 entries ({'principle': 56, 'knowledge': 12}) from 16 comments ({'learnable': 16}), 56 groups, $0.96"}
+{"time": "2026-11-13T03:03:37+00:00", "step": "promote", "version": 3, "parent": 2, "by": "vet", "from": "v0003c1"}
+{"time": "2026-11-13T03:03:37+00:00", "step": "vet", "name": "v0003c1", "verdict": "FAIL", "cost": 15.96, "version": 3, "resolved": 13, "failed": 3, "needs_human": 0}
+{"time": "2026-11-13T03:04:34+00:00", "step": "distill", "name": "v0004c1", "parent": 3, "comments": 3, "not_rulable": 0, "summary": "rules/v0004c1.jsonl: 68 entries ({'principle': 56, 'knowledge': 12}) from 3 comments ({'learnable': 3}), 56 groups, $0.40"}
+{"time": "2026-11-13T03:11:45+00:00", "step": "promote", "version": 4, "parent": 3, "by": "vet", "from": "v0004c1"}
+{"time": "2026-11-13T03:11:45+00:00", "step": "vet", "name": "v0004c1", "verdict": "PASS", "cost": 3.83, "version": 4, "resolved": 1, "failed": 0, "needs_human": 2}
+{"time": "2026-11-13T03:28:21+00:00", "step": "promote", "version": 5, "parent": 4, "by": "manual"}
+{"time": "2026-11-13T03:28:21+00:00", "step": "fix", "note": "vet promoted v0003c1-002 and -013 untested; tested after: 002 works (1/2), 013 does not (0/2)"}

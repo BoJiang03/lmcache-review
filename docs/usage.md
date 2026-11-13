@@ -158,8 +158,10 @@ failure signals ───┴─distill──> NEW book ──vet NEW --base OLD 
   an entry, judged  1 attribute                2 effect: source PRs, OLD vs NEW
   invalid)          2 write, with all of OLD   2b revisions: their trigger is fixed
                       (3 drafts merged):       3 side effects: affected OLD entries' sources
-                      evidence | generalize | merge | add | revise | retire | skip
-                    3 induce (--induce only): standalone entries under principles
+                      evidence | generalize | add | revise | retire | skip
+                    3 consolidate the whole book (3 drafts, voted):
+                      merge | rewrite NEW | flag contradictions
+                    4 induce (--induce only): standalone entries under principles
                     every new entry needs a comment of its own, else it is dropped
                                               ...later: fair-target A/B, whole-book eval -> team-vN
 ```
@@ -172,7 +174,9 @@ failure signals ───┴─distill──> NEW book ──vet NEW --base OLD 
     what to learn. Findings citing an OLD entry that were judged invalid are its failure signals.
   - attribute keeps the comments worth learning and says what each asked the author to do (not a
     rule). write then sees all of OLD, the signals and those comments, and writes or changes the
-    entries; a comment that an OLD entry was already written from is marked RETRY.
+    entries; a comment that an OLD entry was already written from is marked RETRY. consolidate then
+    tidies the whole book at the level of entries; a change needs most of the parallel drafts to agree.
+    vet replays every source comment of a merged entry and undoes a merge that loses one.
   - Additions are the normal case: a new entry, evidence on an existing one, or a parent principle
     above existing entries, which stay as written and are linked by `principle`/`members`.
   - An existing entry is rewritten (`revise`: version + 1, old text in `history`) or `retire`d only

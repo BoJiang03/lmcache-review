@@ -12,7 +12,10 @@ the PR got later commits are dropped.
      merge | add | revise / retire (only on failure signals, an opposite finding, or a retry) |
      contradict | skip. A finding whose entry already exists and still missed it is marked RETRY.
   3. update the book; a revision must still explain the entry's evidence and corrected tests
-  4. induce (off by default): place standalone entries under principles (attach, or a new parent)
+  4. consolidate the whole book (n drafts in parallel, voted in code, then one call writes the agreed
+     entries): merge entries that ask for the same change, rewrite new entries at the wrong level,
+     flag contradictions. vet replays every source of a merged entry and undoes a merge that loses one
+  5. induce (off by default): place standalone entries under principles (attach, or a new parent)
 Output: rules/<out>.jsonl, rules/<out>.md (readable), <data>/distill/<out>/{attribution,changes}.json.
 Whether the result is kept is `lmreview vet`'s call (vet.py).
 Never reads test/new samples.
@@ -45,7 +48,7 @@ from .score import REPORTS, _normalize, hkey, load_gold, refuted
 
 BATCH = 30          # comments per attribution / coverage call
 WRITE_BATCH = 25    # findings per write call (each call sees the whole rulebook)
-EST = {"attribute": 0.17, "write": 0.6}  # $/call; estimates only
+EST = {"attribute": 0.17, "write": 0.6, "consolidate": 0.6}  # $/call; estimates only
 
 ATTRIBUTE = """You are distilling the review standards of the LMCache team (a KV-cache layer for LLM
 inference engines such as vLLM) from past human review comments.
@@ -73,6 +76,7 @@ Answer with one JSON block only:
    "why": "<=20 words, for every kind but learnable"}}]
 ```"""
 
+CONSOLIDATE_DRAFTS = int(get("distill", "consolidate_drafts"))  # parallel consolidate drafts, voted
 MIN_SIGNAL_PRS = int(get("distill", "min_signal_prs"))  # revise/retire on failure signals alone: they must come from this many PRs
 
 # How general an entry must be; shared by WRITE, MERGE_WRITE and INDUCE (no braces: it goes through str.format).
@@ -124,9 +128,6 @@ a docstring with a worked example" are two entries, though both are about docstr
   "expect" is too narrow to make a reviewer raise their point. Write the broader entry at the lowest
   level that covers the existing entry AND the findings. It REPLACES the existing entry (which is
   retired), so it must still make a reviewer raise everything the existing entry asked for.
-- "merge": two or more existing entries ask for the same kind of change; write the one entry that
-  REPLACES them all. It must make a reviewer raise everything each of them asked for, and be shorter
-  than they are together; otherwise do not merge. Findings it covers may be listed in "members" too.
 - "add": the findings ask for a different change than every existing entry; write a new entry.
 - "revise": an existing entry's text is WRONG as shown by failure signals or by findings that ask for
   the opposite, or it is the entry a finding marked RETRY was written from and it still did not make
@@ -142,7 +143,7 @@ a docstring with a worked example" are two entries, though both are about docstr
 - "keep": a failure signal that came from the reviewer misapplying a correct entry (the signal is
   recorded as considered).
 A smaller rulebook that explains the same comments generalizes better: prefer "evidence", then
-"generalize" or "merge", over "add". Every replacement is checked later against all the comments the
+"generalize", over "add". Tidying the rulebook as a whole (merging existing entries) is a later step. Every replacement is checked later against all the comments the
 replaced entries came from; one that loses any of them is undone. "revise" and "retire" need failure
 signals from at least @MINPRS@ different PRs, or a finding in "members" (opposite, or RETRY of that entry).
 
@@ -175,7 +176,7 @@ Findings the AI reviewer missed:
 
 Answer with one JSON block only, one object per decision:
 ```json
-[{"op": "evidence|generalize|merge|add|revise|retire|contradict|skip|keep", "rules": ["<existing id>"],
+[{"op": "evidence|generalize|add|revise|retire|contradict|skip|keep", "rules": ["<existing id>"],
   "members": ["c123", "s1"], "concern": "short name", "kind": "...", "when": "...", "expect": "...",
   "why": "...", "examples": ["..."], "paths": [], "changed": "<revise only>", "replaced_by": "<id, retire only>"}]
 ```"""
@@ -379,7 +380,7 @@ def update_rulebook(base_rules: list[dict], items: dict, evid: dict, out: str, c
     `items`: key -> text: "c<id>" a finding (what the reviewer asked), "s<n>" a failure signal of an
     existing entry (`signals` maps it to its record); `evid`: key -> its comment ids. The model sees
     the whole active rulebook, the signals and the findings (with the reviewer's words and code) and
-    decides: evidence | generalize | merge | add | revise | retire | contradict | skip | keep. It runs
+    decides: evidence | generalize | add | revise | retire | contradict | skip | keep. It runs
     `n` times and MERGE_WRITE merges the drafts (the level of abstraction varies from run to run).
     Findings go in batches of WRITE_BATCH, each with the whole rulebook; the signals go with the
     first batch. `retry`: finding key -> ids of the entries already written from its comment (they
@@ -388,8 +389,8 @@ def update_rulebook(base_rules: list[dict], items: dict, evid: dict, out: str, c
     Existing entries change only on evidence that they are wrong: "revise" (rewrite, version + 1, the
     old text kept in "history") and "retire" are accepted only when the decision names failure
     signals from MIN_SIGNAL_PRS PRs or a finding (opposite, or a retry). A revision must still
-    explain the entry's old evidence and corrected tests. Generalize and merge add a replacement
-    that retires what it replaces. `lmreview vet` then checks every kind of change on the source PRs.
+    explain the entry's old evidence and corrected tests. Generalize adds a replacement that retires
+    what it replaces. Merging existing entries is consolidate()'s job. `lmreview vet` then checks every kind of change on the source PRs.
 
     Returns:
         (the whole rulebook: base entries, changed or not, then new ones; the list of changes)
@@ -544,6 +545,221 @@ def update_rulebook(base_rules: list[dict], items: dict, evid: dict, out: str, c
         if ch["op"] in ("add",) or ch["op"].endswith("-replace"):
             ch["new"] = [r["id"] for r in new if set(r["evidence"]) & {e for k in ch["members"] for e in evid.get(k, [])}]
     return [finish(r) for r in base.values()] + new, changes
+
+
+CONSOLIDATE = """Below is the whole LMCache review rulebook after this round's updates: the entries an AI reviewer
+is given when it reviews a pull request of LMCache (a KV-cache layer for LLM inference engines such
+as vLLM). Entries marked NEW were written this round. Each entry shows what the human reviewers said
+in the comments it was learned from.
+
+Tidy the rulebook at the level of entries. A rulebook with overlapping, uneven or redundant entries
+costs on every review and every later check, and its entries fire less reliably. Changes:
+- "merge": two or more entries ask for the same kind of change in the same kind of situation, though
+  their wording, area or level differ. Write ONE entry that replaces them all: it must make a reviewer
+  raise everything each of them asked for (read their reviewers' words), at the lowest level that
+  covers them all, and be shorter than they are together. Entries that share a topic but ask for
+  different or opposite changes are NOT merged (e.g. "shorten docstrings to the contract" and
+  "explain tricky state changes in a docstring with a worked example").
+- "rewrite": a NEW entry whose level is wrong: it names one PR's particulars in "when" or "expect",
+  or it is so broad that it fits any change. Write it at the level its reviewers' words support.
+  Existing (not NEW) entries change only by merge.
+- "contradict": two entries ask for opposite changes in the same situation. Do not change them; say why.
+List only changes; everything else stays as it is. Do not merge just to make the book smaller: every
+merge is checked later on all the comments the merged entries came from, and one that loses any of
+them is undone.
+
+""" + GENERAL + """
+
+Fields of a written entry (merge, rewrite): "kind" (principle | knowledge), "when", "expect", "why"
+(one line), "examples" (1-2 short concrete instances), "paths" (globs, [] = anywhere).
+
+Rulebook:
+@BOOK@
+
+Answer with one JSON block only, one object per change ([] if none):
+```json
+[{"op": "merge|rewrite|contradict", "rules": ["<id>", "<id>"], "reason": "one line", "kind": "...",
+  "when": "...", "expect": "...", "why": "...", "examples": ["..."], "paths": []}]
+```"""
+
+# Final text of the changes most CONSOLIDATE drafts agreed on (which entries, voted in code).
+FINAL_CONSOLIDATE = """Several independent drafts proposed how to tidy the LMCache review rulebook below. The changes
+listed under "Agreed changes" are the ones most drafts agreed on (which entries to merge, which NEW
+entry to rewrite). For each agreed change write the ONE final entry, using the drafts' versions:
+- Its level is the one the reviewers' own words support (shown under each entry). Prefer the draft
+  whose "when" covers every mechanism by which a PR could break the stated principle; take the most
+  precise "expect" and the best examples from any draft. Do not go above what the reviewers said.
+- A merged entry must make a reviewer raise everything each merged entry asked for, and be shorter
+  than they are together.
+
+""" + GENERAL + """
+
+Rulebook:
+@BOOK@
+
+Agreed changes, with the drafts' versions:
+@CHANGES@
+
+Answer with one JSON block only, one object per agreed change:
+```json
+[{"change": 0, "kind": "...", "when": "...", "expect": "...", "why": "...", "examples": ["..."], "paths": []}]
+```"""
+
+
+def _book_with_quotes(rules: list[dict], new_ids: set[str], cm: dict, quotes: int = 3) -> str:
+    """The active entries for CONSOLIDATE: text, then up to `quotes` reviewer comments it came from."""
+    out = []
+    for r in rules:
+        if r.get("status", "active") != "active":
+            continue
+        tag = "NEW" if r["id"] in new_ids else f"v{r.get('version', 1)}"
+        said = [f"    PR #{cm[e]['pr']} {cm[e]['author']}: {' '.join(cm[e]['body'].split())[:300]}"
+                for e in (r.get("evidence") or [])[:quotes] if e in cm]
+        more = len(r.get("evidence") or []) - len(said)
+        out.append(f"- {r['id']} ({tag}, {r.get('kind')}): When {r.get('when')}: {r.get('expect')}\n"
+                   f"  examples: {'; '.join(r.get('examples') or [])} | paths {r.get('paths') or []}\n"
+                   f"  reviewers said:\n" + "\n".join(said) + (f"\n    (+{more} more comments)" if more > 0 else ""))
+    return "\n".join(out)
+
+
+def _components(edges: set[tuple[str, str]]) -> list[list[str]]:
+    """Connected components of an undirected graph given by its edges (sorted, for stable output)."""
+    adj: dict[str, set[str]] = C.defaultdict(set)
+    for a, b in edges:
+        adj[a].add(b)
+        adj[b].add(a)
+    seen, out = set(), []
+    for x in sorted(adj):
+        if x in seen:
+            continue
+        comp, todo = [], [x]
+        while todo:
+            y = todo.pop()
+            if y not in seen:
+                seen.add(y)
+                comp.append(y)
+                todo += adj[y] - seen
+        out.append(sorted(comp))
+    return out
+
+
+def consolidate(rules: list[dict], base_ids: set[str], out: str, cm: dict, effort: str, cfg: Config,
+                spend: list[float], max_cost: float, n: int = 3) -> tuple[list[dict], list[dict]]:
+    """Tidy the whole rulebook at the level of entries: merge entries that ask for the same change,
+    rewrite NEW entries at the wrong level, flag contradictions.
+
+    `n` CONSOLIDATE drafts run in parallel and are voted on in code: two entries are merged when most
+    drafts put them in one merge (merges are the connected components of those pairs); a NEW entry is
+    rewritten, and a contradiction flagged, when most drafts say so. One FINAL_CONSOLIDATE call then
+    writes the agreed entries from the drafts' versions. A merge replaces its entries: existing ones
+    are retired ("replaced_by"; vet replays all their sources and undoes a merge that loses one), NEW
+    ones are removed and their evidence moves to the replacement. A merge that is not shorter than
+    what it replaces is refused.
+
+    Returns:
+        (the rulebook, change records "consolidate-*").
+    """
+    act = {r["id"]: r for r in rules if r.get("status", "active") == "active"}
+    new_ids = {i for i in act if i not in base_ids}
+    if len(act) < 2 or spend[0] >= max_cost:
+        return rules, []
+    book = _book_with_quotes(rules, new_ids, cm)
+
+    def once(_: int) -> tuple[object, float]:
+        return _ask(CONSOLIDATE.replace("@BOOK@", book), effort, cfg)
+    res, cost = capped_map(once, list(range(n)), n, max(0.0, max_cost - spend[0]), label=lambda _: "consolidate draft")
+    spend[0] += cost
+    drafts = [[d for d in r if isinstance(d, dict)] for r in res if isinstance(r, list)]
+    if not drafts:
+        return rules, []
+    need = len(drafts) // 2 + 1
+    pair, rew, con = C.Counter(), C.Counter(), C.Counter()
+    for dr in drafts:
+        mp, rw, ct = set(), set(), set()
+        for d in dr:
+            ids = sorted({x for x in d.get("rules") or [] if x in act})
+            if d.get("op") == "merge" and len(ids) >= 2:
+                mp |= {(a, b) for i, a in enumerate(ids) for b in ids[i + 1:]}
+            elif d.get("op") == "rewrite" and len(ids) == 1 and ids[0] in new_ids:
+                rw.add(ids[0])
+            elif d.get("op") == "contradict" and len(ids) == 2:
+                ct.add(tuple(ids))
+        pair.update(mp)
+        rew.update(rw)
+        con.update(ct)
+    groups = _components({p for p, v in pair.items() if v >= need})
+    in_group = {i for g in groups for i in g}
+    agreed = [("merge", g) for g in groups] + [("rewrite", [i]) for i, v in sorted(rew.items())
+                                                if v >= need and i not in in_group]
+    changes: list[dict] = []
+    for (a, b), v in sorted(con.items()):
+        if v >= need:
+            why = next((d.get("reason") for dr in drafts for d in dr if d.get("op") == "contradict"
+                        and sorted(d.get("rules") or []) == [a, b]), "")
+            for x, y in ((a, b), (b, a)):
+                act[x]["conflicts"] = _uniq(list(act[x].get("conflicts") or []) + [y])
+            changes.append({"op": "consolidate-contradict", "rules": [a, b], "members": [], "concern": "", "why": why})
+    if not agreed:
+        return rules, changes
+
+    def versions(op: str, g: list[str]) -> str:
+        vs = [d for dr in drafts for d in dr if d.get("op") == op and set(d.get("rules") or []) & set(g)]
+        return "\n".join(json.dumps(_entry(d) | {"rules": d.get("rules")}) for d in vs)
+    text = "\n\n".join(f"Change {k}: {op} {', '.join(g)}\n{versions(op, g)}" for k, (op, g) in enumerate(agreed))
+    if spend[0] >= max_cost:
+        return rules, changes
+    final, c2 = _ask(FINAL_CONSOLIDATE.replace("@BOOK@", book).replace("@CHANGES@", text), effort, cfg)
+    spend[0] += c2
+    fin = {d["change"]: d for d in final if isinstance(d, dict) and isinstance(d.get("change"), int)} \
+        if isinstance(final, list) else {}
+
+    today = dt.date.today().isoformat()
+    used, k = {r["id"] for r in rules}, 0
+    drop: set[str] = set()
+    add: list[dict] = []
+    for i, (op, g) in enumerate(agreed):
+        d = fin.get(i)
+        if not d or not d.get("expect"):
+            continue
+        if op == "rewrite":
+            act[g[0]].update({kk: v for kk, v in _entry(d).items() if v is not None})
+            changes.append({"op": "consolidate-rewrite", "rules": g, "members": [], "concern": "",
+                            "when": d.get("when"), "expect": d.get("expect")})
+            continue
+        olds = [act[x] for x in g]
+        if _size(d) >= sum(map(_size, olds)):
+            changes.append({"op": "consolidate-refused", "rules": g, "members": [], "concern": "",
+                            "why": f"not shorter ({_size(d)} words vs {sum(map(_size, olds))})"})
+            continue
+        k += 1
+        while f"{out}-{k:03d}" in used:
+            k += 1
+        rid = f"{out}-{k:03d}"
+        used.add(rid)
+        kids = _uniq([m for r in olds for m in r.get("members") or [] if m not in g])
+        ev = _uniq([e for r in olds for e in r.get("evidence") or []])
+        rep = _entry(d) | {"id": rid, "kind": d.get("kind") or "principle", "status": "active", "version": 1,
+                           "history": [], "evidence": ev, "concern": "consolidated",
+                           "replaces": [x for x in g if x in base_ids],
+                           "tests": [{**t, "from": r["id"]} for r in olds for t in r.get("tests") or []],
+                           "n_prs": len({cm[e]["pr"] for e in ev if e in cm}),
+                           "area": ",".join(sorted({cm[e].get("area") or "overall" for e in ev if e in cm}))}
+        if kids:
+            rep["members"] = kids
+        for r in olds:
+            if r["id"] in base_ids:
+                r["status"] = "retired"
+                r["retired"] = {"date": today, "by": out, "replaced_by": rid, "why": "consolidated"}
+                r.pop("members", None)
+            else:
+                drop.add(r["id"])
+        for r in rules:
+            if r.get("principle") in g:
+                r["principle"] = rid
+        add.append(rep)
+        changes.append({"op": "consolidate-merge", "rules": g, "new": [rid], "members": [], "concern": "",
+                        "words": [sum(map(_size, olds)), _size(d)]})
+    return [r for r in rules if r["id"] not in drop] + add, changes
 
 
 INDUCE = """Below is an LMCache review rulebook. Its principles each group several rules ("members") under
@@ -814,7 +1030,8 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     that were refuted are its failure signals. Steps: (1) attribute the missed comments; (2) write: one step that
     sees the whole base book, its failure signals and the learnable findings and decides per finding
     (evidence, generalize, merge, add; revise/retire only on failure signals, an opposite finding or a
-    retry); (3) update the book; (4) induce principles over the standalone entries (`do_induce`, off by
+    retry); (3) update the book; (4) consolidate the whole book (parallel drafts, voted);
+    (5) induce principles over the standalone entries (`do_induce`, off by
     default); then drop every new entry without an evidence comment of its own. Whether the
     result is kept is `lmreview vet`'s call.
 
@@ -845,7 +1062,8 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     n_cand = int(len(cs) * 0.7)  # pilot: ~75% learnable
     est = (0 if reuse else len(batches) * EST["attribute"]) \
         + (n_cand // WRITE_BATCH + 1) * EST["write"] * (n + 1 if n > 1 else 1) \
-        + (EST["write"] if do_induce else 0)  # n drafts + merge; one induce call
+        + EST["consolidate"] * (CONSOLIDATE_DRAFTS + 1) \
+        + (EST["write"] if do_induce else 0)  # n drafts + merge; consolidate drafts + final; one induce call
     note(f"distill {out}: {len(cs)} comments" + (f" missed by {misses_of}" if misses_of else "")
          + f", {len(batches)} attribution batches; est ${est:.1f}, cap ${max_cost:.1f}")
     if max_cost <= 0:
@@ -856,7 +1074,7 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     if reuse:  # attribution of an earlier run (same inputs): only the write step is re-done
         res, spent = [[json.loads(l) for l in (cfg.data / "distill" / reuse / "attribution.jsonl").open()]], 0.0
     else:
-        note(f"[1/3] attribute {len(cs)} comments in {len(batches)} batches")
+        note(f"[1/4] attribute {len(cs)} comments in {len(batches)} batches")
         res, spent = capped_map(lambda b: _ask(ATTRIBUTE.format(comments="\n\n".join(map(_fmt, b))), effort, cfg),
                                 batches, workers, max_cost - pre, label=lambda b: f"attribute {len(b)}")
         spent += pre
@@ -905,13 +1123,18 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
         if base_rules and misses_of else ({}, {})
     for k in sig:
         items[k], evid[k] = sig_text[k], []
-    note(f"[2/3] write: {len(evid) - len(sig)} findings ({len(retry)} retries), {len(sig)} failure signals, "
+    note(f"[2/4] write: {len(evid) - len(sig)} findings ({len(retry)} retries), {len(sig)} failure signals, "
          f"{sum(r.get('status', 'active') == 'active' for r in base_rules)} existing entries (${spend[0]:.2f} so far)")
     rules, changes = update_rulebook(base_rules, items, evid, out, cm, effort, cfg, spend, max_cost, workers,
                                      n=n, signals=sig, retry=retry, notes=why)
     note(f"      changes: {dict(C.Counter(ch['op'] for ch in changes))}")
+    note(f"[3/4] consolidate the whole book ({CONSOLIDATE_DRAFTS} drafts, voted; ${spend[0]:.2f} so far)")
+    rules, more = consolidate(rules, {r["id"] for r in base_rules}, out, cm, effort, cfg, spend, max_cost,
+                              n=CONSOLIDATE_DRAFTS)
+    changes += more
+    note(f"      consolidate: {dict(C.Counter(ch['op'] for ch in more)) or 'no change'}")
     if do_induce:
-        note(f"[3/3] induce principles over standalone entries (${spend[0]:.2f} so far)")
+        note(f"[4/4] induce principles over standalone entries (${spend[0]:.2f} so far)")
         rules, more = induce(rules, cm, effort, cfg, spend, max_cost, out)
         changes += more
         note(f"      induce: {dict(C.Counter(ch['op'] for ch in more)) or 'no change'}")

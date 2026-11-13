@@ -54,7 +54,9 @@ book     = vet(book, new_book, human_comments)           # keep only what works 
   worth learning and what each asked the author to do. write sees the whole book, the failure signals
   and those comments (with the reviewer's words and diff hunk) and decides per comment: evidence for an
   existing entry, generalize or revise one, or add a new one. A comment whose entry already exists and
-  still missed it is marked a retry.
+  still missed it is marked a retry. consolidate then tidies the whole book: several drafts run in
+  parallel and only the changes most of them agree on are made (merge entries that ask for the same
+  change, rewrite new entries at the wrong level, flag contradictions).
 - **vet** reviews again with the old and the new book where they differ. The part that works
   becomes the next version. A change that fails is not just reverted: its comments go back to
   distill with the reason, so the next attempt is written differently.

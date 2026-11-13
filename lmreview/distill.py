@@ -1,18 +1,17 @@
 """`lmreview distill`: turn what a reviewer missed into rulebook changes; `coverage`: test whether it reuses.
 
-distill does not review: it learns from existing review runs (`misses_of`, normally
-`<prompt>+<base>@high-rc` run on train PRs with `lmreview review`).
-  1. judge the runs against the human comments (cached): missed comments (change requests / nits)
-     are what to learn; findings citing a base entry judged invalid are its failure signals.
-     Comments whose file never changed again although the PR got later commits are dropped.
-  2. attribute (batches, no tools): learnable | context | not_issue | rejected (declined in the
+distill neither reviews nor judges: it learns from judged review runs (the ledger's to_distill points,
+or the misses of `misses_of` in its judge results; `lmreview judge` / `eval` judge runs). Findings citing
+a base entry that were refuted are its failure signals. Comments whose file never changed again although
+the PR got later commits are dropped.
+  1. attribute (batches, no tools): learnable | context | not_issue | rejected (declined in the
      thread); for learnable ones a candidate rule
-  3. cluster (no tools): group candidates with the base entries by underlying concern; failure
+  2. cluster (no tools): group candidates with the base entries by underlying concern; failure
      signals join their entry's group
-  4. abstract new-only groups (n drafts merged); REVISE groups with base entries: evidence | parent
+  3. abstract new-only groups (n drafts merged); REVISE groups with base entries: evidence | parent
      principle | add | revise / retire (only on a failure signal or an opposite comment) | contradict
-  5. update the book; a revision must still explain the entry's evidence and corrected tests
-  6. induce: place standalone entries under principles (attach, or a new parent)
+  4. update the book; a revision must still explain the entry's evidence and corrected tests
+  5. induce: place standalone entries under principles (attach, or a new parent)
 Output: rules/<out>.jsonl, rules/<out>.md (readable), <data>/distill/<out>/{attribution,clusters,changes}.json.
 Whether the result is kept is `lmreview vet`'s call (vet.py).
 Never reads test/new samples.
@@ -726,7 +725,7 @@ def _code_at(cfg: Config, commit: str, locs: list[dict], ctx: int = 15) -> str:
 
 
 def book_meta(name: str) -> dict:
-    """rules/<name>.meta.json: how the book was made ({"base", "runs", "prs", "samples", "seen"}).
+    """rules/<name>.meta.json: how the book was made ({"base", "runs", "prs", "seen"}).
     A book without one (made before) counts its evidence comments as seen."""
     p = _meta_path(name)
     if p.exists():
@@ -744,38 +743,6 @@ def _meta_path(name: str) -> pathlib.Path:
     """rules/<name>.meta.json, or the .meta.json next to a state book."""
     b = book_path(name)
     return b.with_name(b.stem + ".meta.json")
-
-
-def judge_runs(cfg: Config, reviewer: str, prs: set[int] | None, split: str, max_cost: float) -> tuple[list, float]:
-    """Step 1 of distill: judge `reviewer`'s runs on `split` (only `prs`, if given) against the human
-    comments; already judged runs are read from disk. Runs over the cost cap stay unjudged and are skipped.
-
-    Returns:
-        ([(run, normalized score)], cost).
-    """
-    from .progress import note
-    from .score import JUDGE, score_one
-    ss, cm = load_gold(cfg)
-    out, cost = [], 0.0
-    files = sorted((cfg.data / "runs" / reviewer).glob("*.json"))
-    for f in files:
-        run = json.loads(f.read_text())
-        s = ss.get((run["pr"], run["commit"]))
-        if not s or s.get("split") != split or (prs and run["pr"] not in prs) or run.get("findings") is None:
-            continue
-        sp = cfg.data / "scores" / reviewer / f.name
-        was = sp.exists() and json.loads(sp.read_text()).get("judge") == JUDGE  # else judged (again) below
-        if not was and cost >= max_cost:
-            continue
-        sp.parent.mkdir(parents=True, exist_ok=True)
-        sc = score_one(cfg, run, s, [cm[i] for i in s["gold_ids"]], sp, str(get("judge", "effort")))
-        cost += 0 if was else sc.get("cost", 0)
-        out.append((run, _normalize(sc, run)))
-        if not was:
-            n = out[-1][1]
-            note(f"judged #{run['pr']}@{run['commit'][:8]}: {sum(bool(h['matched_ai']) for h in n['human'])}/{len(n['human'])} "
-                 f"human comments found (${sc.get('cost', 0):.2f}, total ${cost:.2f} of ${max_cost:.0f})")
-    return out, cost
 
 
 def rule_diff(old: list[dict], new: list[dict], width: int = 160) -> list[tuple[str, str]]:
@@ -842,11 +809,11 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     distill does not review. It learns from review runs that exist: `misses_of` names the reviewer
     whose runs to use, normally `<prompt>+<base>@high-rc` run with `lmreview review` on the train PRs
     `prs`, so that the misses are the base book's own.
-    Steps: (1) judge those runs against the human comments (cached); the missed comments are what to
-    learn, and findings citing a base entry that were judged invalid are its failure signals;
-    (2) attribute the missed comments; (3) cluster them with the base entries and their signals;
-    (4) abstract each group; (5) update the book (additions; revise/retire only on a failure signal or
-    an opposite comment); (6) induce principles over the standalone entries (`do_induce`, off by
+    distill does not judge: it reads the judge results on disk (`lmreview judge` / `eval` make them; runs
+    without one are left out). The missed points are what to learn, and findings citing a base entry
+    that were refuted are its failure signals. Steps: (1) attribute the missed comments; (2) cluster them with the base entries and their signals;
+    (3) abstract each group; (4) update the book (additions; revise/retire only on a failure signal or
+    an opposite comment); (5) induce principles over the standalone entries (`do_induce`, off by
     default); then drop every new entry without an evidence comment of its own. Whether the
     result is kept is `lmreview vet`'s call.
 
@@ -855,14 +822,11 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     cfg = cfg or Config()
     if book_path(out).exists():
         raise FileExistsError(f"{book_path(out)} exists; pick a new name")
-    pre, judged = 0.0, None
-    if misses_of and max_cost > 0:  # step 1: judge the runs (free when already judged)
+    pre = 0.0
+    if misses_of and base:
         from .reviewer import parse_reviewer
-        if base and parse_reviewer(misses_of.split("#")[0])[1] != base:
+        if parse_reviewer(misses_of.split("#")[0])[1] != base:
             print(f"note: {misses_of} does not use {base}: its misses are not the base book's own", flush=True)
-        note(f"[1/6] judge the runs of {misses_of} (cached ones are free)")
-        judged, pre = judge_runs(cfg, misses_of, set(prs or []) or None, "train", max_cost / 2)
-        note(f"      {len(judged)} runs judged (${pre:.2f})")
     if comments is not None:
         _, cm0 = load_gold(cfg)
         cs, seen = [cm0[i] for i in comments if i in cm0], set()
@@ -891,7 +855,7 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     if reuse:  # attribution of an earlier run (same inputs): only cluster + abstract are re-done
         res, spent = [[json.loads(l) for l in (cfg.data / "distill" / reuse / "attribution.jsonl").open()]], 0.0
     else:
-        note(f"[2/6] attribute {len(cs)} comments in {len(batches)} batches")
+        note(f"[1/5] attribute {len(cs)} comments in {len(batches)} batches")
         res, spent = capped_map(lambda b: _ask(ATTRIBUTE.format(comments="\n\n".join(map(_fmt, b))), effort, cfg),
                                 batches, workers, max_cost - pre, label=lambda b: f"attribute {len(b)}")
         spent += pre
@@ -916,7 +880,7 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
             items[k] = f"When {r.get('when')}: {r.get('expect')} (existing rule; paths {r.get('paths') or []})"
             evid[k] = r.get("evidence") or []
     spend = [spent]
-    note(f"[3/6] cluster {sum(k.startswith('c') for k in items)} candidates with {sum(k.startswith('b') for k in items)} "
+    note(f"[2/5] cluster {sum(k.startswith('c') for k in items)} candidates with {sum(k.startswith('b') for k in items)} "
          f"existing entries (${spend[0]:.2f} so far)")
     groups = cluster(items, effort, cfg, spend, max_cost)
     _, cm = load_gold(cfg)
@@ -926,13 +890,13 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     attach_signals(groups, items, evid, sig_text, sig)
     note(f"      {len(groups)} groups, {sum(any(m.startswith('c') for m in g['members']) for g in groups)} with new "
          f"candidates; {len(sig)} failure signals attached")
-    note(f"[4-5/6] abstract new groups and update the book (${spend[0]:.2f} so far)")
+    note(f"[3-4/5] abstract new groups and update the book (${spend[0]:.2f} so far)")
     (work / "clusters.json").write_text(json.dumps(groups, indent=1))
     rules, changes = update_rulebook(base_rules, groups, items, evid, out, cm, effort, cfg, spend, max_cost, workers,
                                      n=n, signals=sig)
     note(f"      changes: {dict(C.Counter(ch['op'] for ch in changes))}")
     if do_induce:
-        note(f"[6/6] induce principles over standalone entries (${spend[0]:.2f} so far)")
+        note(f"[5/5] induce principles over standalone entries (${spend[0]:.2f} so far)")
         rules, more = induce(rules, cm, effort, cfg, spend, max_cost, out)
         changes += more
         note(f"      induce: {dict(C.Counter(ch['op'] for ch in more)) or 'no change'}")
@@ -949,7 +913,6 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     book_path(out).parent.mkdir(parents=True, exist_ok=True)
     book_path(out).write_text("".join(json.dumps(r) + "\n" for r in rules))
     write_meta(out, {"base": base, "runs": misses_of, "prs": sorted(prs or []) or None,
-                     "samples": sorted({f"{r['pr']}@{r['commit'][:8]}" for r, _ in judged or []}),
                      "seen": sorted(seen | {a["id"] for a in att}, key=str)})  # point keys mix ints and "<id>:<k>"; vet reads this; the next distill skips "seen"
 
     kinds = C.Counter(a.get("kind") for a in att)

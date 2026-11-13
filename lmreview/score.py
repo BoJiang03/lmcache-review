@@ -301,3 +301,34 @@ def score(version: str = "v0", workers: int = 4, effort: str = "high", max_cost:
                          f"{c['body'][:160].replace(chr(10), ' ')} ([link]({c['url']}))")
     (REPORTS / f"score_{version}.md").write_text("\n".join(L) + "\n")
     return "\n".join(L[:9])
+
+
+def judge_runs(cfg: Config, reviewer: str, prs: set[int] | None, split: str, max_cost: float) -> tuple[list, float]:
+    """Judge `reviewer`'s runs on `split` (only `prs`, if given) against the human comments, for the
+    ledger (state.judge); already judged runs are read from disk. Runs over the cost cap stay unjudged and are skipped.
+
+    Returns:
+        ([(run, normalized score)], cost).
+    """
+    from .progress import note
+    ss, cm = load_gold(cfg)
+    out, cost = [], 0.0
+    files = sorted((cfg.data / "runs" / reviewer).glob("*.json"))
+    for f in files:
+        run = json.loads(f.read_text())
+        s = ss.get((run["pr"], run["commit"]))
+        if not s or s.get("split") != split or (prs and run["pr"] not in prs) or run.get("findings") is None:
+            continue
+        sp = cfg.data / "scores" / reviewer / f.name
+        was = sp.exists() and json.loads(sp.read_text()).get("judge") == JUDGE  # else judged (again) below
+        if not was and cost >= max_cost:
+            continue
+        sp.parent.mkdir(parents=True, exist_ok=True)
+        sc = score_one(cfg, run, s, [cm[i] for i in s["gold_ids"]], sp, str(get("judge", "effort")))
+        cost += 0 if was else sc.get("cost", 0)
+        out.append((run, _normalize(sc, run)))
+        if not was:
+            n = out[-1][1]
+            note(f"judged #{run['pr']}@{run['commit'][:8]}: {sum(bool(h['matched_ai']) for h in n['human'])}/{len(n['human'])} "
+                 f"human comments found (${sc.get('cost', 0):.2f}, total ${cost:.2f} of ${max_cost:.0f})")
+    return out, cost

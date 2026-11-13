@@ -246,7 +246,7 @@ def judge(split: str = "train", prs: set[int] | None = None, max_cost: float = 1
     change-request / nit comment in the ledger: found -> covered, missed -> to_distill. A comment
     already in the ledger keeps its row, except that a to_distill comment found now becomes resolved
     (the book in use found it). Samples without such comments count as no ground truth."""
-    from .distill import judge_runs
+    from .score import judge_runs
     if split != "train":  # the ledger feeds distill, which must never learn from test / new
         raise ValueError("judge files comments for distill: only the train split")
     cfg, rv = cfg or Config(), rv or reviewer()

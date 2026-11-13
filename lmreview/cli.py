@@ -20,6 +20,7 @@ import re
 import sys
 
 from .reviewer import DEFAULT_REVIEWER
+from .settings import get
 
 EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 
@@ -38,14 +39,15 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("--commit", help="with a PR: review this commit instead of the head")
     r.add_argument("--format", default="md", choices=["md", "json"])
     r.add_argument("--reviewer", default=DEFAULT_REVIEWER)
-    r.add_argument("--parallel", type=int, default=1,
-                   help="run the reviewer this many times at once and merge (one more agent run); same as x<n>")
+    r.add_argument("--parallel", type=int, default=None,
+                   help="main review agents run at once, then merged (one more agent run); the reviewer's x<n>; "
+                        "default: [review] parallel in config.toml")
     r.add_argument("--split", default="test", choices=["train", "test", "new"])
     r.add_argument("--limit", type=int, default=10, help="samples (0 = all)")
     r.add_argument("--only-pr", action="append", help="only these samples: PR number (all its commits) or PR:commit")
     r.add_argument("--area", help="only samples whose PR touches this area (e.g. vllm-integration)")
     r.add_argument("--workers", type=int, default=4)
-    r.add_argument("--max-cost", type=float, default=15.0)
+    r.add_argument("--max-cost", type=float, default=get("budget", "review"))
 
     e = sub.add_parser("eval", help="judge + human-only by area + signals (+ flips with --vs) (paid: judge); "
                                    "with --rules: rulebook coverage of held-out human comments (paid, cheap)")
@@ -55,21 +57,21 @@ def main(argv: list[str] | None = None) -> None:
     e.add_argument("--area", help="coverage mode: only comments on PRs that touch this area")
     e.add_argument("--misses-of", help="coverage mode: only comments this reviewer missed")
     e.add_argument("--vs", help="compare against this reviewer")
-    e.add_argument("--judge-effort", default="high", choices=EFFORTS)
+    e.add_argument("--judge-effort", default=get("judge", "effort"), choices=EFFORTS)
     e.add_argument("--workers", type=int, default=4)
-    e.add_argument("--max-cost", type=float, default=10.0)
+    e.add_argument("--max-cost", type=float, default=get("budget", "eval"))
 
     sub.add_parser("status", help="book in use, candidate, ledger counts (free)")
     j = sub.add_parser("judge", help="judge the current reviewer's runs and file the comments in the ledger (paid, cached)")
     j.add_argument("--prs", type=int, nargs="+")
-    j.add_argument("--max-cost", type=float, default=10.0)
+    j.add_argument("--max-cost", type=float, default=get("budget", "judge"))
     o = sub.add_parser("round", help="review + judge + distill + vet on these samples (paid)")
     o.add_argument("prs", nargs="+", help="PR numbers or PR:commit")
-    o.add_argument("--review-cost", type=float, default=30.0)
-    o.add_argument("--judge-cost", type=float, default=10.0)
-    o.add_argument("--distill-cost", type=float, default=5.0)
-    o.add_argument("--vet-cost", type=float, default=30.0)
-    o.add_argument("--induce", action="store_true", help="distill step 6 (principles over standalone entries); "
+    o.add_argument("--review-cost", type=float, default=get("budget", "round")["review"])
+    o.add_argument("--judge-cost", type=float, default=get("budget", "round")["judge"])
+    o.add_argument("--distill-cost", type=float, default=get("budget", "round")["distill"])
+    o.add_argument("--vet-cost", type=float, default=get("budget", "round")["vet"])
+    o.add_argument("--induce", action=argparse.BooleanOptionalAction, default=get("distill", "induce"), help="distill step 6 (principles over standalone entries); "
                    "off by default: its parents explain no new comment and are dropped anyway")
     sub.add_parser("rollback", help="make an earlier version the book in use, as a new version").add_argument(
         "version", help="e.g. v0001")
@@ -82,7 +84,7 @@ def main(argv: list[str] | None = None) -> None:
                                        "with OUT: the old named-book mode")
     d.add_argument("out", nargs="?", help="old mode: new rulebook name, e.g. r1")
     d.add_argument("--base", help="rulebook to extend")
-    d.add_argument("--induce", action="store_true", help="run step 6: principles over standalone entries (an "
+    d.add_argument("--induce", action=argparse.BooleanOptionalAction, default=get("distill", "induce"), help="run step 6: principles over standalone entries (an "
                    "experiment: a new parent without evidence of its own is dropped)")
     d.add_argument("--compress", action="store_true", help="state mode: run even with nothing to_distill, "
                    "to shrink the book (merge / generalize entries that ask for the same change)")
@@ -95,9 +97,9 @@ def main(argv: list[str] | None = None) -> None:
     d.add_argument("--reuse", help="reuse the attribution of this earlier distill run (same inputs); only re-merge")
     d.add_argument("--keep-unaddressed", action="store_true",
                    help="keep comments whose file never changed again (likely not taken)")
-    d.add_argument("--effort", default="high", choices=EFFORTS)
+    d.add_argument("--effort", default=get("distill", "effort"), choices=EFFORTS)
     d.add_argument("--workers", type=int, default=4)
-    d.add_argument("--max-cost", type=float, default=5.0, help="0 = print the plan and estimate only")
+    d.add_argument("--max-cost", type=float, default=get("budget", "distill"), help="0 = print the plan and estimate only")
     d.add_argument("--n", type=int, default=3, help="abstraction drafts merged per batch (1 = a single draft)")
 
     sub.add_parser("audit", help="suggest rulebook entries to retire: paths gone, findings judged invalid, "
@@ -109,8 +111,8 @@ def main(argv: list[str] | None = None) -> None:
     v.add_argument("--prompt", help="default: that of the runs distill learned from, else v0f")
     v.add_argument("--effort", help="default: as --prompt, else high")
     v.add_argument("--suffix", help="reviewer suffix, '' for no rule check (default: as --prompt, else -rc)")
-    v.add_argument("--reps", type=int, default=1)
-    v.add_argument("--max-cost", type=float, default=30.0, help="0 = print the plan only")
+    v.add_argument("--reps", type=int, default=get("vet", "reps"))
+    v.add_argument("--max-cost", type=float, default=get("budget", "vet"), help="0 = print the plan only")
     v.add_argument("--all", action="store_true", help="replay every base entry, not only the affected ones")
     v.add_argument("--every-sample", action="store_true", help="new comments in every sample of a PR, not one")
     v.add_argument("--no-retry", action="store_true", help="count a failing case after one run")
@@ -120,7 +122,7 @@ def main(argv: list[str] | None = None) -> None:
     g.add_argument("rules", help="the changed rulebook")
     g.add_argument("--base", help="the rulebook it was built from (default: check every tested entry)")
     g.add_argument("--reps", type=int, default=2, help="runs per replayed test; a case regresses if all miss")
-    g.add_argument("--max-cost", type=float, default=10.0, help="0 = print the plan and estimate only")
+    g.add_argument("--max-cost", type=float, default=get("budget", "regress"), help="0 = print the plan and estimate only")
     g.add_argument("--suffix", default="", help="appended to the replay reviewer, e.g. -rc for the rule check")
 
     a = ap.parse_args(argv)
@@ -129,11 +131,10 @@ def main(argv: list[str] | None = None) -> None:
         from .config import Config
         from .progress import note, tee
         note(f"lmreview {' '.join(argv if argv is not None else sys.argv[1:])} | log: {tee(a.cmd, Config().data)}")
-    if getattr(a, "parallel", 1) > 1:
+    if getattr(a, "parallel", None):
         name, sep, rep = a.reviewer.partition("#")  # keep a repeat tag such as #r2
-        rc = "-rc" if name.endswith("-rc") else ""
-        name = re.sub(r"x\d+$", "", name.removesuffix("-rc"))
-        a.reviewer = f"{name}x{a.parallel}{rc}" + sep + rep
+        m = re.fullmatch(r"(.*?)(?:x\d+)?((?:-rc)?(?:-sh)?)", name)
+        a.reviewer = m[1] + (f"x{a.parallel}" if a.parallel > 1 else "") + m[2] + sep + rep
     if a.cmd == "sync":
         from .sync import sync
         print(sync(a.since))

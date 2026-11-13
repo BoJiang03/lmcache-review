@@ -34,6 +34,7 @@ import tempfile
 from . import llm
 from .budget import capped_map
 from .config import RULES, Config
+from .settings import get
 from .state import book_path
 from .ensemble import ensemble
 from .progress import note
@@ -87,7 +88,7 @@ Answer with one JSON block only:
 [{{"concern": "short name of the shared concern", "members": ["k1", "k7"]}}]
 ```"""
 
-MIN_SIGNAL_PRS = 2  # revise/retire on failure signals alone: they must come from this many PRs
+MIN_SIGNAL_PRS = int(get("distill", "min_signal_prs"))  # revise/retire on failure signals alone: they must come from this many PRs
 
 # How general an entry must be; shared by ABSTRACT and REVISE (no braces: it goes through str.format).
 GENERAL = """How general "when" and "expect" must be:
@@ -766,7 +767,7 @@ def judge_runs(cfg: Config, reviewer: str, prs: set[int] | None, split: str, max
             continue
         sp.parent.mkdir(parents=True, exist_ok=True)
         was = sp.exists()
-        sc = score_one(cfg, run, s, [cm[i] for i in s["gold_ids"]], sp, "high")
+        sc = score_one(cfg, run, s, [cm[i] for i in s["gold_ids"]], sp, str(get("judge", "effort")))
         cost += 0 if was else sc.get("cost", 0)
         out.append((run, _normalize(sc, run)))
         if not was:

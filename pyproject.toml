@@ -13,8 +13,9 @@ dependencies = []  # needs the `claude` and `gh` CLIs on PATH, and git
 lmreview = "lmreview.cli:main"
 
 [tool.setuptools]
-packages = ["lmreview"]
+packages = ["lmreview", "lmreview._vendor", "lmreview._vendor.tomli"]
 
 [tool.setuptools.package-data]
-lmreview = ["prompts/*.md", "rules/*.jsonl", "rules/*.md", "reviewer.json", "state/*.json", "state/*.jsonl",
-            "state/history/*", "state/prompts/*.md"]
+lmreview = ["prompts/*.md", "rules/*.jsonl", "rules/*.md", "config.toml", "state/*.json", "state/*.jsonl",
+            "state/history/*", "state/prompts/*.md",
+            "_vendor/tomli/LICENSE", "_vendor/tomli/py.typed"]

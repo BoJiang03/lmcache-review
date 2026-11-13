@@ -12,7 +12,7 @@ import re
 from . import github, llm
 from .ensemble import ensemble
 from .config import PROMPTS, Config
-from .state import book_path, prompt_path
+from .state import book_path, part_path, prompt_path
 from .schema import SCHEMA_VERSION, SEVERITIES, Finding, SchemaError, load_findings, parse_findings, to_dicts
 from .workspace import TOOLS, live_workspace, pr_meta
 
@@ -195,14 +195,14 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
         return _parsed(llm.run(prompt, effort, cwd=str(wt), tools=tools, system=system, sandbox=sb))
 
     def rulecheck() -> dict:  # must give a verdict per rule, so a long rulebook cannot crowd rules out
-        p = (PROMPTS / "rulecheck.md").read_text().format(rules="\n".join(rule_lines(use, rule_examples(version))), **pr_meta(raw))
+        p = part_path(version, "rulecheck").read_text().format(rules="\n".join(rule_lines(use, rule_examples(version))), **pr_meta(raw))
         return _parsed(llm.run(p, effort, cwd=str(wt), tools=tools, system=system, sandbox=sb), rulecheck=True)
 
     def merge(ok: list[dict]) -> dict:  # one more agent run on the same workspace: it may read code
         reviews = "\n\n".join(f"Run {i}" + (" (rule check: only team-rule violations, not a full review)"
                                             if x.get("kind") == "rulecheck" else "")
                               + f":\n{json.dumps(x['findings'], indent=1)}" for i, x in enumerate(ok, 1))
-        return _parsed(llm.run((PROMPTS / "merge.md").read_text().format(n=len(ok), reviews=reviews,
+        return _parsed(llm.run(part_path(version, "merge").read_text().format(n=len(ok), reviews=reviews,
                                                                          **pr_meta(raw)),
                                effort, cwd=str(wt), tools=tools, system=system, sandbox=sb))
 

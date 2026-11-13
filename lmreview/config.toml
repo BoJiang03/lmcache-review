@@ -1,0 +1,48 @@
+# lmreview settings. To change them without editing this file, point LMREVIEW_CONFIG at a TOML
+# file that sets only the keys you want; it is merged on top of this one. Command-line flags win
+# over both. Unknown keys are an error (a typo would otherwise be ignored silently).
+
+[review]
+# The four settings below are part of the reviewer's name (<prompt>+<book>@<effort>[x<n>][-rc][-sh]),
+# so runs made with other settings are never mixed with these in the cache.
+effort = "high"      # low | medium | high | xhigh | max
+rulecheck = true     # -rc: one more agent that gives a verdict on every applicable rule
+parallel = 1         # x<n>: main review agents run at once, then one merge agent
+shell = false        # -sh: the agents also get a sandboxed shell (needs bubblewrap and socat)
+
+[judge]
+effort = "high"      # cached scores record their effort; a different one refuses to reuse them
+
+[distill]
+effort = "high"
+induce = false         # step 6: principles over standalone entries (their parents earned nothing)
+min_signal_prs = 2     # revise / retire on failure signals alone: they must come from this many PRs
+max_tries = 2          # distill attempts per comment before it goes to a person (needs_human)
+
+[vet]
+side_per_entry = 2     # side effects: source comments replayed per affected entry
+reps = 1               # runs per replayed case and book
+
+# Default cost caps in dollars (each command's --max-cost / round's --*-cost).
+[budget]
+review = 15.0
+eval = 10.0
+judge = 10.0
+distill = 5.0
+vet = 30.0
+regress = 10.0
+
+[budget.round]
+review = 30.0
+judge = 10.0
+distill = 5.0
+vet = 30.0
+
+# Paths. "" = automatic: a checkout uses its data/ dir, an installed copy ~/.cache/lmreview/.
+# The env vars LMREVIEW_REPO / _DATA / _VLLM / _SANDBOX / _STATE win over these.
+[paths]
+repo = ""
+data = ""
+vllm = ""
+state = ""                                 # "" = lmreview/state/ in the package
+sandbox = "/var/tmp/lmreview-{uid}/sandbox"  # agent workspaces; outside $HOME and /tmp (see llm.py)

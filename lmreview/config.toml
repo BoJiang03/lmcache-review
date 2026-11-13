@@ -19,7 +19,7 @@ effort = "high"      # splitting human comments into points and typing them (onc
 
 [distill]
 effort = "high"
-induce = false         # step 6: principles over standalone entries (their parents earned nothing)
+induce = false         # step 3: principles over standalone entries (their parents earned nothing)
 min_signal_prs = 2     # revise / retire on failure signals alone: they must come from this many PRs
 max_tries = 2          # distill attempts per comment before it goes to a person (needs_human)
 

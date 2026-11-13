@@ -38,7 +38,7 @@ import shutil
 from typing import Iterator
 
 from .config import PROMPTS, RULES, Config
-from .annotate import cid_of
+from .annotate import cid_of, norm
 from .settings import get, settings
 from .progress import note, step
 
@@ -434,11 +434,11 @@ def vet_step(max_cost: float | None = None, reps: int | None = None, everything:
         J, kept, cand = res["J"], res["kept"], load_book(c["name"])
         kept_ids = {r["id"] for r in kept if r.get("status", "active") == "active"}
         ents: dict[int, list[str]] = {}
-        old_ev = {int(e) for r in load_book(vname(c["parent"])) for e in r.get("evidence") or []}
+        old_ev = {norm(e) for r in load_book(vname(c["parent"])) for e in r.get("evidence") or []}
         for r in cand:
             for e in r.get("evidence") or []:
-                if int(e) not in old_ev:
-                    ents.setdefault(int(e), []).append(r["id"])
+                if norm(e) not in old_ev:
+                    ents.setdefault(norm(e), []).append(r["id"])
         changed = _jsonl(kept) != _jsonl(load_book(vname(c["parent"])))
         n = new_version(kept, c["parent"], by="vet", **{"from": c["name"]}, verdict=res["verdict"],
                         report=f"reports/vet_{c['name']}.md") if changed else c["parent"]

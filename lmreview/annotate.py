@@ -60,6 +60,11 @@ def key(cid: int, k: int, n: int) -> int | str:
     return cid if n == 1 else f"{cid}:{k}"
 
 
+def norm(key: object) -> int | str:
+    """A point key as stored: an int comment id ("123" from JSON or a model becomes 123), else "<id>:<k>"."""
+    return int(key) if isinstance(key, int) or str(key).strip().isdigit() else str(key).strip()
+
+
 def cid_of(key: int | str) -> int:
     """The comment a point key belongs to."""
     return int(str(key).split(":")[0])

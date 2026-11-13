@@ -151,7 +151,7 @@ def signals(version: str = "v0", cfg: Config | None = None) -> str:
                 if h["type"] == "change_request":
                     for m in h["matched_ai"]:
                         sev_matched[next((f["severity"] for f in res["findings"] if f["id"] == m), "?")] += 1
-            judged = {a["id"]: a["valid"] for a in sc["ai"]}
+            judged = {a.get("id"): a.get("valid") for a in sc["ai"]}
         else:
             judged = {}
         for f in res["findings"]:

@@ -24,3 +24,4 @@
 {"time": "2026-11-13T20:40:56+00:00", "step": "vet", "name": "v0006c1", "verdict": "FAIL", "cost": 24.3, "version": 6, "resolved": 0, "failed": 0, "needs_human": 0}
 {"time": "2026-11-13T20:49:51+00:00", "step": "promote", "version": 7, "parent": 6, "by": "manual"}
 {"time": "2026-11-13T20:49:51+00:00", "step": "prune", "version": 7, "kept": 12, "removed": 44, "ledger_rows_archived": 94}
+{"time": "2026-11-13T22:01:18+00:00", "step": "judge", "reviewer": "p5e1d195f+v0007@high-rc", "runs": 0, "cost": 0.0, "covered": 0, "to_distill": 0, "resolved": 0, "no_gt": 0}

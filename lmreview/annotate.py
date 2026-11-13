@@ -51,6 +51,7 @@ Answer with one JSON block only, one entry per comment, in order:
 
 
 def path(cfg: Config, sample: dict) -> pathlib.Path:
+    """Where the annotation of `sample` is cached."""
     return cfg.data / "annotations" / ANNOTATOR / f"{sample['pr']}-{sample['commit'][:8]}.json"
 
 

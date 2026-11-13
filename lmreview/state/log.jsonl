@@ -18,3 +18,7 @@
 {"time": "2026-11-13T03:11:45+00:00", "step": "vet", "name": "v0004c1", "verdict": "PASS", "cost": 3.83, "version": 4, "resolved": 1, "failed": 0, "needs_human": 2}
 {"time": "2026-11-13T03:28:21+00:00", "step": "promote", "version": 5, "parent": 4, "by": "manual"}
 {"time": "2026-11-13T03:28:21+00:00", "step": "fix", "note": "vet promoted v0003c1-002 and -013 untested; tested after: 002 works (1/2), 013 does not (0/2)"}
+{"time": "2026-11-13T19:51:07+00:00", "step": "distill", "name": "v0006c1", "parent": 5, "comments": 0, "not_rulable": 0, "summary": "rules/v0006c1.jsonl: 72 entries ({'principle': 60, 'knowledge': 12}) from 0 comments ({}), 55 groups, $0.30"}
+{"time": "2026-11-13T20:15:52+00:00", "step": "vet", "name": "v0006c1", "verdict": "INCOMPLETE", "cost": 42.8}
+{"time": "2026-11-13T20:40:56+00:00", "step": "promote", "version": 6, "parent": 5, "by": "vet", "from": "v0006c1"}
+{"time": "2026-11-13T20:40:56+00:00", "step": "vet", "name": "v0006c1", "verdict": "FAIL", "cost": 24.3, "version": 6, "resolved": 0, "failed": 0, "needs_human": 0}

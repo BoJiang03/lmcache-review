@@ -1,0 +1,9 @@
+{
+ "version": 6,
+ "parent": 5,
+ "date": "2026-11-13T20:40:56+00:00",
+ "by": "vet",
+ "from": "v0006c1",
+ "verdict": "FAIL",
+ "report": "reports/vet_v0006c1.md"
+}

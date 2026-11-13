@@ -130,7 +130,7 @@ def score_one(cfg: Config, run: dict, sample: dict, gold: list[dict], out: pathl
                              "pass that --effort or move the scores aside to re-judge")
         else:
             return res
-    ann = annotate(cfg, sample, gold, effort)
+    ann = annotate(cfg, sample, gold, str(get("annotate", "effort")))
     pts = points(ann, gold)
     want = [p for p in pts if p["type"] in WANT]
     local = {f"p{n}": p for n, p in enumerate(want, 1)}

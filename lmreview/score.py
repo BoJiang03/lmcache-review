@@ -258,7 +258,7 @@ def judge(version: str, workers: int = 4, effort: str = "high", max_cost: float 
         s = score_one(cfg, r, ss[k], [cm[i] for i in ss[k]["gold_ids"]], path(r), effort)
         return "judged", s["cost"]
     capped_map(one, todo, workers, max_cost, label=lambda r: f"#{r['pr']}-{r['commit'][:8]}", est=EST_COST)
-    done = [r for r in runs if path(r).exists()]
+    done = [r for r in runs if fresh(r)]  # an older judge's result left by the cost cap is not one
     res = [score_one(cfg, r, None, None, path(r), effort) for r in done]  # cached reads (effort-checked)
     return done, [_normalize(s, r) for s, r in zip(res, done)]
 

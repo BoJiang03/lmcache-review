@@ -753,7 +753,7 @@ def judge_runs(cfg: Config, reviewer: str, prs: set[int] | None, split: str, max
         ([(run, normalized score)], cost).
     """
     from .progress import note
-    from .score import score_one
+    from .score import JUDGE, score_one
     ss, cm = load_gold(cfg)
     out, cost = [], 0.0
     files = sorted((cfg.data / "runs" / reviewer).glob("*.json"))
@@ -763,10 +763,10 @@ def judge_runs(cfg: Config, reviewer: str, prs: set[int] | None, split: str, max
         if not s or s.get("split") != split or (prs and run["pr"] not in prs) or run.get("findings") is None:
             continue
         sp = cfg.data / "scores" / reviewer / f.name
-        if not sp.exists() and cost >= max_cost:
+        was = sp.exists() and json.loads(sp.read_text()).get("judge") == JUDGE  # else judged (again) below
+        if not was and cost >= max_cost:
             continue
         sp.parent.mkdir(parents=True, exist_ok=True)
-        was = sp.exists()
         sc = score_one(cfg, run, s, [cm[i] for i in s["gold_ids"]], sp, str(get("judge", "effort")))
         cost += 0 if was else sc.get("cost", 0)
         out.append((run, _normalize(sc, run)))

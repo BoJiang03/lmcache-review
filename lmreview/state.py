@@ -408,7 +408,8 @@ def vet_step(max_cost: float = 30.0, reps: int = 1, everything: bool = False, cf
                 continue
             why = ("distill made no entry for it" if not es else
                    "the reviewer did not apply the entry" if any(e in J["no_effect"] for e in es) else
-                   "dropped: a linked change made an existing entry worse")
+                   "dropped: a linked change made an existing entry worse" if not any(e in kept_ids for e in es) else
+                   "its entry was kept but not tested on this comment")
             r.setdefault("tries", []).append({"book": c["name"], "entries": es, "result": "failed", "why": why,
                                               "date": _now()[:10]})
             if len(r["tries"]) >= MAX_TRIES:

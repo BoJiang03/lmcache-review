@@ -134,7 +134,11 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
             return sum(any((cfg.data / "runs" / f"{prompt}+{b}@{effort}{suffix}").glob(f"{k[0]}-{k[1][:8]}*.json"))
                        for b in (base, book))
         best = {k[0]: max((x for x in n_in if x[0] == k[0]), key=lambda x: (n_in[x], cached(x))) for k in n_in}
-        effect = [(i, e) for i, e in effect if where[e] == best[where[e][0]]]
+        picked = {best[k[0]] for k in n_in}
+        for i in dict.fromkeys(i for i, _ in effect):  # every entry needs one tested comment: add a sample
+            if not any(where[e] in picked for j, e in effect if j == i):
+                picked.add(max((where[e] for j, e in effect if j == i), key=lambda x: (n_in[x], cached(x))))
+        effect = [(i, e) for i, e in effect if where[e] in picked]
     eff_set = set(effect)
     affected = [i for i in O if i not in N or everything or rel.get(i, {i}) & touched]
     # side effects: at most SIDE_PER_ENTRY source comments per entry (whether an entry still works shows

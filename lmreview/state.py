@@ -133,7 +133,7 @@ def new_version(rules: list[dict], parent: int | None, **meta: object) -> int:
     """Write `rules` as the next version and make it the book in use. Returns its number."""
     n = max([int(p.stem[1:]) for p in (STATE / "history").glob("v*.jsonl")] or [0]) + 1
     _write(STATE / "history" / f"{vname(n)}.jsonl", _jsonl(rules))
-    made_with = {k: settings()[k] for k in ("review", "judge", "distill", "vet")}
+    made_with = {k: settings()[k] for k in ("review", "judge", "annotate", "distill", "vet")}
     _write(_meta(STATE / "history" / f"{vname(n)}.jsonl"), json.dumps({"version": n, "parent": parent, "date": _now(),
                                                                 "settings": made_with, **meta}, indent=1) + "\n")
     _write(STATE / "book.jsonl", _jsonl(rules))

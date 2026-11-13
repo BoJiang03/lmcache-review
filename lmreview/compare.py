@@ -14,7 +14,7 @@ import json
 
 from .config import Config
 from .schema import load_findings
-from .score import REPORTS, _normalize, load_gold
+from .score import REPORTS, _normalize, hkey, load_gold
 
 
 def _load(cfg: Config, version: str) -> dict:
@@ -37,9 +37,9 @@ def compare(a: str, b: str, cfg: Config | None = None) -> str:
         (sa, ra), (sb, rb) = A[k], B[k]
         nfind[a] += len(load_findings(ra) or [])
         nfind[b] += len(load_findings(rb) or [])
-        hb = {h["id"]: h for h in sb["human"]}
+        hb = {hkey(sb, h): h for h in sb["human"]}
         for ha in sa["human"]:
-            hb_ = hb.get(ha["id"])
+            hb_ = hb.get(hkey(sa, ha))
             if hb_ is None or ha["type"] not in ("change_request", "nit"):
                 continue
             ma, mb = bool(ha["matched_ai"]), bool(hb_["matched_ai"])

@@ -25,7 +25,8 @@ from .config import Config
 from .schema import cites as finding_rules
 from .distill import COVERAGE, _ask, _fmt, _id
 from .reviewer import load_rules, parse_reviewer, reviewer_context, run_reviewer
-from .score import REPORTS, load_gold, score_one
+from .annotate import cid_of
+from .score import REPORTS, hkey, load_gold, score_one
 from .workspace import cached_pr, sample_workspace
 
 FIELDS = ("when", "expect", "examples", "paths", "status")
@@ -151,8 +152,11 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
                 continue
             cites = {f["id"] for f in res["run"]["findings"] if finding_rules(f) & set(ok_ids)}
             gold = res["score"]["gold_ids"]
-            hit = {int(gold[int(h["id"])]) for h in res["score"]["human"] if cites & set(h.get("matched_ai") or [])}
-            hit_any = {int(gold[int(h["id"])]) for h in res["score"]["human"] if h.get("matched_ai")}
+            # point keys, plus their comment: a target filed before comments were split is hit by any point
+            hit = {x for h in res["score"]["human"] if cites & set(h.get("matched_ai") or [])
+                   for x in (hkey(res["score"], h), cid_of(hkey(res["score"], h)))}
+            hit_any = {x for h in res["score"]["human"] if h.get("matched_ai")
+                       for x in (hkey(res["score"], h), cid_of(hkey(res["score"], h)))}
             invalid = {a["id"] for a in res["score"].get("ai") or [] if a.get("valid") is False}
             bads.append(len(cites & invalid))
             flags.append(all(c in hit for c in t["comments"]))

@@ -39,7 +39,7 @@ from .settings import get
 from .state import book_path
 from .ensemble import ensemble
 from .progress import note
-from .score import REPORTS, _normalize, load_gold
+from .score import REPORTS, _normalize, hkey, load_gold
 
 BATCH = 30          # comments per attribution / coverage call
 CLUSTER_CHUNK = 400  # candidates per clustering call
@@ -250,8 +250,7 @@ def _misses(cfg: Config, reviewer: str, split: str) -> list[int]:
         if ss.get((run["pr"], run["commit"]), {}).get("split") != split:
             continue
         s = _normalize(json.loads(p.read_text()), run)
-        ids += [s["gold_ids"][h["id"]] for h in s["human"]
-                if h["type"] in ("change_request", "nit") and not h["matched_ai"]]
+        ids += [hkey(s, h) for h in s["human"] if h["type"] in ("change_request", "nit") and not h["matched_ai"]]
     return ids
 
 

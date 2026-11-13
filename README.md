@@ -46,8 +46,10 @@ book     = vet(book, new_book, human_comments)           # keep only what works 
 - **A sample** is one PR commit a human reviewed. Its human comments are the ground truth.
 - **review** runs the reviewer `<prompt>+<book>@<effort>[-rc]`. Runs are cached by that name in
   `data/runs/`, which is how the steps hand data to each other.
-- **judge** matches the AI findings against the human comments. A finding that cites a rule and is
-  judged invalid is a failure signal for that rule.
+- **judge** matches the AI findings against the human comments. The comments are annotated once per
+  sample first (split into points, each with a type and severity; cached), so every judge call sees
+  them the same way, and each point of a long review is matched and learned on its own. A finding
+  that cites a rule and is judged invalid is a failure signal for that rule.
 - **distill** turns missed comments into rules (attribute, cluster, abstract, update the book). It
   sees each comment with its diff hunk, and each failure signal with the code it pointed at.
 - **vet** reviews again with the old and the new book where they differ. The part that works

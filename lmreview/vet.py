@@ -34,6 +34,7 @@ import pathlib
 import re
 
 from .config import Config
+from .annotate import cid_of
 from .settings import get
 from .state import book_path
 from .progress import note
@@ -115,6 +116,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     N, O = act(new_rules), act(old_rules)
     ss, cm = load_gold(cfg)
     where = {int(c): k for k, s in ss.items() for c in s["gold_ids"]}
+    where |= {k: where[cid_of(k)] for k in cm if isinstance(k, str) and cid_of(k) in where}  # points
     tgt = lambda c: f"{where[c][0]}@{where[c][1][:8]}"  # noqa: E731
     w = f"{prompt}@{effort}"
 

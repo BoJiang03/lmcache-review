@@ -38,6 +38,7 @@ import shutil
 from typing import Iterator
 
 from .config import PROMPTS, RULES, Config
+from .annotate import cid_of
 from .settings import get, settings
 from .progress import note, step
 
@@ -45,7 +46,8 @@ STATE = pathlib.Path(os.environ.get("LMREVIEW_STATE") or get("paths", "state")
                      or pathlib.Path(__file__).resolve().parent / "state")
 MAX_TRIES = int(get("distill", "max_tries"))  # distill attempts per comment before it goes to a person
 
-LEDGER = """ledger.jsonl rows: {"comment", "pr", "commit", "status", "reviewer" (whose run judged it),
+LEDGER = """ledger.jsonl rows: {"comment" (a point key: the comment id, or "<comment id>:<k>" for point k
+of a comment that makes several, see annotate.py), "pr", "commit", "status", "reviewer" (whose run judged it),
 "tries": [{"book", "entries", "result", "why", "date"}], "resolved_by": {"book", "entry"}, "note"}.
 status: covered (the reviewer found it without help) | to_distill | resolved (a book entry makes the
 reviewer find it, checked by vet) | not_rulable (distill: context / not an issue / declined) |
@@ -218,7 +220,7 @@ def ledger() -> dict[int, dict]:
 
 def save_ledger(rows: dict[int, dict]) -> None:
     """Write the ledger, sorted by sample and comment."""
-    _write(STATE / "ledger.jsonl", _jsonl(sorted(rows.values(), key=lambda r: (r["pr"], r["commit"], r["comment"]))))
+    _write(STATE / "ledger.jsonl", _jsonl(sorted(rows.values(), key=lambda r: (r["pr"], r["commit"], str(r["comment"])))))
 
 
 def sample(r: dict) -> str:
@@ -253,17 +255,17 @@ def judge(split: str = "train", prs: set[int] | None = None, max_cost: float = 1
         judged, cost = judge_runs(cfg, rv, prs, split, max_cost)
         st.cost = cost
         rows, n = ledger(), {"covered": 0, "to_distill": 0, "resolved": 0, "no_gt": 0}
-        from .score import load_gold
+        from .score import WANT, hkey, load_gold
         _, cm = load_gold(cfg)
         for run, s in judged:
-            hs = [h for h in s["human"] if h["type"] in ("change_request", "nit")]
+            hs = [h for h in s["human"] if h["type"] in WANT]
             if not hs:
                 n["no_gt"] += 1
             for h in hs:
-                c = int(s["gold_ids"][h["id"]])
+                c = hkey(s, h)  # a point: the comment id, or "<comment id>:<k>" in a comment of several points
                 if cm.get(c, {}).get("addressed_reason") == "file-unchanged":
                     continue  # likely not taken by the author
-                r = rows.get(c)
+                r = rows.get(c) or rows.get(cid_of(c))  # a row filed before comments were split covers its points
                 if r is None:
                     status_ = "covered" if h["matched_ai"] else "to_distill"
                     rows[c] = {"comment": c, "pr": run["pr"], "commit": run["commit"], "status": status_,
@@ -372,7 +374,7 @@ def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: 
         if candidate():
             raise RuntimeError(f"candidate {candidate()['name']} is waiting: `lmreview vet` it or `lmreview discard`")
         rows = ledger()
-        todo = sorted(to_distill(rows, prs), key=lambda r: (r["pr"], r["commit"], r["comment"]))[:limit]
+        todo = sorted(to_distill(rows, prs), key=lambda r: (r["pr"], r["commit"], str(r["comment"])))[:limit]
         if not todo and not compress:
             return "nothing to distill: no to_distill comments" + (f" on {sorted(prs)}" if prs else "")
         name, parent = candidate_name(), head()
@@ -488,7 +490,7 @@ def pick_samples(prs: list[int | str], cfg: Config | None = None) -> list[str]:
     Returns:
         "PR:commit8" specs, in the given order.
     """
-    from .score import load_gold
+    from .score import hkey, load_gold
     cfg = cfg or Config()
     ss, _ = load_gold(cfg)
     rows, out = ledger(), []
@@ -506,12 +508,13 @@ def pick_samples(prs: list[int | str], cfg: Config | None = None) -> list[str]:
                     continue
                 judged = True
                 sc = json.loads(f.read_text())
-                gold = sc.get("gold_ids") or s["gold_ids"]
-                missed |= {int(gold[h["id"]]) for h in sc.get("human") or []
+                sc["gold_ids"] = sc.get("gold_ids") or s["gold_ids"]
+                missed |= {hkey(sc, h) for h in sc.get("human") or []
                            if h.get("type") in ("change_request", "nit") and not h.get("matched_ai")
-                           and isinstance(h.get("id"), int) and h["id"] < len(gold)}
+                           and isinstance(h.get("id"), int) and h["id"] < len(sc["gold_ids"])}
             # still open: not in the ledger yet, or there and waiting to be distilled
-            if any(c not in rows or rows[c]["status"] == "to_distill" for c in missed):
+            row = lambda k: rows.get(k) or rows.get(cid_of(k))  # noqa: E731
+            if any(row(k) is None or row(k)["status"] == "to_distill" for k in missed):
                 keep.append(f"{pr}:{c[:8]}")
         picked = keep if judged else [f"{pr}:{c[:8]}" for c, _ in mine]
         note(f"#{pr}: {len(picked)} of {len(mine)} samples" + ("" if judged else " (none judged yet: all)")

@@ -35,7 +35,8 @@ class Config:
     """
 
     repo: pathlib.Path = _default("LMREVIEW_REPO", _ROOT / "data" / "LMCache", _CACHE / "LMCache")
-    sandbox: pathlib.Path = pathlib.Path(os.environ.get("LMREVIEW_SANDBOX", _CACHE / "sandbox"))
+    # outside $HOME and /tmp: an agent with a shell is denied reading those (see llm.sandbox_settings)
+    sandbox: pathlib.Path = pathlib.Path(os.environ.get("LMREVIEW_SANDBOX", f"/var/tmp/lmreview-{os.getuid()}/sandbox"))
     data: pathlib.Path = _default("LMREVIEW_DATA", _ROOT / "data", _CACHE / "data")
     vllm: pathlib.Path = _default("LMREVIEW_VLLM", _ROOT / "data" / "vllm", _CACHE / "vllm")
 

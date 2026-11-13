@@ -20,11 +20,12 @@ from .budget import capped_map
 from .progress import note
 from .annotate import annotate, point_comments, points
 from .config import Config
+from .settings import get
 from .reviewer import prompt_template, rule_evidence
 from .schema import load_findings
 from .workspace import TOOLS, cached_pr, pr_meta, sample_workspace
 
-JUDGE = "j3"  # judge prompt version; results of another version are never mixed in (see score_one)
+JUDGE = "j4"  # judge prompt version; results of another version are never mixed in (see score_one)
 REPORTS = pathlib.Path(__file__).resolve().parent.parent / "reports"
 
 PROMPT = """You are grading an AI code reviewer against human reviewers on LMCache PR #{number}.
@@ -68,6 +69,36 @@ Answer with one JSON block only:
 
 WANT = ("change_request", "nit")  # the point types a reviewer should raise (and distill learns)
 
+# Second opinion: a negative verdict has consequences (a missed point is distilled into a rule; a rule's
+# finding judged invalid is a failure signal against the rule), so it counts only when a second, blind
+# call agrees. One call covers both: the points the judge found unmatched, and the findings it judged
+# invalid that cite a team rule.
+RECHECK = """You are checking an AI code reviewer's findings on LMCache PR #{number} ({title}).
+
+Your working directory is exactly what the reviewer saw: the repository as of the reviewed commit,
+`PR.diff` (the PR's changes) and `PR_HISTORY.md`. Read the code to settle each question. Do not modify
+any files.
+
+AI findings (id, severity, scope, location, title: body):
+{ai}
+
+A. Human review points (with the comment they come from, for context). For each POINT, set
+"matched_ai" to the ids of the AI findings above that raise the SAME underlying issue AND ask for a
+change in the same direction; [] if none. Same file or topic is not enough; a different but compatible
+fix for the same problem IS a match.
+{human}
+
+B. For each of these findings: {verify}
+check its claim against the code. Quote the lines that settle it, then set "holds": true (the code
+does what the finding says, and it is a problem), false (it does not, or it is not a problem), or
+"unsure" (the code cannot settle it).
+
+Answer with one JSON block only:
+```json
+{{"points": [{{"id": "p1", "matched_ai": [], "match_why": "<=15 words"}}],
+  "findings": [{{"id": "f3", "quote": "path:line: code", "holds": false, "why": "<=15 words"}}]}}
+```"""
+
 
 def load_gold(cfg: Config) -> tuple[dict, dict]:
     """(samples keyed by (pr, commit), comments keyed by id)."""
@@ -110,24 +141,60 @@ def score_one(cfg: Config, run: dict, sample: dict, gold: list[dict], out: pathl
                    for f in load_findings(run) or []) or "(none)"
     cost = ann["cost"]
     got: dict = {"points": [], "ai": []}
+    ctx = prompt_template(run["version"])[1] if run.get("version") else ()
     if want:
-        ctx = prompt_template(run["version"])[1] if run.get("version") else ()
         with sample_workspace(cfg, sample, "judge", ctx) as (wt, _):
             r = llm.run(PROMPT.format(human=human, ai=ai, **pr_meta(cached_pr(cfg, run["pr"], sample["time"]))),
                         effort, cwd=str(wt), tools=TOOLS)
         got, cost = llm.extract_json(r["text"]), cost + r["cost"]
     m = {e.get("id"): e for e in got.get("points") or [] if isinstance(e, dict)}
+    ai_out = [a for a in got.get("ai") or [] if isinstance(a, dict)]
+    fs = {f.id: f for f in load_findings(run) or []}
+    missed = {lid: p for lid, p in local.items() if not (m.get(lid) or {}).get("matched_ai")}
+    doubt = [a for a in ai_out if a.get("valid") is False and a.get("id") in fs
+             and (fs[a["id"]].rule or fs[a["id"]].rules)]
+    second: dict = {}
+    if get("judge", "second_opinion") and (missed or doubt):
+        human2 = "\n\n".join(
+            _fmt_human(i, c) + "".join(f"\n  [{lid}] ({p['type']}) {p['text']}" for lid, p in missed.items() if p["id"] == i)
+            for i, c in enumerate(gold) if any(p["id"] == i for p in missed.values())) or "(none)"
+        with sample_workspace(cfg, sample, "judge2", ctx) as (wt, _):
+            r2 = llm.run(RECHECK.format(ai=ai, human=human2, verify=", ".join(a["id"] for a in doubt) or "(none)",
+                                        **pr_meta(cached_pr(cfg, run["pr"], sample["time"]))),
+                         effort, cwd=str(wt), tools=TOOLS)
+        cost += r2["cost"]
+        try:
+            second = llm.extract_json(r2["text"])
+        except ValueError:
+            second = {}
+        second = second if isinstance(second, dict) else {}
+    m2 = {e.get("id"): e for e in second.get("points") or [] if isinstance(e, dict)}
+    v2 = {e.get("id"): e for e in second.get("findings") or [] if isinstance(e, dict)}
+    for lid in missed:  # a miss stands only if the second opinion finds no match either
+        if (m2.get(lid) or {}).get("matched_ai"):
+            m[lid] = {**m2[lid], "second": "matched"}
+    for a in ai_out:  # refuted: a rule's finding both calls found wrong (the failure signal for the rule)
+        if a.get("id") in fs and (fs[a["id"]].rule or fs[a["id"]].rules):
+            a["refuted"] = a in doubt and (v2.get(a["id"]) or {}).get("holds") is False
+            if a in doubt:
+                a["second"] = {k: (v2.get(a["id"]) or {}).get(k) for k in ("holds", "quote", "why")}
     by_point = {id(p): lid for lid, p in local.items()}
     hs = []
     for p in pts:
         e = m.get(by_point.get(id(p)), {})
         hs.append(p | {"matched_ai": [str(x) for x in e.get("matched_ai") or []], "match_why": e.get("match_why", "")})
-    res = {"human": hs, "ai": got.get("ai") or [], "pr": run["pr"], "commit": run["commit"], "cost": cost,
+    res = {"human": hs, "ai": ai_out, "second_opinion": bool(second), "pr": run["pr"], "commit": run["commit"], "cost": cost,
            "effort": effort, "judge": JUDGE, "annotator": ann["annotator"],
            "denials": [], "gold_ids": [c["id"] for c in gold]}
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(res, indent=1))
     return res
+
+
+def refuted(a: dict) -> bool:
+    """Whether judge entry `a` (an AI finding) counts as wrong for its rule: both the judge and the second
+    opinion found it wrong (older scores: the judge alone)."""
+    return a["refuted"] if "refuted" in a else a.get("valid") is False
 
 
 def _fmt_human(i: int, c: dict) -> str:

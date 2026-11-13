@@ -1,4 +1,5 @@
-"""Annotate the human comments of a sample once: split each into points, and give each point a type and
+"""Annotate the human comments of a sample once (two independent annotations, a third vote where they
+differ): split each into points, and give each point a type and
 severity. Every judge of every run on the sample uses the same annotation, so whether a comment counts
 (and as what) no longer changes from one judge call to the next.
 
@@ -11,12 +12,13 @@ from __future__ import annotations
 
 import json
 import pathlib
+from concurrent.futures import ThreadPoolExecutor
 
 from . import llm
 from .config import Config
 from .workspace import TOOLS, cached_pr, pr_meta, sample_workspace
 
-ANNOTATOR = "a1"  # annotation prompt version; another version is never mixed in
+ANNOTATOR = "a2"  # annotation prompt version; another version is never mixed in
 TYPES = ("change_request", "question", "nit", "praise")
 SEVERITIES = ("blocker", "major", "minor", "nit")
 
@@ -87,14 +89,8 @@ def _clean(raw: object, gold: list[dict]) -> dict[str, list[dict]]:
     return out
 
 
-def annotate(cfg: Config, sample: dict, gold: list[dict], effort: str) -> dict:
-    """The sample's annotation ({"comments": {comment id: [point]}, "cost", ...}); cached on disk.
-    The workspace is the one the reviewer saw (context directives do not matter: no reviewer prompt)."""
-    p = path(cfg, sample)
-    if p.exists():
-        a = json.loads(p.read_text())
-        if set(a["comments"]) >= {str(c["id"]) for c in gold}:
-            return a | {"cost": 0.0, "cached": True}
+def _once(cfg: Config, sample: dict, gold: list[dict], effort: str) -> tuple[dict[str, list[dict]], float]:
+    """One independent annotation of `gold`: ({comment id: [point]}, cost)."""
     raw_pr = cached_pr(cfg, sample["pr"], sample["time"])
     with sample_workspace(cfg, sample, "annotate") as (wt, _):
         r = llm.run(PROMPT.format(comments="\n\n".join(_fmt(i, c) for i, c in enumerate(gold)),
@@ -103,8 +99,42 @@ def annotate(cfg: Config, sample: dict, gold: list[dict], effort: str) -> dict:
         raw = llm.extract_json(r["text"])
     except ValueError:
         raw = None
+    return _clean(raw, gold), r["cost"]
+
+
+def _shape(ps: list[dict]) -> tuple:
+    """What two annotations of a comment must agree on: its points' types, in order (the count with it)."""
+    return tuple(p["type"] for p in ps)
+
+
+def annotate(cfg: Config, sample: dict, gold: list[dict], effort: str) -> dict:
+    """The sample's annotation ({"comments": {comment id: [point]}, "cost", ...}); cached on disk.
+
+    Two independent annotations; a comment they split or type differently gets a third, and the shape
+    two of the three share wins (no majority: the one with the most change_request / nit points, so a
+    point the team asked for is not lost). The workspace is the one the reviewer saw."""
+    p = path(cfg, sample)
+    if p.exists():
+        a = json.loads(p.read_text())
+        if set(a["comments"]) >= {str(c["id"]) for c in gold}:
+            return a | {"cost": 0.0, "cached": True}
+    with ThreadPoolExecutor(2) as ex:
+        runs = list(ex.map(lambda _: _once(cfg, sample, gold, effort), range(2)))
+    cost = sum(c for _, c in runs)
+    split = [cid for cid in runs[0][0] if _shape(runs[0][0][cid]) != _shape(runs[1][0][cid])]
+    if split:
+        third, c3 = _once(cfg, sample, [c for c in gold if str(c["id"]) in split], effort)
+        runs.append(({**runs[0][0], **third}, c3))
+        cost += c3
+    out, votes = {}, {}
+    for cid in runs[0][0]:
+        cands = [r[cid] for r, _ in runs]
+        shapes = [_shape(x) for x in cands]
+        best = next((x for x, s in zip(cands, shapes) if shapes.count(s) >= 2), None)
+        out[cid] = best or max(cands, key=lambda x: sum(q["type"] in ("change_request", "nit") for q in x))
+        votes[cid] = "agreed" if cid not in split else "majority" if best else "no majority"
     a = {"annotator": ANNOTATOR, "effort": effort, "pr": sample["pr"], "commit": sample["commit"],
-         "comments": _clean(raw, gold), "cost": r["cost"]}
+         "comments": out, "votes": votes, "cost": cost}
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(a, indent=1))
     return a

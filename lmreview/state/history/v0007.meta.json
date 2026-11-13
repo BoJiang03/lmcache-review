@@ -1,0 +1,8 @@
+{
+ "version": 7,
+ "parent": 6,
+ "date": "2026-11-13T20:49:51+00:00",
+ "by": "manual",
+ "removed": 44,
+ "note": "pk-era entries removed (archived in state/archive/pk-era-rules.jsonl): kept only entries with a comment vetted under the ledger. Their legacy ledger rows and the 'covered' rows (filed by the v0001 reviewer, which had those entries) are archived and will be re-filed by the next judge."
+}

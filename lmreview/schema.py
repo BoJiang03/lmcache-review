@@ -41,6 +41,7 @@ class Finding:
     suggestion: str | None = None
     rule: str | None = None
     support: int | None = None  # merged parallel review: how many of the runs raised it
+    rules: list[str] = dataclasses.field(default_factory=list)  # merged: every team rule it follows, rule first
 
     def primary(self) -> Location | None:
         """The first primary location, if any."""
@@ -109,8 +110,14 @@ def parse_findings(obj: object) -> list[Finding]:
         seen.add(fid)
         out.append(Finding(fid, sev, scope, str(d.get("title", "")).strip(), str(d.get("body", "")).strip(),
                            locs, d.get("suggestion") or None, d.get("rule") or None,
-                           d["support"] if isinstance(d.get("support"), int) else None))
+                           d["support"] if isinstance(d.get("support"), int) else None,
+                           [str(x) for x in d["rules"]] if isinstance(d.get("rules"), list) else []))
     return out
+
+
+def cites(f: dict) -> set[str]:
+    """The team rules a stored finding follows: its "rules" (merged findings) or its "rule"."""
+    return set(f.get("rules") or []) | ({f["rule"]} if f.get("rule") else set())
 
 
 def to_dicts(fs: list[Finding]) -> list[dict]:

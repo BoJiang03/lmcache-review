@@ -15,7 +15,7 @@ from . import github, llm
 from .ensemble import ensemble
 from .config import PROMPTS, Config
 from .state import book_path, part_path, prompt_path
-from .schema import SCHEMA_VERSION, SEVERITIES, Finding, SchemaError, load_findings, parse_findings, to_dicts
+from .schema import SCHEMA_VERSION, SEVERITIES, Finding, SchemaError, cites, load_findings, parse_findings, to_dicts
 from .workspace import TOOLS, live_workspace, pr_meta
 
 
@@ -231,7 +231,7 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
 def _unfiled(verdicts: object, findings: list) -> list[dict]:
     """PR-level findings for rules judged violated that no rule-check finding cites, built from the
     verdict's `why`, so a violation the model judged but did not write up still reaches the merge."""
-    cited = {f.get("rule") for f in findings if isinstance(f, dict)}
+    cited = {r for f in findings if isinstance(f, dict) for r in cites(f)}
     vs = [v for v in verdicts or [] if isinstance(v, dict) and v.get("violated") and v.get("rule")
           and v["rule"] not in cited]
     return [{"id": f"rv{i}", "severity": "minor", "scope": "pr", "title": f"Violates team rule {v['rule']}",
@@ -240,31 +240,22 @@ def _unfiled(verdicts: object, findings: list) -> list[dict]:
 
 def _from_sources(merged: object, src: dict[str, tuple[int, dict]]) -> object:
     """Fill in what the merge agent's `from` (source finding ids) determines, instead of trusting the model
-    with it: the team rule of a merged finding (a source's rule, the model's own pick if it is one of them),
-    and its support (how many runs its sources come from). Without usable `from`, the finding is kept as is.
-    A finding merged from sources that cite different rules keeps one; the sources of each other rule come
-    back unmerged, so no rule a run cited is lost."""
+    with it: the team rules of a merged finding (every rule its sources cite, so none is lost when findings
+    citing different rules merge), and its support (how many runs its sources come from). Without usable
+    `from`, the finding is kept as is."""
     if not isinstance(merged, list):
         return merged
-    out = []
     for f in merged:
         if not isinstance(f, dict):
-            out.append(f)
             continue
         refs = [src[k] for k in f.pop("from", None) or [] if isinstance(k, str) and k in src]
-        out.append(f)
         if not refs:
             continue
-        rules = list(dict.fromkeys(s["rule"] for _, s in refs if s.get("rule")))
-        if rules and f.get("rule") not in rules:
-            f["rule"] = rules[0]
-        others = [(i, s) for i, s in refs if s.get("rule") and s["rule"] != f.get("rule")]
-        refs = [(i, s) for i, s in refs if (i, s) not in others]
+        rules = list(dict.fromkeys(r for _, s in refs for r in sorted(cites(s))))
+        f["rule"] = f.get("rule") if f.get("rule") in rules else (rules[0] if rules else None)
+        f["rules"] = [f["rule"], *(r for r in rules if r != f["rule"])] if rules else []
         f["support"] = len({i for i, _ in refs})
-        for rule in dict.fromkeys(s["rule"] for _, s in others):
-            same = [(i, s) for i, s in others if s["rule"] == rule]
-            out.append({**same[0][1], "id": f"{f.get('id')}-{rule}", "support": len({i for i, _ in same})})
-    return out
+    return merged
 
 
 def _parsed(r: dict, rulecheck: bool = False, fix: Callable[[object], object] | None = None) -> dict:
@@ -316,15 +307,15 @@ def to_markdown(r: dict) -> str:
     fs.sort(key=lambda f: SEVERITIES.index(f.severity))
     book = parse_reviewer(r["reviewer"].split("#")[0])[1] if r.get("reviewer") else None
     rules = {x["id"]: x for x in load_rules(book)} if book else {}
-    cited = [f for f in fs if f.rule]
+    cited = [f for f in fs if f.rule or f.rules]
     if cited:
         head += [f"{len(cited)} of {len(fs)} findings follow a team rule ({book or 'no rulebook'}).", ""]
 
-    def rule_line(f: Finding) -> str:
-        x = rules.get(f.rule)
+    def rule_line(rule: str) -> str:
+        x = rules.get(rule)
         if x is None:  # the model named an id that is not in the reviewer's rulebook
-            return f"Rule: `{f.rule}` (not in {book or 'any rulebook'})"
-        return f"Rule: `{f.rule}` · when {x.get('when') or x.get('rule', '')}"
+            return f"Rule: `{rule}` (not in {book or 'any rulebook'})"
+        return f"Rule: `{rule}` · when {x.get('when') or x.get('rule', '')}"
 
     n = r.get("parallel") or 1
     if n > 1:  # merged parallel review: within a severity, what more runs agree on comes first
@@ -334,8 +325,8 @@ def to_markdown(r: dict) -> str:
     def item(f: Finding) -> list[str]:
         found = f" · found by {f.support or 1}/{n} runs" if n > 1 else ""
         out = [f"### [{f.severity}] {f.title}", f"*{f.scope}* · `{f.where()}`{found}", "", f.body, ""]
-        if f.rule:
-            out += [rule_line(f), ""]
+        for rule in f.rules or ([f.rule] if f.rule else []):
+            out += [rule_line(rule), ""]
         rel = [l for l in f.locations if l.role == "related"]
         if rel:
             out += ["Related: " + ", ".join(f"`{l.path}" + (f":{l.start}" if l.start else "") + "`" for l in rel), ""]

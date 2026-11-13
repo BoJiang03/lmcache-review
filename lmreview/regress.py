@@ -22,6 +22,7 @@ import threading
 
 from .budget import capped_map
 from .config import Config
+from .schema import cites as finding_rules
 from .distill import COVERAGE, _ask, _fmt, _id
 from .reviewer import load_rules, parse_reviewer, reviewer_context, run_reviewer
 from .score import REPORTS, load_gold, score_one
@@ -148,7 +149,7 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
             if res is None or res["score"] is None:
                 flags.append(None)  # not run (cost cap) or unparsable output
                 continue
-            cites = {f["id"] for f in res["run"]["findings"] if f.get("rule") in ok_ids}
+            cites = {f["id"] for f in res["run"]["findings"] if finding_rules(f) & set(ok_ids)}
             gold = res["score"]["gold_ids"]
             hit = {int(gold[int(h["id"])]) for h in res["score"]["human"] if cites & set(h.get("matched_ai") or [])}
             hit_any = {int(gold[int(h["id"])]) for h in res["score"]["human"] if h.get("matched_ai")}

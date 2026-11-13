@@ -1,0 +1,17 @@
+{
+ "version": 2,
+ "parent": 1,
+ "date": "2026-11-13T02:51:12+00:00",
+ "by": "retire_unearned",
+ "retired": [
+  "P1",
+  "P2",
+  "P3",
+  "P4",
+  "P5",
+  "P6",
+  "P7"
+ ],
+ "kept": [],
+ "note": "principles without evidence of their own (induced). Checked on the 3 samples where they had caught 4 human comments: pruned book kept 3 in 1 run; the 4th (#4015@c2252d8f via P5) 3/3 with v0001 (2 of them without citing P5) vs 2/3 pruned: noise. scripts/retire_unearned.py"
+}

@@ -84,6 +84,8 @@ def main(argv: list[str] | None = None) -> None:
     d.add_argument("--base", help="rulebook to extend")
     d.add_argument("--induce", action="store_true", help="run step 6: principles over standalone entries (an "
                    "experiment: a new parent without evidence of its own is dropped)")
+    d.add_argument("--compress", action="store_true", help="state mode: run even with nothing to_distill, "
+                   "to shrink the book (merge / generalize entries that ask for the same change)")
     d.add_argument("--prs", type=int, nargs="+", help="only these train PRs")
     d.add_argument("--misses-of", metavar="REVIEWER",
                    help="learn from this reviewer's runs (normally <prompt>+BASE@high-rc): its misses and the "
@@ -172,7 +174,8 @@ def main(argv: list[str] | None = None) -> None:
         print(vet_step(a.max_cost, a.reps, a.all))
     elif a.cmd == "distill" and not a.out:
         from .state import distill_step
-        print(distill_step(set(a.prs or []) or None, a.limit, a.effort, a.workers, a.max_cost, induce=a.induce))
+        print(distill_step(set(a.prs or []) or None, a.limit, a.effort, a.workers, a.max_cost, induce=a.induce,
+                           compress=a.compress))
     elif a.cmd == "vet":
         from .vet import vet
         print(vet(a.rules, a.base, a.prompt, a.effort, a.suffix, a.reps, a.max_cost, a.all, a.every_sample,

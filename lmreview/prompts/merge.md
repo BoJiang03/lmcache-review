@@ -10,7 +10,7 @@ Merge them:
 - Findings that raise the same problem (same root cause, even if worded differently or pointing at
   different lines of it) become ONE finding. Keep the clearest title and body, the most precise
   locations (union of the useful ones), and the best suggestion. Findings that cite different team
-  rules ("rule") stay separate findings.
+  rules still merge when they raise the same problem: one finding may follow several rules.
 - "from": the ids of ALL the source findings a merged finding stands for (e.g. ["1.f2", "2.r1"]).
   Every finding you keep must list its sources; a finding kept unchanged lists its own id. The team
   rule and the run count are worked out from it.

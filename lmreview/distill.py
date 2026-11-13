@@ -34,6 +34,7 @@ import tempfile
 from . import llm
 from .budget import capped_map
 from .config import RULES, Config
+from .schema import cites as finding_rules
 from .settings import get
 from .state import book_path
 from .ensemble import ensemble
@@ -1071,9 +1072,9 @@ def audit(name: str, cfg: Config | None = None) -> str:
             sp = cfg.data / "scores" / d.name / p.name
             judged = {a["id"]: a.get("valid") for a in json.loads(sp.read_text()).get("ai", [])} if sp.exists() else {}
             for f in run.get("findings") or []:
-                if f.get("rule"):
-                    cited[f["rule"]] += 1
-                    valid[f["rule"]] += judged.get(f["id"]) is True
+                for rule in finding_rules(f):
+                    cited[rule] += 1
+                    valid[rule] += judged.get(f["id"]) is True
     L = [f"# Audit of rulebook {name}", "", "Suggestions only; retiring an entry is a decision.", "",
          "| entry | status | v | evidence PRs | paths on dev | findings citing it | judged valid | tests (corrected/run) "
          "| suggestion |",

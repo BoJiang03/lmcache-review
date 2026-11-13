@@ -12,6 +12,7 @@ import pathlib
 import re
 
 from . import github, llm
+from .annotate import cid_of
 from .ensemble import ensemble
 from .config import PROMPTS, Config
 from .state import book_path, part_path, prompt_path
@@ -120,7 +121,7 @@ def rule_evidence(reviewer: str) -> set[int]:
     A sample whose gold holds one of them cannot test this reviewer: the rule was written from the answer.
     """
     rules = parse_reviewer(reviewer.split("#")[0])[1]
-    return {e for r in load_rules(rules) for e in r.get("evidence") or []} if rules else set()
+    return {cid_of(e) for r in load_rules(rules) for e in r.get("evidence") or []} if rules else set()  # points: their comment
 
 
 def changed_paths(wt: pathlib.Path) -> list[str]:

@@ -18,12 +18,13 @@ import pathlib
 from . import llm
 from .budget import capped_map
 from .progress import note
+from .annotate import annotate, point_comments, points
 from .config import Config
 from .reviewer import prompt_template, rule_evidence
 from .schema import load_findings
 from .workspace import TOOLS, cached_pr, pr_meta, sample_workspace
 
-JUDGE = "j2"  # judge prompt version; results of another version are never mixed in (see score_one)
+JUDGE = "j3"  # judge prompt version; results of another version are never mixed in (see score_one)
 REPORTS = pathlib.Path(__file__).resolve().parent.parent / "reports"
 
 PROMPT = """You are grading an AI code reviewer against human reviewers on LMCache PR #{number}.
@@ -38,41 +39,34 @@ PR description:
 {body}
 >>>
 
-HUMAN review comments (all human reviews made on the same commit the AI reviewed; inline ones show\ncode location and hunk, overall reviews may contain several points):
+HUMAN review comments on the commit the AI reviewed, each followed by the points in it that ask for a
+change (ids p1, p2, ...). Match the points; the comment is there for context:
 {human}
 
 AI findings (id, severity, scope, location, title: body):
 {ai}
 
 Tasks:
-1. For each HUMAN comment, set "type":
-   - change_request: asks for (or clearly implies) a code/test/doc change
-   - question: asks for an explanation; no change implied
-   - nit: tiny style/naming/typo suggestion
-   - praise: approval or thanks
-2. For each HUMAN comment of type change_request or nit:
-   - set "severity" as you would for a review finding: blocker (must not merge: breaks
-     correctness, data, compatibility), major (real bug, design or maintainability problem worth
-     blocking on), minor (worth fixing, limited impact), nit (cosmetic or preference);
-   - set "matched_ai" to the ids of the AI findings that raise the SAME underlying issue AND ask
-     for a change in the same direction; [] if none. Be strict:
-     * same file/line or same topic is not enough: the problem must be the same;
-     * a finding whose fix goes the other way, or differs in substance, is not a match (e.g. the
-       human asks to explain a docstring with a worked example while the AI asks to shorten it;
-       the human asks to reuse an existing helper while the AI asks to add a new one);
-     * a finding that names the problem but proposes a different but compatible fix IS a match.
-   Give the reason in "match_why". For an overall review with several points, classify by its
-   main actionable point and match on that.
-3. For each AI finding, check it against the code and set "valid": true if it is a real, specific
+1. For each POINT, set "matched_ai" to the ids of the AI findings that raise the SAME underlying issue
+   AND ask for a change in the same direction; [] if none. Be strict:
+   * same file/line or same topic is not enough: the problem must be the same;
+   * a finding whose fix goes the other way, or differs in substance, is not a match (e.g. the human
+     asks to explain a docstring with a worked example while the AI asks to shorten it; the human asks
+     to reuse an existing helper while the AI asks to add a new one);
+   * a finding that names the problem but proposes a different but compatible fix IS a match.
+   Give the reason in "match_why".
+2. For each AI finding, check it against the code and set "valid": true if it is a real, specific
    problem a maintainer would want fixed, false if it is wrong, speculative, or noise. Use "unsure"
    only if the code genuinely cannot settle it (e.g. it depends on runtime behavior or code outside
    this repo). Human silence does not make a finding invalid.
 
 Answer with one JSON block only:
 ```json
-{{"human": [{{"id": 0, "type": "...", "severity": "major", "matched_ai": ["f2"], "match_why": "<=15 words"}}],
+{{"points": [{{"id": "p1", "matched_ai": ["f2"], "match_why": "<=15 words"}}],
   "ai": [{{"id": "f1", "valid": true, "why": "<=12 words"}}]}}
 ```"""
+
+WANT = ("change_request", "nit")  # the point types a reviewer should raise (and distill learns)
 
 
 def load_gold(cfg: Config) -> tuple[dict, dict]:
@@ -80,39 +74,67 @@ def load_gold(cfg: Config) -> tuple[dict, dict]:
     ds = cfg.data / "dataset"
     ss = {(x["pr"], x["commit"]): x for x in map(json.loads, (ds / "samples.jsonl").open())}
     cm = {c["id"]: c for c in map(json.loads, (ds / "comments.jsonl").open())}
-    return ss, cm
+    return ss, cm | point_comments(cfg, cm)
+
+
+def hkey(s: dict, h: dict) -> int | str:
+    """The point key of judge entry `h` of score `s` (older scores: the comment id)."""
+    return h["key"] if "key" in h else int(s["gold_ids"][h["id"]])
 
 
 def score_one(cfg: Config, run: dict, sample: dict, gold: list[dict], out: pathlib.Path,
               effort: str) -> dict:
-    """Grade one sample's run inside the same workspace the reviewer saw; cached on disk."""
+    """Grade one sample's run inside the same workspace the reviewer saw; cached on disk.
+
+    The human comments come annotated (annotate.py: points, type, severity; once per sample). A cached
+    score of another judge version is moved to <data>/scores/_<version>/ and judged again."""
     if out.exists():
         res = json.loads(out.read_text())
-        if res.get("effort", "medium") != effort:
+        if res.get("judge", "j1") != JUDGE:
+            old = out.parents[1] / f"_{res.get('judge', 'j1')}" / out.parent.name / out.name
+            old.parent.mkdir(parents=True, exist_ok=True)
+            out.rename(old)
+        elif res.get("effort", "medium") != effort:
             raise ValueError(f"{out} was judged at effort {res.get('effort', 'medium')!r}, not {effort!r}; "
                              "pass that --effort or move the scores aside to re-judge")
-        if res.get("judge", "j1") != JUDGE:
-            raise ValueError(f"{out} was judged by judge {res.get('judge', 'j1')}, not {JUDGE}; "
-                             f"move it to <data>/scores/_{res.get('judge', 'j1')}/ to re-judge")
-        return res
+        else:
+            return res
+    ann = annotate(cfg, sample, gold, effort)
+    pts = points(ann, gold)
+    want = [p for p in pts if p["type"] in WANT]
+    local = {f"p{n}": p for n, p in enumerate(want, 1)}
     human = "\n\n".join(
-        (f"[{i}] {c['path']}:{c['line_lo']}-{c['line_hi']} by {c['author']}\n"
-         f"hunk:\n{(c['diff_hunk'] or '')[-1200:]}\ncomment: {c['body'][:1500]}")
-        if c["kind"] == "inline" else
-        f"[{i}] overall review by {c['author']} ({c['review_state']}):\n{c['body'][:2500]}"
-        for i, c in enumerate(gold))
+        _fmt_human(i, c) + "".join(f"\n  [{lid}] ({p['type']}) {p['text']}" for lid, p in local.items() if p["id"] == i)
+        for i, c in enumerate(gold) if any(p["id"] == i for p in want)) or "(no points asking for a change)"
     ai = "\n".join(f"[{f.id}] ({f.severity}, {f.scope}) {f.where()} {f.title}: {f.body[:800]}"
                    for f in load_findings(run) or []) or "(none)"
-    ctx = prompt_template(run["version"])[1] if run.get("version") else ()
-    with sample_workspace(cfg, sample, "judge", ctx) as (wt, _):
-        r = llm.run(PROMPT.format(human=human, ai=ai, **pr_meta(cached_pr(cfg, run["pr"], sample["time"]))), effort,
-                    cwd=str(wt), tools=TOOLS)
-    res = llm.extract_json(r["text"])
-    res.update(pr=run["pr"], commit=run["commit"], cost=r["cost"], effort=effort, judge=JUDGE,
-               denials=r["denials"], gold_ids=[c["id"] for c in gold])
+    cost = ann["cost"]
+    got: dict = {"points": [], "ai": []}
+    if want:
+        ctx = prompt_template(run["version"])[1] if run.get("version") else ()
+        with sample_workspace(cfg, sample, "judge", ctx) as (wt, _):
+            r = llm.run(PROMPT.format(human=human, ai=ai, **pr_meta(cached_pr(cfg, run["pr"], sample["time"]))),
+                        effort, cwd=str(wt), tools=TOOLS)
+        got, cost = llm.extract_json(r["text"]), cost + r["cost"]
+    m = {e.get("id"): e for e in got.get("points") or [] if isinstance(e, dict)}
+    by_point = {id(p): lid for lid, p in local.items()}
+    hs = []
+    for p in pts:
+        e = m.get(by_point.get(id(p)), {})
+        hs.append(p | {"matched_ai": [str(x) for x in e.get("matched_ai") or []], "match_why": e.get("match_why", "")})
+    res = {"human": hs, "ai": got.get("ai") or [], "pr": run["pr"], "commit": run["commit"], "cost": cost,
+           "effort": effort, "judge": JUDGE, "annotator": ann["annotator"],
+           "denials": [], "gold_ids": [c["id"] for c in gold]}
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(res, indent=1))
     return res
+
+
+def _fmt_human(i: int, c: dict) -> str:
+    if c["kind"] == "inline":
+        return (f"[c{i}] {c['path']}:{c['line_lo']}-{c['line_hi']} by {c['author']}\n"
+                f"hunk:\n{(c['diff_hunk'] or '')[-1200:]}\ncomment: {c['body'][:1500]}")
+    return f"[c{i}] overall review by {c['author']} ({c['review_state']}):\n{c['body'][:2500]}"
 
 
 def _normalize(s: dict, run: dict) -> dict:
@@ -155,7 +177,10 @@ def judge(version: str, workers: int = 4, effort: str = "high", max_cost: float 
     sdir = cfg.data / "scores" / version
     path = lambda r: sdir / f"{r['pr']}-{r['commit'][:8]}.json"  # noqa: E731
     def fresh(r: dict) -> bool:  # judged against the sample's current gold (it changes when the dataset is rebuilt)
-        return path(r).exists() and json.loads(path(r).read_text()).get("gold_ids") == ss[(r["pr"], r["commit"])]["gold_ids"]
+        if not path(r).exists():
+            return False
+        s = json.loads(path(r).read_text())
+        return s.get("gold_ids") == ss[(r["pr"], r["commit"])]["gold_ids"] and s.get("judge") == JUDGE
     todo = [r for r in runs if not fresh(r)]
     note(f"judge {version}: {len(runs)} runs, {len(todo)} to judge (est ${len(todo) * EST_COST:.0f}, "
          f"cap ${max_cost:.0f})")

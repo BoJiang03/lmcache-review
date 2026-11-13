@@ -75,7 +75,8 @@ changes is in `lmreview/state/` (in git; see `lmreview/state.py`):
 | settings: review, judge, distill, vet, cost caps, paths | `lmreview/config.toml` (override: `LMREVIEW_CONFIG`) | people (git) |
 | book in use / every version | `state/HEAD.json`, `state/book.jsonl` / `state/history/vNNNN.jsonl` (+ `.meta.json`) | `vet`, `rollback` |
 | candidate waiting for vet | `state/candidate/` | `distill` |
-| one row per human comment | `state/ledger.jsonl` | `judge`, `distill`, `vet` |
+| one row per human comment point (`<id>`, or `<id>:<k>` when a comment makes several) | `state/ledger.jsonl` | `judge`, `distill`, `vet` |
+| comment annotations: points, type, severity (cache, once per sample) | `data/annotations/a1/` | `judge` |
 | every prompt used, by hash | `state/prompts/p<sha8>.md` | automatic |
 | what happened | `state/log.jsonl` | every step |
 | runs, scores (cache) | `data/runs/p<sha8>+vNNNN@high-rc/`, `data/scores/...` | `review`, `judge` |

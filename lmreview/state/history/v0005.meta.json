@@ -1,0 +1,10 @@
+{
+ "version": 5,
+ "parent": 4,
+ "date": "2026-11-13T03:28:21+00:00",
+ "by": "manual",
+ "removed": [
+  "v0003c1-013"
+ ],
+ "note": "v0003c1-013 entered v0003 untested (vet bug); tested afterwards: 0/2 on its source comment"
+}

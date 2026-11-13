@@ -82,6 +82,7 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
     """
     ss, cm = load_gold(cfg)
     spent, lock = [0.0], threading.Lock()
+    reserved, est = [0.0], EST_RUN * (2 if suffix else 1)  # expected cost of the reviews running now
 
     def reviewer_of(t: dict) -> str:
         version, _, effort = parse_reviewer(t["with"].split("#")[0])
@@ -100,11 +101,16 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
         d.mkdir(parents=True, exist_ok=True)
         cached = (d / name).exists()
         if not cached:
-            with lock:
-                if spent[0] >= max_cost:
+            with lock:  # cached runs are always read; a new one starts only if it fits with those running
+                if spent[0] >= max_cost or (reserved[0] and spent[0] + reserved[0] + est > max_cost):
                     return (rv, target, k, None), 0.0
-            with sample_workspace(cfg, s, f"regress{k}", reviewer_context(rv)) as (wt, base):
-                r = run_reviewer(wt, cached_pr(cfg, key[0], s["time"]), rv)
+                reserved[0] += est
+            try:
+                with sample_workspace(cfg, s, f"regress{k}", reviewer_context(rv)) as (wt, base):
+                    r = run_reviewer(wt, cached_pr(cfg, key[0], s["time"]), rv)
+            finally:
+                with lock:
+                    reserved[0] -= est
             (d / name).write_text(json.dumps({"pr": key[0], "commit": key[1], "base": base, **r}, indent=1))
             with lock:
                 spent[0] += r["cost"]

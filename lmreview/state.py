@@ -50,8 +50,9 @@ LEDGER = """ledger.jsonl rows: {"comment" (a point key: the comment id, or "<com
 of a comment that makes several, see annotate.py), "pr", "commit", "status", "reviewer" (whose run judged it),
 "tries": [{"book", "entries", "result", "why", "date"}], "resolved_by": {"book", "entry"}, "note"}.
 status: covered (the reviewer found it without help) | to_distill | resolved (a book entry makes the
-reviewer find it, checked by vet) | not_rulable (distill: context / not an issue / declined) |
-needs_human (MAX_TRIES distill attempts failed)."""
+reviewer find it, checked by vet) | not_rulable (distill, confirmed by a second call: context / not an
+issue / declined by the team) | needs_human (MAX_TRIES distill attempts failed, or only the PR author
+objected to it: contested)."""
 STATUSES = ("covered", "to_distill", "resolved", "not_rulable", "needs_human")
 _VER = re.compile(r"v\d{4}")
 
@@ -399,8 +400,11 @@ def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: 
         n_out = 0
         for a in map(json.loads, att.open()) if att.exists() else []:
             r = rows.get(a.get("id"))
-            if r and a.get("kind") in ("context", "not_issue", "rejected"):
+            if r and a.get("kind") in ("context", "not_issue", "rejected"):  # two calls agreed (distill.py)
                 r.update(status="not_rulable", note=f"{a['kind']}: {a.get('reason') or a.get('why') or ''}"[:300])
+                n_out += 1
+            elif r and a.get("kind") == "contested":  # only the PR author objected: a person decides
+                r.update(status="needs_human", note=f"contested: {a.get('why') or ''}"[:300])
                 n_out += 1
         save_ledger(rows)
         log("distill", name=name, parent=parent, comments=len(ids), not_rulable=n_out, summary=msg)

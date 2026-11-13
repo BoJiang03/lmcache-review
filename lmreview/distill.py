@@ -25,6 +25,7 @@ from __future__ import annotations
 import collections as C
 import datetime as dt
 import fnmatch
+import functools
 import json
 import pathlib
 import subprocess
@@ -49,7 +50,8 @@ EST = {"attribute": 0.17, "cluster": 0.4, "abstract": 0.15}  # $/call, from the 
 ATTRIBUTE = """You are distilling the review standards of the LMCache team (a KV-cache layer for LLM
 inference engines such as vLLM) from past human review comments.
 
-For each comment below (with its code hunk, what happened afterwards and the thread replies), decide:
+For each comment below (with its code hunk, what happened to the code afterwards, and the discussion
+after it: every reply with who wrote it, and whether the thread was resolved and by whom), decide:
 - "learnable": it follows from a standard, a recurring concern, or knowledge of this codebase or the
   engine that a reviewer could apply to FUTURE pull requests. Write the reason as a candidate rule:
   the principle or fact behind the comment, not a restatement of this one fix. If the reviewer
@@ -60,7 +62,10 @@ For each comment below (with its code hunk, what happened afterwards and the thr
   worked example of values before/after", not just "docstrings should be clear").
 - "context": it needs knowledge outside the code (an offline decision, roadmap, another PR's state).
 - "not_issue": a question, praise, or nothing actionable.
-- "rejected": the thread shows the suggestion was declined, withdrawn or judged wrong.
+- "rejected": the team did not take the suggestion: the reviewer (or another reviewer) withdrew it,
+  agreed with the author's objection, or resolved the thread with the code left as it was.
+- "contested": only the PR author objected (or resolved the thread without the change), and no
+  reviewer agreed. Whether the team stands by the suggestion is unknown; do not decide it.
 Also give "paths": glob patterns of where the rule applies ([] = anywhere). Where the commented file
 happens to be is not a reason: a principle that would hold in any module gets [].
 
@@ -69,7 +74,8 @@ Comments:
 
 Answer with one JSON block only:
 ```json
-[{{"id": 123, "kind": "learnable|context|not_issue|rejected", "rule": "...", "paths": ["..."]}}]
+[{{"id": 123, "kind": "learnable|context|not_issue|rejected|contested", "rule": "...", "paths": ["..."],
+   "why": "<=20 words, for every kind but learnable"}}]
 ```"""
 
 CLUSTER = """Below are candidate review rules distilled from LMCache human review comments, one per line
@@ -279,8 +285,52 @@ OUTCOME = {"lines-changed": "the commented lines were changed afterwards",
            "no-later-commits": "no later commits in the PR"}
 
 
+REPLY_CHARS = 1500  # per reply; a longer one keeps its end (where the conclusion usually is)
+
+
+@functools.lru_cache(maxsize=256)
+def _raw_pr(pr: int) -> dict:
+    p = Config().data / "raw" / "pr" / f"{pr}.json"
+    return json.loads(p.read_text()) if p.exists() else {}
+
+
+def _who(login: str | None, pr_author: str | None, reviewer: str | None) -> str:
+    role = "PR author" if login == pr_author else "the reviewer" if login == reviewer else "another reviewer"
+    return f"{login} ({role})"
+
+
+def _cut(t: str) -> str:
+    t = " ".join((t or "").split())
+    return t if len(t) <= REPLY_CHARS else "..." + t[-REPLY_CHARS:]
+
+
+def _discussion(c: dict) -> str:
+    """What happened after comment `c`, from the raw PR: an inline comment's whole thread (every reply
+    with who wrote it, whether the thread was resolved and by whom); for an overall review, the PR's
+    conversation comments after it (not necessarily answers to it)."""
+    raw = _raw_pr(int(c["pr"]))
+    if not raw:
+        return ""
+    pr_author = (raw.get("author") or {}).get("login")
+    cid = c.get("comment", c["id"])  # a point of a comment: its comment's thread
+    if c["kind"] == "inline":
+        t = next((t for t in raw.get("reviewThreads", {}).get("nodes") or []
+                  if (t["comments"]["nodes"] or [{}])[0].get("databaseId") == cid), None)
+        if t is None:
+            return ""
+        reps = t["comments"]["nodes"][1:]
+        lines = [f"reply by {_who((r.get('author') or {}).get('login'), pr_author, c['author'])}: {_cut(r.get('body'))}"
+                 for r in reps]
+        state = ("resolved by " + _who((t.get("resolvedBy") or {}).get("login"), pr_author, c["author"])
+                 if t.get("isResolved") else "not resolved")
+        return "\n".join(lines + [f"thread: {len(reps)} replies, {state}"])
+    later = [x for x in (raw.get("comments") or {}).get("nodes") or [] if (x.get("createdAt") or "") > (c.get("created") or "")][:5]
+    return "\n".join(f"later PR conversation, by {_who((x.get('author') or {}).get('login'), pr_author, c['author'])}: "
+                     f"{_cut(x.get('body'))}" for x in later)
+
+
 def _fmt(c: dict, rich: bool = True) -> str:
-    """One comment for a prompt: location, hunk, body; with `rich`, outcome and thread replies."""
+    """One comment for a prompt: location, hunk, body; with `rich`, outcome and the discussion after it."""
     if c["kind"] == "inline":
         s = (f"[{c['id']}] {c['path']}:{c['line_lo']} (PR #{c['pr']}, by {c['author']})\n"
              f"hunk:\n{(c['diff_hunk'] or '')[-600:]}\ncomment: {c['body'][:1000]}")
@@ -289,8 +339,8 @@ def _fmt(c: dict, rich: bool = True) -> str:
     if rich:
         if c.get("addressed_reason") in OUTCOME:
             s += f"\nafterwards: {OUTCOME[c['addressed_reason']]}"
-        for r in (c.get("replies") or [])[:3]:
-            s += f"\nreply by {r.get('author')}: {(r.get('body') or '')[:300]}"
+        d = _discussion(c)
+        s += f"\n{d}" if d else ""
     return s
 
 
@@ -861,6 +911,24 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
         spent += pre
     att = [{**a, "id": _id(a.get("id"))} for r in res if isinstance(r, list) for a in r if isinstance(a, dict)]
     att = [a for a in att if a["id"] in by_id]
+    # A comment judged not learnable is never learned, so that needs a second, independent call to agree;
+    # where it finds the comment learnable, its candidate rule is used.
+    out_ = [a for a in att if a.get("kind") != "learnable"]
+    if out_ and not reuse:
+        note(f"      second opinion on {len(out_)} comments judged not learnable")
+        res2, c2 = capped_map(lambda b: _ask(ATTRIBUTE.format(comments="\n\n".join(map(_fmt, b))), effort, cfg),
+                              [[by_id[a["id"]] for a in out_[i:i + BATCH]] for i in range(0, len(out_), BATCH)],
+                              workers, max(0.0, max_cost - spent), label=lambda b: f"recheck {len(b)}")
+        spent += c2
+        second = {_id(a.get("id")): a for r in res2 if isinstance(r, list) for a in r if isinstance(a, dict)}
+        for a in out_:
+            b = second.get(a["id"])
+            if b is None:  # no second opinion (cost cap or garbled): stays open, as learnable without a rule
+                a.update(first=a.get("kind"), kind="unconfirmed")
+            elif b.get("kind") == "learnable" and b.get("rule"):
+                a.update(first=a.get("kind"), kind="learnable", rule=b["rule"], paths=b.get("paths") or [])
+            else:
+                a["second"] = b.get("kind")
     (work / "attribution.jsonl").write_text("".join(json.dumps(a) + "\n" for a in att))
     note(f"      attribution: {dict(C.Counter(a.get('kind') for a in att))}; {len(cs) - len(att)} not attributed")
 

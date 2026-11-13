@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Callable
+
 import fnmatch
 import json
 import os
@@ -199,12 +201,16 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
         return _parsed(llm.run(p, effort, cwd=str(wt), tools=tools, system=system, sandbox=sb), rulecheck=True)
 
     def merge(ok: list[dict]) -> dict:  # one more agent run on the same workspace: it may read code
+        src = {f"{i}.{f.get('id') or k}": (i, f) for i, x in enumerate(ok, 1)
+               for k, f in enumerate(x["findings"], 1)}  # ids unique across runs: "<run>.<id>"
         reviews = "\n\n".join(f"Run {i}" + (" (rule check: only team-rule violations, not a full review)"
-                                            if x.get("kind") == "rulecheck" else "")
-                              + f":\n{json.dumps(x['findings'], indent=1)}" for i, x in enumerate(ok, 1))
+                                            if x.get("kind") == "rulecheck" else "") + ":\n"
+                              + json.dumps([{**f, "id": k} for k, (j, f) in src.items() if j == i], indent=1)
+                              for i, x in enumerate(ok, 1))
         return _parsed(llm.run(part_path(version, "merge").read_text().format(n=len(ok), reviews=reviews,
                                                                          **pr_meta(raw)),
-                               effort, cwd=str(wt), tools=tools, system=system, sandbox=sb))
+                               effort, cwd=str(wt), tools=tools, system=system, sandbox=sb),
+                       fix=lambda obj: _from_sources(obj, src))
 
     e = ensemble(once, n, merge, ok=lambda x: x["findings"] is not None, extra=[rulecheck] if rc else [])
     if n == 1 and not rc:
@@ -232,7 +238,36 @@ def _unfiled(verdicts: object, findings: list) -> list[dict]:
              "body": str(v.get("why") or ""), "locations": [], "rule": v["rule"]} for i, v in enumerate(vs, 1)]
 
 
-def _parsed(r: dict, rulecheck: bool = False) -> dict:
+def _from_sources(merged: object, src: dict[str, tuple[int, dict]]) -> object:
+    """Fill in what the merge agent's `from` (source finding ids) determines, instead of trusting the model
+    with it: the team rule of a merged finding (a source's rule, the model's own pick if it is one of them),
+    and its support (how many runs its sources come from). Without usable `from`, the finding is kept as is.
+    A finding merged from sources that cite different rules keeps one; the sources of each other rule come
+    back unmerged, so no rule a run cited is lost."""
+    if not isinstance(merged, list):
+        return merged
+    out = []
+    for f in merged:
+        if not isinstance(f, dict):
+            out.append(f)
+            continue
+        refs = [src[k] for k in f.pop("from", None) or [] if isinstance(k, str) and k in src]
+        out.append(f)
+        if not refs:
+            continue
+        rules = list(dict.fromkeys(s["rule"] for _, s in refs if s.get("rule")))
+        if rules and f.get("rule") not in rules:
+            f["rule"] = rules[0]
+        others = [(i, s) for i, s in refs if s.get("rule") and s["rule"] != f.get("rule")]
+        refs = [(i, s) for i, s in refs if (i, s) not in others]
+        f["support"] = len({i for i, _ in refs})
+        for rule in dict.fromkeys(s["rule"] for _, s in others):
+            same = [(i, s) for i, s in others if s["rule"] == rule]
+            out.append({**same[0][1], "id": f"{f.get('id')}-{rule}", "support": len({i for i, _ in same})})
+    return out
+
+
+def _parsed(r: dict, rulecheck: bool = False, fix: Callable[[object], object] | None = None) -> dict:
     """One llm.run result as run-file fields: findings (None if unparsable) and the error; a rule check
     (rulecheck.md output: {"verdicts", "findings"}) also keeps its per-rule verdicts."""
     findings, error, verdicts = None, None, None
@@ -243,7 +278,7 @@ def _parsed(r: dict, rulecheck: bool = False) -> dict:
                 raise SchemaError("rule check output must be an object with verdicts and findings")
             verdicts, obj = obj.get("verdicts"), obj.get("findings") or []
             obj = obj + _unfiled(verdicts, obj)
-        findings = to_dicts(parse_findings(obj))
+        findings = to_dicts(parse_findings(fix(obj) if fix else obj))
     except (ValueError, SchemaError) as e:  # SchemaError is a ValueError; kept explicit for clarity
         error = str(e)
     out = {"findings": findings, "error": error, "raw": r["text"], "cost": r["cost"], "turns": r["turns"],

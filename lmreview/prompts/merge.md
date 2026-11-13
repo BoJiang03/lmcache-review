@@ -9,10 +9,11 @@ each review is a JSON list of findings, tagged with its run number.
 Merge them:
 - Findings that raise the same problem (same root cause, even if worded differently or pointing at
   different lines of it) become ONE finding. Keep the clearest title and body, the most precise
-  locations (union of the useful ones), and the best suggestion. If any source finding names a
-  "rule", keep that rule id on the merged finding, also when it merges into a finding without one
-  (a rule-check finding folded into a main-run finding keeps its id).
-- "support": how many of the {n} runs raised that problem (1..{n}).
+  locations (union of the useful ones), and the best suggestion. Findings that cite different team
+  rules ("rule") stay separate findings.
+- "from": the ids of ALL the source findings a merged finding stands for (e.g. ["1.f2", "2.r1"]).
+  Every finding you keep must list its sources; a finding kept unchanged lists its own id. The team
+  rule and the run count are worked out from it.
 - Severity: when the sources disagree, read the code and pick the one it supports.
 - Do not drop a finding only because one run raised it: a single run is often the one that looked
   closer. Drop it only if the code clearly shows it is wrong, and say nothing about dropped ones.
@@ -21,14 +22,14 @@ Merge them:
 Reviews:
 {reviews}
 
-Finish with one JSON block and nothing after it, in the same format as the reviews plus "support":
+Finish with one JSON block and nothing after it, in the same format as the reviews plus "from":
 
 ```json
 [
-  {{"id": "f1", "severity": "blocker|major|minor|nit", "scope": "line|file|pr", "support": 2,
+  {{"id": "f1", "from": ["1.f1", "2.r3"], "severity": "blocker|major|minor|nit", "scope": "line|file|pr",
     "title": "short claim", "body": "what is wrong, why it matters, what to change",
     "locations": [{{"path": "lmcache/...", "start": 120, "end": 123, "side": "new", "role": "primary"}}],
-    "suggestion": "optional", "rule": "optional rule id"}}
+    "suggestion": "optional"}}
 ]
 ```
-Order findings by severity, then by support, most first.
+Order findings by severity, then by how many runs raised them, most first.

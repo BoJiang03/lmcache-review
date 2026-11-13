@@ -11,13 +11,14 @@ distill only writes rules; vet decides whether they are kept. Three checks, then
    existing entry that gained evidence is the exception: BASE already had it, so a BASE hit there is
    a fair hit (the rule generalized to a PR it was not written from).
 3. side effects: the entries of BASE whose rendering or neighbours changed (a new parent principle,
-   a revision, a new link; `--all`: every entry) are replayed on their own source comments. A comment
-   matched with a citation under BASE but not under NEW is a regression; for a retired entry, NEW must
-   still match the comment with some finding.
+   a revision, a new link; `--all`: every entry) are replayed on up to SIDE_PER_ENTRY of their own source
+   comments (`--all`: every one). NEW runs first; a comment NEW still matches with a citation is kept.
+   Only where NEW misses it does BASE run: matched under BASE but not under NEW is a regression. For a
+   retired entry, NEW must still match the comment with some finding.
 2b. revisions: a revised entry is re-reviewed on the samples whose invalid findings triggered the
    revision; a finding citing it that is judged invalid again means the revision did not fix it.
 
-2, 2b and 3 share the runs: one review per (sample, book). Runs are cached under data/runs/<reviewer>/,
+2, 2b and 3 share the runs: one review per sample with NEW, and with BASE only where needed. Runs are cached under data/runs/<reviewer>/,
 so an earlier A/B with the same reviewer names costs nothing here. Single runs are noisy, so each
 failing case gets one more run with NEW before it counts (`retry`).
 
@@ -36,6 +37,8 @@ from .config import Config
 from .state import book_path
 from .progress import note
 from .regress import EST_RUN, FIELDS, replay
+
+SIDE_PER_ENTRY = 2  # side effects: source comments replayed per affected entry (`--all`: every one)
 from .distill import book_meta, write_meta
 from .reviewer import load_rules, parse_reviewer, rulecheck_of
 from .score import REPORTS, load_gold
@@ -134,7 +137,18 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         effect = [(i, e) for i, e in effect if where[e] == best[where[e][0]]]
     eff_set = set(effect)
     affected = [i for i in O if i not in N or everything or rel.get(i, {i}) & touched]
-    side = [(i, e) for i in affected for e in sorted(old_ev[i]) if e in where and (i, e) not in eff_set]
+    # side effects: at most SIDE_PER_ENTRY source comments per entry (whether an entry still works shows
+    # on any of them), preferring samples that are reviewed anyway or already have a run with NEW
+    have = {tgt(e) for _, e in effect} | {t for i in revised for t in
+                                         [x["target"] for x in (N[i].get("revised") or {}).get("signals") or []]}
+    def has_new(t: str) -> bool:
+        return any((cfg.data / "runs" / f"{prompt}+{book}@{effort}{suffix}").glob(f"{t.replace('@', '-')}*.json"))
+    side = []
+    for i in affected:
+        cs = [e for e in sorted(old_ev[i]) if e in where and (i, e) not in eff_set]
+        cs.sort(key=lambda e: (tgt(e) not in have, not has_new(tgt(e))))
+        side += [(i, e) for e in (cs if everything else cs[:SIDE_PER_ENTRY])]
+        have |= {tgt(e) for e in cs[:SIDE_PER_ENTRY]}
     fixes = list(dict.fromkeys((i, x["target"]) for i in revised
                                for x in (N[i].get("revised") or {}).get("signals") or []))
     cases = ([(i, {"target": tgt(e), "with": w, "comments": [e]}) for i, e in effect + side]
@@ -143,9 +157,9 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
 
     def run_dir(b: str, k: int) -> pathlib.Path:
         return cfg.data / "runs" / (f"{prompt}+{b}@{effort}{suffix}" + ("" if k == 1 else f"#r{k}"))
-    todo = [(b, t, k) for b in (base, book) for t in samples for k in range(1, reps + 1)
-            if not any(run_dir(b, k).glob(f"{t.split('@')[0]}-{t.split('@')[1]}*.json"))]
-    est = len(todo) * EST_RUN * (2 if suffix else 1)
+    todo = [(book, t, k) for t in samples for k in range(1, reps + 1)
+            if not any(run_dir(book, k).glob(f"{t.split('@')[0]}-{t.split('@')[1]}*.json"))]
+    est = len(todo) * EST_RUN * (2 if suffix else 1)  # base runs come only where NEW misses a side case
     flags = {i: f for i in sorted(touched) if (f := lint(N[i]))}
 
     L = [f"# Vet of {book} (from {base})", "",
@@ -154,7 +168,8 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
          f"- changed entries: {len(touched)} (revised {len(revised)}, retired {len(retired)}); "
          f"evidence comments added: {len(effect)}; base entries replayed for side effects: {len(affected)} "
          f"({len(side)} comments{', all entries' if everything else ''}); revision fixes to check: {len(fixes)}",
-         f"- {len(samples)} samples x 2 books, {len(todo)} runs not cached yet, est ${est:.0f}, cap ${max_cost:.0f}", "",
+         f"- {len(samples)} samples with the new book ({len(todo)} not cached yet, est ${est:.0f}; the old book only "
+         f"where the new one misses a side-effect comment), cap ${max_cost:.0f}", "",
          "## 1. Generality flags", ""]
     L += [f"- {i}: {'; '.join(f)}" for i, f in flags.items()] or ["- none"]
     L.append("")
@@ -164,11 +179,20 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     key = lambda r: (r["entry"], r["target"], tuple(r["comments"]))  # noqa: E731
     for x in L[2:5]:
         note(x.lstrip("- "))
-    note(f"[1/3] review {len(samples)} samples with the old book {base}")
-    rows_b, c_b = replay(base, cases, reps, max_cost / 2, cfg, suffix=suffix)
-    note(f"[2/3] review the same samples with the new book {book} (${c_b:.2f} so far)")
-    rows_n, c_n = replay(book, cases, reps, max_cost - c_b, cfg, suffix=suffix)
-    B, Nw = {key(r): r for r in rows_b}, {key(r): r for r in rows_n}
+    note(f"[1/3] review {len(samples)} samples with the new book {book}")
+    rows_n, c_n = replay(book, cases, reps, max_cost, cfg, suffix=suffix)
+    Nw = {key(r): r for r in rows_n}
+    # the old book: where the new one missed a side-effect comment (lost, or missed by both?), and
+    # effect cases whose old run is cached anyway (for the report)
+    def cached_old(t: str) -> bool:
+        return any(run_dir(base, 1).glob(f"{t.replace('@', '-')}*.json"))
+    need_b = ([(i, {"target": tgt(e), "with": w, "comments": [e]}) for i, e in side
+               if Nw.get((i, tgt(e), (e,)), {}).get("any" if i in retired else "passed") is False]
+              + [(i, {"target": tgt(e), "with": w, "comments": [e]}) for i, e in effect if cached_old(tgt(e))])
+    note(f"[2/3] review {len({t['target'] for _, t in need_b})} samples with the old book {base} "
+         f"(${c_n:.2f} so far)")
+    rows_b, c_b = replay(base, need_b, reps, max(0.0, max_cost - c_n), cfg, suffix=suffix) if need_b else ([], 0.0)
+    B = {key(r): r for r in rows_b}
     ck = lambda i, e: (i, tgt(e), (e,))  # noqa: E731
     fk = lambda i, t: (i, t, ())  # noqa: E731
 
@@ -185,7 +209,9 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         for i, e in side:
             b, n = B.get(ck(i, e), {}), Nw.get(ck(i, e), {})
             nb = n.get("any") if i in retired else n.get("passed")  # a retired entry: caught by anything
-            if b.get("passed") is None or nb is None:
+            if nb:  # the new book still catches it: nothing lost, whatever the old book does
+                kept += 1
+            elif b.get("passed") is None or nb is None:
                 s_unknown += 1
             elif b["passed"] and not nb:
                 lost.append((i, e))

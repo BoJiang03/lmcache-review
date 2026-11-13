@@ -87,6 +87,8 @@ Answer with one JSON block only:
 [{{"concern": "short name of the shared concern", "members": ["k1", "k7"]}}]
 ```"""
 
+MIN_SIGNAL_PRS = 2  # revise/retire on failure signals alone: they must come from this many PRs
+
 # How general an entry must be; shared by ABSTRACT and REVISE (no braces: it goes through str.format).
 GENERAL = """How general "when" and "expect" must be:
 - "when" names a KIND of situation a reviewer can recognize in any diff (e.g. "a docstring explains in
@@ -187,8 +189,8 @@ key of a group appears in exactly one decision of that group:
   completely ("replaced_by": that id). Same evidence requirement as "revise".
 - "contradict": candidates ask for the opposite of an existing entry, but it is unclear who is right.
   Do not rewrite it; say why.
-Only "revise" and "retire" change an existing entry, and only with a failure signal or a contradicting
-candidate in "members"; without one, use the other decisions.
+Only "revise" and "retire" change an existing entry, and only with failure signals from at least
+@MINPRS@ different PRs or a contradicting candidate in "members"; without them, use the other decisions.
 Fields of a written entry (generalize, merge, add, revise): "kind" (principle | knowledge), "when", "expect",
 "why" (one line), "examples" (short concrete instances), "paths" (globs, [] = anywhere).
 
@@ -413,9 +415,11 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
             changes.append({"op": "add", "members": g["members"], "concern": g["concern"]})
 
     batches = [revise[i:i + ABSTRACT_BATCH] for i in range(0, len(revise), ABSTRACT_BATCH)]
-    res, cost = capped_map(lambda gb: _ask(REVISE.replace("@GROUPS@", text(gb)), effort, cfg), batches, workers,
+    prompt = REVISE.replace("@MINPRS@", str(MIN_SIGNAL_PRS))
+    res, cost = capped_map(lambda gb: _ask(prompt.replace("@GROUPS@", text(gb)), effort, cfg), batches, workers,
                            max(0.0, max_cost - spend[0]), label=lambda gb: f"revise {len(gb)} groups")
     spend[0] += cost
+    waiting: set[str] = set()  # signals of a refused revise/retire: kept open for a later distill
     for d in (x for part in res if isinstance(part, list) for x in part):
         if not isinstance(d, dict) or not isinstance(d.get("group"), int) or not 0 <= d["group"] < len(groups):
             continue
@@ -435,8 +439,13 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
         elif op in ("revise", "retire") and bkeys:
             sig = [k for k in d.get("members") or [] if k in g["members"] and k.startswith("s")
                    and (signals or {}).get(k, {}).get("rule") == base[bkeys[0]]["id"]]
-            if not sig and not mem:  # no evidence that the entry is wrong: an existing entry is not touched
-                ch |= {"op": f"{op}-refused", "why": "no failure signal or contradicting candidate"}
+            sig_prs = {(signals or {})[k]["target"].split("@")[0] for k in sig}
+            if not mem and len(sig_prs) < MIN_SIGNAL_PRS:
+                # one PR's invalid finding is weak evidence (and the judge may be wrong): wait for more.
+                # These signals stay open, so they count again when another PR shows the same problem.
+                ch |= {"op": f"{op}-refused", "why": f"failure signals on {len(sig_prs)} PR(s), need {MIN_SIGNAL_PRS}, "
+                       "or a contradicting candidate"}
+                waiting |= set(sig)
                 changes.append(ch)
                 continue
             r = base[bkeys[0]]
@@ -478,7 +487,7 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
 
     for k, x in (signals or {}).items():  # considered once: later distills do not reopen them
         b = base.get(f"b{x['rule']}")
-        if b is not None and any(k in g["members"] for g in groups):
+        if b is not None and k not in waiting and any(k in g["members"] for g in groups):
             b["signals_seen"] = list(b.get("signals_seen") or []) + [[x["reviewer"], x["target"], x["finding"]]]
 
     def finish(r: dict) -> dict:

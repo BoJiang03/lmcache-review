@@ -497,7 +497,10 @@ def round_(prs: list[int | str], review_cost: float = 30.0, judge_cost: float = 
                 note("nothing left to distill on these samples")
                 break
             with step(f"attempt {k + 1}/{MAX_TRIES}", f"{len(left)} comments to distill"):
-                out.append(distill_step(nums, max_cost=distill_cost, cfg=cfg, induce=induce))
+                if candidate():  # left by an INCOMPLETE vet: finish vetting it before distilling again
+                    note(f"candidate {candidate()['name']} is waiting: vet it first")
+                else:
+                    out.append(distill_step(nums, max_cost=distill_cost, cfg=cfg, induce=induce))
                 if not candidate():
                     break
                 out.append(vet_step(vet_cost, cfg=cfg).split("\n\n")[-1])

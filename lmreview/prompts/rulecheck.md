@@ -5,6 +5,10 @@ below, and you must go through every one of them.
 Your working directory holds the repository as of the PR's head commit; the PR's changes are in
 `PR.diff`. Read the diff first, then read the surrounding code wherever a rule needs it (who owns
 an object, who else calls a function, what a base class or shared module looks like).
+`PR_HISTORY.md` holds the review discussion so far: read it. A violation a reviewer already raised
+counts only if this version still has it; do not report one the PR has since fixed. If `_context/`
+exists (see its README.md), it holds code the PR runs against, such as vLLM: read it when a rule
+depends on how that code behaves.
 
 PR description:
 {body}

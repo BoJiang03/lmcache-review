@@ -71,7 +71,8 @@ changes is in `lmreview/state/` (in git; see `lmreview/state.py`):
 
 | What | Where | Changed by |
 | --- | --- | --- |
-| reviewer prompt, effort, rule check on/off | `lmreview/prompts/reviewer.md`, `lmreview/reviewer.json` | people (git) |
+| reviewer prompts (review, rule check, merge: one version id) | `lmreview/prompts/reviewer.md`, `rulecheck.md`, `merge.md` | people (git) |
+| settings: review, judge, distill, vet, cost caps, paths | `lmreview/config.toml` (override: `LMREVIEW_CONFIG`) | people (git) |
 | book in use / every version | `state/HEAD.json`, `state/book.jsonl` / `state/history/vNNNN.jsonl` (+ `.meta.json`) | `vet`, `rollback` |
 | candidate waiting for vet | `state/candidate/` | `distill` |
 | one row per human comment | `state/ledger.jsonl` | `judge`, `distill`, `vet` |
@@ -102,7 +103,7 @@ review ─> judge ─┬─> covered        (the reviewer found it)
 The commands below with explicit book names (`distill OUT --base`, `vet BOOK --base`, `regress`) are
 the lower-level tools the process uses; use them for experiments, not for the book in use.
 
-There are four commands. Reviewers are named `<prompt>[+<rulebook>][@<effort>][x<n>][-rc]`, e.g. `v0b+r2@high`.
+There are four commands. Reviewers are named `<prompt>[+<rulebook>][@<effort>][x<n>][-rc][-sh]`, e.g. `v0b+r2@high`.
 
 The reviewer sees each rule's id, kind, when, expect and why, never its `examples`. Examples carry the
 source PR's particulars (names, values): too specific for the reviewer, and on the source PR they leak

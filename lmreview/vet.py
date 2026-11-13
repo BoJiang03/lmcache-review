@@ -34,11 +34,12 @@ import pathlib
 import re
 
 from .config import Config
+from .settings import get
 from .state import book_path
 from .progress import note
 from .regress import EST_RUN, FIELDS, replay
 
-SIDE_PER_ENTRY = 2  # side effects: source comments replayed per affected entry (`--all`: every one)
+SIDE_PER_ENTRY = int(get("vet", "side_per_entry"))  # side effects: source comments replayed per affected entry (`--all`: every one)
 from .distill import book_meta, write_meta
 from .reviewer import load_rules, parse_reviewer, rulecheck_of
 from .score import REPORTS, load_gold

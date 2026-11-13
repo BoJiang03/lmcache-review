@@ -16,9 +16,11 @@ ground truth. Layout (lmreview/state/, versioned in git):
     prompts/p<sha8>.md     every reviewer prompt ever used, by content hash (runs name it)
     log.jsonl              one line per step: review / judge / distill / vet / promote / rollback
 
-Configuration lives in git, edited by people: lmreview/prompts/reviewer.md and lmreview/reviewer.json
-({"effort", "rulecheck"}). Runs and scores stay in <data>/runs and <data>/scores (not in git), under
-the reviewer name `p<sha8>+vNNNN@<effort>[-rc]`, so a new prompt or book never mixes with old runs.
+Configuration lives in git, edited by people: the prompts (lmreview/prompts/reviewer.md, rulecheck.md,
+merge.md) and lmreview/config.toml (see settings.py). Runs and scores stay in <data>/runs and
+<data>/scores (not in git), under the reviewer name `p<sha8>+vNNNN@<effort>[x<n>][-rc][-sh]`, so a new
+prompt, book or review setting never mixes with old runs. Each version's meta records the settings
+that made it.
 """
 
 from __future__ import annotations
@@ -36,11 +38,12 @@ import shutil
 from typing import Iterator
 
 from .config import PROMPTS, RULES, Config
+from .settings import get, settings
 from .progress import note, step
 
-STATE = pathlib.Path(os.environ.get("LMREVIEW_STATE", pathlib.Path(__file__).resolve().parent / "state"))
-CONFIG = pathlib.Path(__file__).resolve().parent / "reviewer.json"
-MAX_TRIES = 2  # distill attempts per comment before it goes to a person
+STATE = pathlib.Path(os.environ.get("LMREVIEW_STATE") or get("paths", "state")
+                     or pathlib.Path(__file__).resolve().parent / "state")
+MAX_TRIES = int(get("distill", "max_tries"))  # distill attempts per comment before it goes to a person
 
 LEDGER = """ledger.jsonl rows: {"comment", "pr", "commit", "status", "reviewer" (whose run judged it),
 "tries": [{"book", "entries", "result", "why", "date"}], "resolved_by": {"book", "entry"}, "note"}.
@@ -128,8 +131,9 @@ def new_version(rules: list[dict], parent: int | None, **meta: object) -> int:
     """Write `rules` as the next version and make it the book in use. Returns its number."""
     n = max([int(p.stem[1:]) for p in (STATE / "history").glob("v*.jsonl")] or [0]) + 1
     _write(STATE / "history" / f"{vname(n)}.jsonl", _jsonl(rules))
+    made_with = {k: settings()[k] for k in ("review", "judge", "distill", "vet")}
     _write(_meta(STATE / "history" / f"{vname(n)}.jsonl"), json.dumps({"version": n, "parent": parent, "date": _now(),
-                                                                **meta}, indent=1) + "\n")
+                                                                "settings": made_with, **meta}, indent=1) + "\n")
     _write(STATE / "book.jsonl", _jsonl(rules))
     _write(STATE / "HEAD.json", json.dumps({"version": n, "updated": _now()}, indent=1) + "\n")
     log("promote", version=n, parent=parent, **{k: v for k, v in meta.items() if k in ("by", "from")})
@@ -145,22 +149,44 @@ def rollback(to: int) -> int:
 # ---- the reviewer ---------------------------------------------------------------------------------
 
 def config() -> dict:
-    """lmreview/reviewer.json: {"effort": "high", "rulecheck": true}."""
-    return {"effort": "high", "rulecheck": True, **(json.loads(CONFIG.read_text()) if CONFIG.exists() else {})}
+    """The [review] settings (config.toml): effort, rulecheck, parallel, shell."""
+    return dict(settings()["review"])
+
+
+def suffix(book: bool = True) -> str:
+    """The reviewer-name suffix the [review] settings ask for after @<effort>: [x<n>][-rc][-sh]
+    (no rule check without a book)."""
+    c = config()
+    return ((f"x{c['parallel']}" if c["parallel"] > 1 else "") + ("-rc" if c["rulecheck"] and book else "")
+            + ("-sh" if c["shell"] else ""))
+
+
+PARTS = ("rulecheck", "merge")  # the other agents' prompts, versioned with reviewer.md
 
 
 def prompt_id(save: bool = False) -> str:
-    """`p<sha8>` of lmreview/prompts/reviewer.md. With `save` (before a run uses it), its text is kept in
-    state/prompts/ so old runs stay reproducible after the prompt is edited."""
-    text = (PROMPTS / "reviewer.md").read_text()
-    pid = "p" + hashlib.sha256(text.encode()).hexdigest()[:8]
-    p = STATE / "prompts" / f"{pid}.md"
-    if save and not p.exists():
-        try:
-            _write(p, text)
-        except OSError:  # an installed copy may be read-only; prompt_path still finds reviewer.md by hash
-            pass
+    """`p<sha8>` of lmreview/prompts/reviewer.md, rulecheck.md and merge.md together, so editing any of
+    them gives the reviewer a new name. With `save` (before a run uses it), their texts are kept in
+    state/prompts/ (<id>.md, <id>.rulecheck.md, <id>.merge.md) so old runs stay reproducible."""
+    texts = {"": (PROMPTS / "reviewer.md").read_text(), **{k: (PROMPTS / f"{k}.md").read_text() for k in PARTS}}
+    pid = "p" + hashlib.sha256("\0".join(texts.values()).encode()).hexdigest()[:8]
+    for k, text in texts.items():
+        p = STATE / "prompts" / (f"{pid}.{k}.md" if k else f"{pid}.md")
+        if save and not p.exists():
+            try:
+                _write(p, text)
+            except OSError:  # an installed copy may be read-only; the current files are found by hash
+                pass
     return pid
+
+
+def part_path(version: str, part: str) -> pathlib.Path:
+    """The `part` prompt ("rulecheck" or "merge") of prompt version `version`: kept in state/prompts for a
+    p<sha8> version; the current file for the current version and for the older named prompts (v0b, ...)."""
+    p = STATE / "prompts" / f"{version}.{part}.md"
+    if p.exists() or not re.fullmatch(r"p[0-9a-f]{8}", version) or version == prompt_id():
+        return p if p.exists() else PROMPTS / f"{part}.md"
+    raise FileNotFoundError(f"prompt {version} has no {p.name} in {STATE / 'prompts'}")
 
 
 def prompt_path(version: str) -> pathlib.Path:
@@ -179,7 +205,7 @@ def reviewer(book: str | None = None) -> str:
     """The reviewer name of the current prompt and config with `book` (default: the book in use)."""
     c = config()
     book = book or (vname(head()) if head() else None)
-    return f"{prompt_id()}" + (f"+{book}" if book else "") + f"@{c['effort']}" + ("-rc" if c["rulecheck"] and book else "")
+    return f"{prompt_id()}" + (f"+{book}" if book else "") + f"@{c['effort']}" + suffix(bool(book))
 
 
 # ---- the ledger -------------------------------------------------------------------------------------
@@ -328,14 +354,18 @@ def discard() -> str:
 
 # ---- the steps -----------------------------------------------------------------------------------
 
-def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: str = "high", workers: int = 4,
-                 max_cost: float = 5.0, cfg: Config | None = None, induce: bool = False,
+def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: str | None = None, workers: int = 4,
+                 max_cost: float | None = None, cfg: Config | None = None, induce: bool | None = None,
                  compress: bool = False) -> str:
     """Distill the ledger's to_distill comments (only on `prs`, if given) into a candidate built on the
     book in use. Earlier failed attempts are passed on, so the next one is written differently.
     Comments distill finds not learnable (context, not an issue, declined) become not_rulable."""
     from .distill import distill
     cfg = cfg or Config()
+    d = settings()["distill"]
+    effort = effort or d["effort"]
+    induce = d["induce"] if induce is None else induce
+    max_cost = get("budget", "distill") if max_cost is None else max_cost
     with lock():
         if not head():
             raise RuntimeError("no book in use: `lmreview init <rules name>` first")
@@ -376,11 +406,13 @@ def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: 
         return f"candidate {name}: {msg}; {n_out} comments not rulable. Next: `lmreview vet`"
 
 
-def vet_step(max_cost: float = 30.0, reps: int = 1, everything: bool = False, cfg: Config | None = None) -> str:
+def vet_step(max_cost: float | None = None, reps: int | None = None, everything: bool = False, cfg: Config | None = None) -> str:
     """Vet the candidate against the book in use. What works becomes the next version (the rest is
     dropped or reverted, see vet._passing); each comment of the candidate is then resolved, or gets a
     failed attempt (needs_human after MAX_TRIES). INCOMPLETE (cost cap) keeps the candidate for a rerun."""
     from .vet import vet
+    max_cost = get("budget", "vet") if max_cost is None else max_cost
+    reps = reps or int(get("vet", "reps"))
     with lock():
         c = candidate()
         if not c:
@@ -390,7 +422,7 @@ def vet_step(max_cost: float = 30.0, reps: int = 1, everything: bool = False, cf
         res: dict = {}
         note(f"▶ vet {c['name']} against {vname(c['parent'])} ({len(c['comments'])} comments); cap ${max_cost:.0f}")
         conf = config()
-        report = vet(c["name"], vname(c["parent"]), prompt_id(), conf["effort"], "-rc" if conf["rulecheck"] else "",
+        report = vet(c["name"], vname(c["parent"]), prompt_id(), conf["effort"], suffix(),
                      reps=reps, max_cost=max_cost, everything=everything, cfg=cfg, out=res)
         if max_cost <= 0 or not res:
             return report
@@ -488,10 +520,15 @@ def pick_samples(prs: list[int | str], cfg: Config | None = None) -> list[str]:
     return out
 
 
-def round_(prs: list[int | str], review_cost: float = 30.0, judge_cost: float = 10.0, distill_cost: float = 5.0,
-           vet_cost: float = 30.0, cfg: Config | None = None, induce: bool = False) -> str:
+def round_(prs: list[int | str], review_cost: float | None = None, judge_cost: float | None = None,
+           distill_cost: float | None = None, vet_cost: float | None = None, cfg: Config | None = None,
+           induce: bool | None = None) -> str:
     """One round on samples `prs` (PR:commit, or PR numbers: see pick_samples): review with the book in use, judge, then
     distill + vet until their comments are all resolved / not rulable / needs_human (at most MAX_TRIES)."""
+    b = settings()["budget"]["round"]
+    review_cost, judge_cost, distill_cost, vet_cost = (
+        b[k] if v is None else v for k, v in (("review", review_cost), ("judge", judge_cost),
+                                             ("distill", distill_cost), ("vet", vet_cost)))
     from .replay import replay
     rv = reviewer()
     prs = pick_samples(prs, cfg)

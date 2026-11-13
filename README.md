@@ -78,7 +78,8 @@ Everything the process needs is in `lmreview/state/`, in git:
 | `prompts/` | snapshots of the reviewer prompt (`lmreview/prompts/reviewer.md`) |
 | `log.jsonl` | what each step did |
 
-The reviewer settings (effort, rule check) are in `lmreview/reviewer.json`.
+All settings (review effort, rule check, parallel main reviews, shell; distill, vet, cost caps, paths) are in
+`lmreview/config.toml`, commented. `LMREVIEW_CONFIG=<file>` merges a file with only the keys you change on top.
 
 ## Commands
 

@@ -182,7 +182,8 @@ def score_one(cfg: Config, run: dict, sample: dict, gold: list[dict], out: pathl
     hs = []
     for p in pts:
         e = m.get(by_point.get(id(p)), {})
-        hs.append(p | {"matched_ai": [str(x) for x in e.get("matched_ai") or []], "match_why": e.get("match_why", "")})
+        hs.append(p | {"matched_ai": [str(x) for x in e.get("matched_ai") or []], "match_why": e.get("match_why", "")}
+                  | ({"second": e["second"]} if e.get("second") else {}))
     res = {"human": hs, "ai": ai_out, "second_opinion": bool(second), "pr": run["pr"], "commit": run["commit"], "cost": cost,
            "effort": effort, "judge": JUDGE, "annotator": ann["annotator"],
            "denials": [], "gold_ids": [c["id"] for c in gold]}

@@ -14,6 +14,9 @@ shell = false        # -sh: the agents also get a sandboxed shell (needs bubblew
 effort = "high"      # cached scores record their effort; a different one refuses to reuse them
 second_opinion = true  # a missed point, or a rule's finding judged invalid, counts only if a second call agrees
 
+[annotate]
+effort = "high"      # splitting human comments into points and typing them (once per sample, by vote)
+
 [distill]
 effort = "high"
 induce = false         # step 6: principles over standalone entries (their parents earned nothing)

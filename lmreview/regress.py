@@ -26,6 +26,7 @@ from .schema import cites as finding_rules
 from .distill import COVERAGE, _ask, _fmt, _id
 from .reviewer import load_rules, parse_reviewer, reviewer_context, run_reviewer
 from .annotate import cid_of
+from .settings import get
 from .score import REPORTS, hkey, load_gold, refuted, score_one
 from .workspace import cached_pr, sample_workspace
 
@@ -122,7 +123,7 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
             return (rv, target, k, {"run": run, "score": None}), mine
         sp = cfg.data / "scores" / d.name / name
         judged = sp.exists()
-        sc = score_one(cfg, run, s, [cm[i] for i in s["gold_ids"]], sp, "high")
+        sc = score_one(cfg, run, s, [cm[i] for i in s["gold_ids"]], sp, str(get("judge", "effort")))
         with lock:
             spent[0] += 0 if judged else sc.get("cost", 0)
         mine += 0 if judged else sc.get("cost", 0)

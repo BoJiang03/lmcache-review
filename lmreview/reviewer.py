@@ -26,22 +26,25 @@ def _default_reviewer() -> str:
 DEFAULT_REVIEWER = os.environ.get("LMREVIEW_REVIEWER") or _default_reviewer()
 
 
-_NAME = re.compile(r"([\w.-]+?)(?:\+([\w.-]+?))?(?:@([a-z]+))?(?:x(\d+))?(-rc)?")
+_NAME = re.compile(r"([\w.-]+?)(?:\+([\w.-]+?))?(?:@([a-z]+))?(?:x(\d+))?(-rc)?(-sh)?")
+SHELL_NOTE = ("\n\nYou also have a shell (Bash), sandboxed: use it to check behavior instead of guessing, e.g. run "
+              "a short Python snippet against the code or a test that needs no GPU. The network may be unavailable "
+              "and you can only write inside the working directory; do not change the repository's files.\n")
 
 
 def parse_reviewer(name: str) -> tuple[str, str | None, str]:
-    """A reviewer is named `<prompt>[+<rules>][@<effort>][x<n>][-rc]`, e.g. `v0b+r1@high` or
+    """A reviewer is named `<prompt>[+<rules>][@<effort>][x<n>][-rc][-sh]`, e.g. `v0b+r1@high` or
     `v0b+r1@highx3` (x3: three runs in parallel, then one merge run; see parallel_of; -rc: see
-    rulecheck_of).
+    rulecheck_of; -sh: the agents also get a sandboxed shell, see shell_of).
 
     Returns:
         (prompt version, rulebook name or None, effort; default "high").
     """
     m = _NAME.fullmatch(name)
     if not m:
-        raise ValueError(f"bad reviewer name {name!r}; expected <prompt>[+<rules>][@<effort>][x<n>][-rc]")
-    if m[5] and not m[3]:  # else "v0b+foo-rc" is ambiguous: rulebook "foo-rc", or "foo" with the rule check
-        raise ValueError(f"bad reviewer name {name!r}: -rc needs an explicit @<effort> before it")
+        raise ValueError(f"bad reviewer name {name!r}; expected <prompt>[+<rules>][@<effort>][x<n>][-rc][-sh]")
+    if (m[5] or m[6]) and not m[3]:  # else "v0b+foo-rc" is ambiguous: rulebook "foo-rc", or "foo" + rule check
+        raise ValueError(f"bad reviewer name {name!r}: -rc / -sh need an explicit @<effort> before them")
     return m[1], m[2], m[3] or "high"
 
 
@@ -49,6 +52,13 @@ def parallel_of(name: str) -> int:
     """How many reviewer runs `name` asks for (its `x<n>` suffix; 1 without one)."""
     m = _NAME.fullmatch(name.split("#")[0])
     return int(m[4]) if m and m[4] else 1
+
+
+def shell_of(name: str) -> bool:
+    """Whether `name` gives its agents a shell (`-sh` suffix), run in Claude Code's sandbox: no network
+    when replaying a historical sample, network when reviewing a PR now; never outside the workspace."""
+    m = _NAME.fullmatch(name.split("#")[0])
+    return bool(m and m[6])
 
 
 def rulecheck_of(name: str) -> bool:
@@ -149,8 +159,9 @@ def rules_section(rules: list[dict], paths: list[str], examples: bool = False) -
             + "\n".join(lines) + "\n")
 
 
-def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER) -> dict:
-    """Run `reviewer` (see parse_reviewer) in workspace `wt` for PR `raw`.
+def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, live: bool = False) -> dict:
+    """Run `reviewer` (see parse_reviewer) in workspace `wt` for PR `raw`; `live`: a PR reviewed now
+    (not a historical sample), which only matters for a shell's network (see shell_of).
 
     Returns:
         {"schema_version", "findings": list of schema.Finding dicts | None (None = output not
@@ -174,13 +185,18 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER) 
     meta = {"schema_version": SCHEMA_VERSION, "effort": effort, "version": version, "rules": rules,
             "reviewer": reviewer}
     n, rc = parallel_of(reviewer), rulecheck_of(reviewer) and bool(use)
+    sh = shell_of(reviewer)
+    tools, sb = (TOOLS + ",Bash", "live" if live else "replay") if sh else (TOOLS, None)
+    if sh:
+        prompt = prompt.replace("\nFinish with one JSON block", SHELL_NOTE + "\nFinish with one JSON block", 1) \
+            if "\nFinish with one JSON block" in prompt else prompt + SHELL_NOTE
 
     def once() -> dict:
-        return _parsed(llm.run(prompt, effort, cwd=str(wt), tools=TOOLS, system=system))
+        return _parsed(llm.run(prompt, effort, cwd=str(wt), tools=tools, system=system, sandbox=sb))
 
     def rulecheck() -> dict:  # must give a verdict per rule, so a long rulebook cannot crowd rules out
         p = (PROMPTS / "rulecheck.md").read_text().format(rules="\n".join(rule_lines(use, rule_examples(version))), **pr_meta(raw))
-        return _parsed(llm.run(p, effort, cwd=str(wt), tools=TOOLS, system=system), rulecheck=True)
+        return _parsed(llm.run(p, effort, cwd=str(wt), tools=tools, system=system, sandbox=sb), rulecheck=True)
 
     def merge(ok: list[dict]) -> dict:  # one more agent run on the same workspace: it may read code
         reviews = "\n\n".join(f"Run {i}" + (" (rule check: only team-rule violations, not a full review)"
@@ -188,7 +204,7 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER) 
                               + f":\n{json.dumps(x['findings'], indent=1)}" for i, x in enumerate(ok, 1))
         return _parsed(llm.run((PROMPTS / "merge.md").read_text().format(n=len(ok), reviews=reviews,
                                                                          **pr_meta(raw)),
-                               effort, cwd=str(wt), tools=TOOLS, system=system))
+                               effort, cwd=str(wt), tools=tools, system=system, sandbox=sb))
 
     e = ensemble(once, n, merge, ok=lambda x: x["findings"] is not None, extra=[rulecheck] if rc else [])
     if n == 1 and not rc:
@@ -248,7 +264,7 @@ def review_pr(pr: int, commit: str | None = None, reviewer: str = DEFAULT_REVIEW
         raise RuntimeError(f"lmreview needs {', '.join(missing)} on PATH (claude: logged in; gh: `gh auth login`)")
     raw = github.fetch_pr(pr)
     with live_workspace(cfg, raw, commit, reviewer_context(reviewer)) as (wt, c, base):
-        out = run_reviewer(wt, raw, reviewer)
+        out = run_reviewer(wt, raw, reviewer, live=True)
     return {"pr": pr, "title": raw["title"], "commit": c, "base": base, **out}
 
 

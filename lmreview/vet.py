@@ -34,7 +34,7 @@ import pathlib
 import re
 
 from .config import Config
-from .annotate import cid_of
+from .annotate import cid_of, norm
 from .settings import get
 from .state import book_path
 from .progress import note
@@ -125,10 +125,10 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     retired = [i for i in O if i not in N]
     revised = [i for i in O if i in N and N[i].get("version", 1) != O[i].get("version", 1)]
     rel = _related_ids(new_rules)
-    old_ev = {i: {int(e) for e in r.get("evidence") or []} for i, r in O.items()}
+    old_ev = {i: {norm(e) for e in r.get("evidence") or []} for i, r in O.items()}
     in_base = set().union(*old_ev.values()) if old_ev else set()
-    effect = [(i, int(e)) for i, r in N.items() for e in r.get("evidence") or []
-              if int(e) not in in_base and int(e) in where]  # comments new to the book (a parent's
+    effect = [(i, norm(e)) for i, r in N.items() for e in r.get("evidence") or []
+              if norm(e) not in in_base and norm(e) in where]  # comments new to the book (a parent's
     # inherited evidence is not new: its members' source comments are replayed as side effects)
     if not every_sample:  # one sample per PR: the one holding most of the new comments
         n_in: dict = {}

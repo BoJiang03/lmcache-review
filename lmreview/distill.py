@@ -35,6 +35,7 @@ from . import llm
 from .budget import capped_map
 from .config import RULES, Config
 from .schema import cites as finding_rules
+from .annotate import norm
 from .settings import get
 from .state import book_path
 from .ensemble import ensemble
@@ -238,7 +239,7 @@ def _ask(prompt: str, effort: str, cfg: Config) -> tuple[object, float]:
 
 def _id(x: object) -> object:
     """Comment ids come back from the model as ints or strings."""
-    return int(x) if isinstance(x, str) and x.strip().isdigit() else x
+    return norm(x) if isinstance(x, (int, str)) else x
 
 
 def _misses(cfg: Config, reviewer: str, split: str) -> list[int]:
@@ -731,7 +732,7 @@ def book_meta(name: str) -> dict:
     if p.exists():
         return json.loads(p.read_text())
     rules = [json.loads(l) for l in book_path(name).open() if l.strip()]
-    return {"seen": sorted({int(e) for r in rules for e in r.get("evidence") or []})}
+    return {"seen": sorted({norm(e) for r in rules for e in r.get("evidence") or []}, key=str)}
 
 
 def write_meta(name: str, meta: dict) -> None:

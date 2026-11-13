@@ -1,7 +1,7 @@
-"""Probe distill on a handful of hand-picked comments: attribute -> cluster -> abstract, printed.
+"""Probe distill on a handful of hand-picked comments: attribute -> write, printed.
 
 Checks one question cheaply: can distill turn a given human comment into the rule we expect, and does
-clustering keep apart asks that share a topic but go in different directions? Writes nothing.
+the write step keep apart asks that share a topic but go in different directions? Writes nothing.
 Unlike `lmreview distill`, it may read any split: the comments are named explicitly.
 
 usage: python3 scripts/distill_probe.py [--run] [--effort high] [--max-cost 1]
@@ -18,7 +18,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from lmreview.config import Config  # noqa: E402
 from lmreview.config import RULES  # noqa: E402
-from lmreview.distill import (ATTRIBUTE, EST, _ask, _fmt, _id, attach_signals, cluster, failure_signals,  # noqa: E402
+from lmreview.distill import (ATTRIBUTE, EST, _ask, _fmt, _id, failure_signals,  # noqa: E402
                               induce, update_rulebook)  # noqa: E402
 from lmreview.score import load_gold  # noqa: E402
 
@@ -194,7 +194,7 @@ PROBES["m23to27"] = {
 }
 
 def main() -> None:
-    """Run attribute, cluster and rulebook update on one probe set and print the changes."""
+    """Run attribute and the write step on one probe set and print the changes."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--set", default="docex", choices=sorted(PROBES))
     ap.add_argument("--run", action="store_true")
@@ -202,7 +202,7 @@ def main() -> None:
     ap.add_argument("--max-cost", type=float, default=1.0)
     ap.add_argument("--train-only", action="store_true", help="drop the test comments (fair rule for testing on them)")
     ap.add_argument("--json", help="write the resulting rulebook here")
-    ap.add_argument("--n", type=int, default=3, help="abstraction drafts to merge (1 = no ensemble)")
+    ap.add_argument("--n", type=int, default=3, help="write drafts to merge (1 = no ensemble)")
     ap.add_argument("--no-induce", action="store_true", help="skip step 6 (principles over standalone entries)")
     ap.add_argument("--base", help="existing rulebook (rules/<name>.jsonl) to update instead of starting empty")
     a = ap.parse_args()
@@ -212,8 +212,8 @@ def main() -> None:
     cs = [cm[i] for i in PROBE if not (a.train_only and "(test)" in PROBE[i])]
     for c in cs:
         print(f"[{c['id']}] {PROBE[c['id']]}")
-    est = EST["attribute"] + EST["cluster"] + EST["abstract"]
-    print(f"\n3 calls (attribute, cluster, abstract) at effort {a.effort}; est ${est:.2f}, cap ${a.max_cost:.2f}")
+    est = EST["attribute"] + EST["write"] * (a.n + 1 if a.n > 1 else 1)
+    print(f"\nattribute + write ({a.n} drafts) at effort {a.effort}; est ${est:.2f}, cap ${a.max_cost:.2f}")
     if not a.run:
         print("plan only; pass --run to spend")
         return
@@ -223,24 +223,19 @@ def main() -> None:
     att = [{**x, "id": _id(x.get("id"))} for x in att if isinstance(x, dict)]
     print(f"\n== attribute (${cost:.2f})")
     for x in att:
-        print(f"[{x['id']}] {x.get('kind')}: {x.get('rule') or ''}  paths={x.get('paths')}")
+        print(f"[{x['id']}] {x.get('kind')}: {x.get('asks') or x.get('why') or ''}")
 
-    items = {f"c{x['id']}": x["rule"] for x in att if x.get("kind") == "learnable" and x.get("rule")}
+    items = {f"c{x['id']}": x["asks"] for x in att if x.get("kind") == "learnable" and x.get("asks")}
     evid = {k: [int(k[1:])] for k in items}
     base = [json.loads(l) for l in (RULES / f"{a.base}.jsonl").open() if l.strip()] if a.base else []
-    for r in base:
-        if r.get("status", "active") == "active":
-            items[f"b{r['id']}"] = f"When {r.get('when')}: {r.get('expect')} (existing rule; paths {r.get('paths') or []})"
-            evid[f"b{r['id']}"] = r.get("evidence") or []
-    groups = cluster(items, a.effort, cfg, spend, a.max_cost)
+    retry = {f"c{e}": [r["id"]] for r in base if r.get("status", "active") == "active"
+             for e in r.get("evidence") or [] if f"c{e}" in items}
     sig_text, sig = failure_signals(base, cfg) if base else ({}, {})
-    attach_signals(groups, items, evid, sig_text, sig)
-    print(f"failure signals attached: {len(sig)}")
-    print("\n== cluster")
-    for i, g in enumerate(groups):
-        print(f"group {i} ({g['concern']}): " + ", ".join(g["members"]))
-    rules, changes = update_rulebook(base, groups, items, evid, "probe", cm, a.effort, cfg, spend, a.max_cost, n=a.n,
-                                     signals=sig)
+    for k in sig:
+        items[k], evid[k] = sig_text[k], []
+    print(f"failure signals: {len(sig)}; retries: {len(retry)}")
+    rules, changes = update_rulebook(base, items, evid, "probe", cm, a.effort, cfg, spend, a.max_cost, n=a.n,
+                                     signals=sig, retry=retry)
     if not a.no_induce:
         rules, more = induce(rules, cm, a.effort, cfg, spend, a.max_cost + 1, "probe")
         changes += more

@@ -5,14 +5,15 @@ or the misses of `misses_of` in its judge results; `lmreview judge` / `eval` jud
 a base entry that were refuted are its failure signals. Comments whose file never changed again although
 the PR got later commits are dropped.
   1. attribute (batches, no tools): learnable | context | not_issue | rejected (declined in the
-     thread); for learnable ones a candidate rule
-  2. cluster (no tools): group candidates with the base entries by underlying concern; failure
-     signals join their entry's group
-  3. abstract new-only groups (n drafts merged); REVISE groups with base entries: evidence | parent
-     principle | add | revise / retire (only on a failure signal or an opposite comment) | contradict
-  4. update the book; a revision must still explain the entry's evidence and corrected tests
-  5. induce: place standalone entries under principles (attach, or a new parent)
-Output: rules/<out>.jsonl, rules/<out>.md (readable), <data>/distill/<out>/{attribution,clusters,changes}.json.
+     thread) | contested; for a learnable one, what the reviewer asked the author to do (a
+     description, not a rule)
+  2. write (one step, n drafts merged): with the whole rulebook, the failure signals and every
+     learnable finding (the reviewer's words and code), decide per finding: evidence | generalize |
+     merge | add | revise / retire (only on failure signals, an opposite finding, or a retry) |
+     contradict | skip. A finding whose entry already exists and still missed it is marked RETRY.
+  3. update the book; a revision must still explain the entry's evidence and corrected tests
+  4. induce (off by default): place standalone entries under principles (attach, or a new parent)
+Output: rules/<out>.jsonl, rules/<out>.md (readable), <data>/distill/<out>/{attribution,changes}.json.
 Whether the result is kept is `lmreview vet`'s call (vet.py).
 Never reads test/new samples.
 
@@ -43,9 +44,8 @@ from .progress import note
 from .score import REPORTS, _normalize, hkey, load_gold, refuted
 
 BATCH = 30          # comments per attribution / coverage call
-CLUSTER_CHUNK = 400  # candidates per clustering call
-ABSTRACT_BATCH = 12  # clusters per abstraction call
-EST = {"attribute": 0.17, "cluster": 0.4, "abstract": 0.15}  # $/call, from the pilot; estimates only
+WRITE_BATCH = 25    # findings per write call (each call sees the whole rulebook)
+EST = {"attribute": 0.17, "write": 0.6}  # $/call; estimates only
 
 ATTRIBUTE = """You are distilling the review standards of the LMCache team (a KV-cache layer for LLM
 inference engines such as vLLM) from past human review comments.
@@ -53,51 +53,29 @@ inference engines such as vLLM) from past human review comments.
 For each comment below (with its code hunk, what happened to the code afterwards, and the discussion
 after it: every reply with who wrote it, and whether the thread was resolved and by whom), decide:
 - "learnable": it follows from a standard, a recurring concern, or knowledge of this codebase or the
-  engine that a reviewer could apply to FUTURE pull requests. Write the reason as a candidate rule:
-  the principle or fact behind the comment, not a restatement of this one fix. If the reviewer
-  states the principle ("X does not belong in the generic layer", "use only one path"), the rule is
-  at that level; the mechanism this PR used (an inline type check, an event stream) is one instance
-  of it, not its condition. Keep what the
-  reviewer asked the author to DO (e.g. "explain multi-step state changes in a docstring with a
-  worked example of values before/after", not just "docstrings should be clear").
+  engine that a reviewer could apply to FUTURE pull requests. In "asks", say in at most 40 words what
+  the reviewer asked the author to do and why, as the reviewer put it (with the principle if they
+  stated one). Describe this comment; do not write a rule: rules are written later, from all the
+  findings and the whole rulebook together.
 - "context": it needs knowledge outside the code (an offline decision, roadmap, another PR's state).
 - "not_issue": a question, praise, or nothing actionable.
 - "rejected": the team did not take the suggestion: the reviewer (or another reviewer) withdrew it,
   agreed with the author's objection, or resolved the thread with the code left as it was.
 - "contested": only the PR author objected (or resolved the thread without the change), and no
   reviewer agreed. Whether the team stands by the suggestion is unknown; do not decide it.
-Also give "paths": glob patterns of where the rule applies ([] = anywhere). Where the commented file
-happens to be is not a reason: a principle that would hold in any module gets [].
 
 Comments:
 {comments}
 
 Answer with one JSON block only:
 ```json
-[{{"id": 123, "kind": "learnable|context|not_issue|rejected|contested", "rule": "...", "paths": ["..."],
+[{{"id": 123, "kind": "learnable|context|not_issue|rejected|contested", "asks": "<learnable only>",
    "why": "<=20 words, for every kind but learnable"}}]
-```"""
-
-CLUSTER = """Below are candidate review rules distilled from LMCache human review comments, one per line
-with a key. Group them by UNDERLYING CONCERN: the same principle or the same piece of knowledge, asking
-the author for the same kind of change, even if they come from different files, areas or wordings
-(e.g. "release-path rank gating must match the acquire path" and "free buffers on every exit path
-the same way they were allocated" share "acquire/release symmetry"). A shared TOPIC is not enough:
-candidates that ask for different or opposite changes stay apart (e.g. "shorten docstrings to the
-contract" and "explain tricky state changes in docstrings with a worked example" are two groups,
-though both are about docstrings). Singletons are fine. Every key goes into exactly one group.
-
-Candidates:
-{items}
-
-Answer with one JSON block only:
-```json
-[{{"concern": "short name of the shared concern", "members": ["k1", "k7"]}}]
 ```"""
 
 MIN_SIGNAL_PRS = int(get("distill", "min_signal_prs"))  # revise/retire on failure signals alone: they must come from this many PRs
 
-# How general an entry must be; shared by ABSTRACT and REVISE (no braces: it goes through str.format).
+# How general an entry must be; shared by WRITE, MERGE_WRITE and INDUCE (no braces: it goes through str.format).
 GENERAL = """How general "when" and "expect" must be:
 - "when" names a KIND of situation a reviewer can recognize in any diff (e.g. "a docstring explains in
   prose a process the reader has to simulate in their head"), not the mechanisms, identifiers or
@@ -108,10 +86,10 @@ GENERAL = """How general "when" and "expect" must be:
   source PRs' particulars (numbers, identifiers, parameters, orderings, e.g. "128K tokens", "chunk
   size") do not belong in "expect" either: use the general term ("a long request", "every
   negotiated parameter") and put the particulars in "examples".
-- Level: read what the reviewer said (quoted under each candidate). When the reviewer states the
+- Level: read what the reviewer said (quoted under each finding). When the reviewer states the
   principle behind the ask (e.g. "there are two paths for X; use only one", "this is a vendor
   specialization inside the generic layer"), write "when" and "expect" at the level of that stated
-  principle, even if the candidate is narrower. The mechanism the PR happened to use (an inline type
+  principle, even if the summary of the ask is narrower. The mechanism the PR happened to use (an inline type
   check, an event stream, a snapshot getter) goes to "examples", never into "when" as a condition.
 - Self-check before answering: for each noun, number or mechanism in "when" and "expect", ask whether
   it still holds for another PR of the same kind. If not, replace it with the general term and move
@@ -125,97 +103,111 @@ GENERAL = """How general "when" and "expect" must be:
   is not a reason (a "keep the shared layer feature-agnostic" rule from connector comments applies to
   the server too). A "knowledge" entry is scoped to the code its fact is about."""
 
-ABSTRACT = """Each group below holds candidate review rules from LMCache human review comments that share
-one concern (with the PR numbers they came from). For each group write ONE rulebook entry for the
-reviewer, or skip the group if it carries no reusable principle or knowledge:
-- "principle": the review principle at the level a reviewer would apply it to other changes (the
-  group's candidates are instances); specific enough to check against a diff.
-- "knowledge": a fact or invariant about this codebase or the engine, and what a reviewer must
-  therefore check when touching that code; scope it with "paths".
+WRITE = """You are updating the LMCache review rulebook: the entries an AI reviewer is given when it reviews a
+pull request of LMCache (a KV-cache layer for LLM inference engines such as vLLM). Writing the entries
+is the step everything depends on: an entry is useful only if an AI reviewer reading a diff will raise
+the human's point because of it, on the PR it came from AND on other PRs of the same kind, without
+raising points the team would not ask for.
 
-""" + GENERAL + """
-Fields: "group" (its number), "kind", "when" (the kind of change it applies to), "expect" (what to
-check or require; checkable), "why" (one line), "examples" (1-2 short concrete instances), "paths"
-(glob patterns, [] = anywhere).
+Below are (1) the rulebook as it stands; (2) failure signals: findings of the AI reviewer that cited an
+entry and were judged invalid; (3) review findings by human reviewers that the AI reviewer missed, each
+with what the reviewer said, the code it was on, and what they asked the author to do.
 
-Groups:
-{groups}
-
-Answer with one JSON block only:
-```json
-[{{"group": 0, "kind": "principle", "when": "...", "expect": "...", "why": "...", "examples": ["..."], "paths": []}}]
-```"""
-
-# Merge step of an ensemble of ABSTRACT runs: one entry per group from several drafts of it.
-MERGE_ABSTRACT = """Several independent drafts were written for the rulebook entries of the groups below (each
-group: candidate review rules from LMCache human review comments, with what the reviewer said). The drafts
-differ by chance, mostly in how general they are. For each group write the ONE final entry:
-- Its level is the one the reviewer's own words support: read the quotes. Prefer the draft whose "when"
-  covers every mechanism by which a PR could break that stated principle; take the most precise
-  "expect" and the best examples from any draft. Do not go above what the reviewer said.
-- Skip a group only if most drafts skipped it.
-
-""" + GENERAL + """
-
-Groups:
-{groups}
-
-Drafts:
-{drafts}
-
-Answer with one JSON block only, in the same format as the drafts:
-```json
-[{{"group": 0, "kind": "principle", "when": "...", "expect": "...", "why": "...", "examples": ["..."], "paths": []}}]
-```"""
-
-REVISE = """Below are groups of an LMCache review rulebook being updated. Each group holds existing
-entries (keys "b...", with id, text and examples), new candidate rules (keys "c...", from human
-review comments the reviewer missed) and failure signals of existing entries (keys "s...": a finding
-that cited the entry and was judged invalid), grouped as one concern. Decide how the rulebook changes. Every
-key of a group appears in exactly one decision of that group:
-- "keep": an existing entry stays as written (no candidate concerns it).
-- "evidence": candidates are already instances of an existing entry AS WRITTEN: a reviewer applying it
-  to their change would have raised their point. The entry's text stays.
-- "generalize": candidates ask for the same kind of change as an existing entry, but its "when" or
+Decide how the rulebook changes. Every finding key ("c...") and every signal key ("s...") appears in
+exactly one decision; several findings that ask for the same change go into ONE decision (one entry
+with all of them as evidence). Findings that share a topic but ask for different or opposite changes
+are separate decisions (e.g. "shorten docstrings to the contract" and "explain tricky state changes in
+a docstring with a worked example" are two entries, though both are about docstrings).
+- "evidence": the findings are already instances of an existing entry AS WRITTEN: a reviewer applying
+  it to their change would have raised their point. The entry's text stays.
+- "generalize": the findings ask for the same kind of change as an existing entry, but its "when" or
   "expect" is too narrow to make a reviewer raise their point. Write the broader entry at the lowest
-  level that covers the existing entry AND the candidates. It REPLACES the existing entry (which is
+  level that covers the existing entry AND the findings. It REPLACES the existing entry (which is
   retired), so it must still make a reviewer raise everything the existing entry asked for.
 - "merge": two or more existing entries ask for the same kind of change; write the one entry that
-  REPLACES them all (they are retired). It must make a reviewer raise everything each of them asked
-  for, and be shorter than they are together; otherwise keep them. Candidates the merged entry covers
-  may be listed in "members" too.
-A smaller rulebook that explains the same comments generalizes better: prefer "evidence", then
-"generalize" or "merge", over "add". Every replacement is checked later against all the comments the
-replaced entries came from; one that loses any of them is undone.
-- "add": candidates ask for a different change than every existing entry; write a new entry.
-- "revise": the existing entry's text is WRONG as shown by the group's failure signals ("s..." keys:
-  findings that cite the entry and were judged invalid) or by candidates that ask for the opposite.
-  Rewrite it so it would not have produced those findings (or would agree with the reviewers), while
-  still covering everything its examples asked for. List the keys that show it is wrong in "members",
-  and say in "changed" (one line) which situations the new text no longer covers, or now covers, or
-  what it now asks for differently, such that those findings would not arise. A rewrite that only
-  rephrases (same situations, same request) is not a revise: if the signal came from the reviewer
-  misapplying a correct entry, use "keep" (the signal is still recorded as considered).
+  REPLACES them all. It must make a reviewer raise everything each of them asked for, and be shorter
+  than they are together; otherwise do not merge. Findings it covers may be listed in "members" too.
+- "add": the findings ask for a different change than every existing entry; write a new entry.
+- "revise": an existing entry's text is WRONG as shown by failure signals or by findings that ask for
+  the opposite, or it is the entry a finding marked RETRY was written from and it still did not make
+  the reviewer raise the point. Rewrite it so it would not have produced those findings (or agrees with
+  the reviewers, or now makes the reviewer raise the retried point), while still covering everything
+  its examples asked for. List the keys that show it is wrong in "members", and say in "changed" (one
+  line) what the new text covers or asks for differently. A rewrite that only rephrases is not a revise.
 - "retire": the existing entry is wrong and no rewrite fixes it, or another entry already covers it
   completely ("replaced_by": that id). Same evidence requirement as "revise".
-- "contradict": candidates ask for the opposite of an existing entry, but it is unclear who is right.
-  Do not rewrite it; say why.
-Only "revise" and "retire" change an existing entry, and only with failure signals from at least
-@MINPRS@ different PRs or a contradicting candidate in "members"; without them, use the other decisions.
-Fields of a written entry (generalize, merge, add, revise): "kind" (principle | knowledge), "when", "expect",
-"why" (one line), "examples" (short concrete instances), "paths" (globs, [] = anywhere).
+- "contradict": findings ask for the opposite of an existing entry, but it is unclear who is right. Do
+  not rewrite it; say why.
+- "skip": a finding carries no principle or knowledge a reviewer could apply to other PRs; say why.
+- "keep": a failure signal that came from the reviewer misapplying a correct entry (the signal is
+  recorded as considered).
+A smaller rulebook that explains the same comments generalizes better: prefer "evidence", then
+"generalize" or "merge", over "add". Every replacement is checked later against all the comments the
+replaced entries came from; one that loses any of them is undone. "revise" and "retire" need failure
+signals from at least @MINPRS@ different PRs, or a finding in "members" (opposite, or RETRY of that entry).
+
+How to write an entry (generalize, merge, add, revise):
+- "kind": "principle" (a review principle at the level a reviewer would apply it to other changes) or
+  "knowledge" (a fact or invariant about this codebase or the engine, and what a reviewer must
+  therefore check when touching that code; scope it with "paths").
+- Read the reviewer's own words, not only the summary of what they asked: the reviewer may state the
+  principle behind the ask, and the entry belongs at that level.
+- Keep what the reviewer asked the author to DO (e.g. "explain multi-step state changes in a docstring
+  with a worked example of values before/after", not just "docstrings should be clear").
+- A finding marked RETRY already has an entry that did not work: write it so that a reviewer reading
+  that diff would recognize the situation (usually the "when" names the situation too abstractly or
+  too narrowly), not a paraphrase of the same text.
 
 """ + GENERAL + """
 
-Groups:
-@GROUPS@
+Fields of a written entry: "kind", "when" (the kind of change it applies to), "expect" (what to check
+or require; checkable), "why" (one line), "examples" (1-2 short concrete instances), "paths" (globs,
+[] = anywhere).
+
+Rulebook:
+@BOOK@
+
+Failure signals:
+@SIGNALS@
+
+Findings the AI reviewer missed:
+@FINDINGS@
 
 Answer with one JSON block only, one object per decision:
 ```json
-[{"group": 0, "op": "keep|evidence|generalize|merge|add|revise|retire|contradict", "rules": ["<existing id>"],
-  "members": ["c123", "s1"], "kind": "...", "when": "...", "expect": "...", "why": "...", "examples": ["..."],
-  "paths": [], "changed": "<revise only>", "replaced_by": "<id, retire only>"}]
+[{"op": "evidence|generalize|merge|add|revise|retire|contradict|skip|keep", "rules": ["<existing id>"],
+  "members": ["c123", "s1"], "concern": "short name", "kind": "...", "when": "...", "expect": "...",
+  "why": "...", "examples": ["..."], "paths": [], "changed": "<revise only>", "replaced_by": "<id, retire only>"}]
 ```"""
+
+# Merge step of an ensemble of WRITE runs: the level of abstraction varies from run to run.
+MERGE_WRITE = """Several independent drafts were written of how the LMCache review rulebook changes for the findings
+below. They differ by chance, mostly in how general the written entries are and in which findings
+they put together. Write the ONE final set of decisions:
+- For each finding take the decision most drafts agree on (which existing entry it belongs to, or
+  that it needs a new one); put findings together only where most drafts did.
+- For a written entry, its level is the one the reviewer's own words support: read the quotes. Prefer
+  the draft whose "when" covers every mechanism by which a PR could break that stated principle; take
+  the most precise "expect" and the best examples from any draft. Do not go above what the reviewer said.
+- Skip a finding only if most drafts skipped it. Every finding and signal key appears in exactly one
+  decision.
+
+""" + GENERAL + """
+
+Rulebook:
+@BOOK@
+
+Failure signals:
+@SIGNALS@
+
+Findings the AI reviewer missed:
+@FINDINGS@
+
+Drafts:
+@DRAFTS@
+
+Answer with one JSON block only, in the same format as the drafts."""
+
 
 COVERAGE = """Below is a rulebook of LMCache review rules (id: when -> expect), then human review comments
 from pull requests. For each comment, list the ids of the rules it is an INSTANCE of: a reviewer
@@ -344,42 +336,6 @@ def _fmt(c: dict, rich: bool = True) -> str:
     return s
 
 
-def cluster(items: dict[str, str], effort: str, cfg: Config, spend: list[float], max_cost: float) -> list[dict]:
-    """Group `items` (key -> text) by concern. Chunks of CLUSTER_CHUNK, then their groups are
-    clustered again (recursively) by concern name so that groups from different chunks can merge.
-
-    Returns:
-        [{"concern", "members": [keys]}]; every key appears once (unplaced keys become singletons).
-    """
-    keys = list(items)
-
-    def one(chunk: list[str]) -> list[dict]:
-        if spend[0] >= max_cost:
-            return []
-        out, cost = _ask(CLUSTER.format(items="\n".join(f"{k}: {items[k]}" for k in chunk)), effort, cfg)
-        spend[0] += cost
-        print(f"  cluster {len(chunk)} -> {len(out)} groups ${cost:.2f} (total ${spend[0]:.2f})", flush=True)
-        return [g for g in out if isinstance(g, dict) and g.get("members")]
-
-    groups = []
-    for i in range(0, len(keys), CLUSTER_CHUNK):
-        groups += one(keys[i:i + CLUSTER_CHUNK])
-    if len(keys) > CLUSTER_CHUNK and 1 < len(groups) < len(keys):
-        # merge groups across chunks by their concern names (recursively while there are too many)
-        names = {f"g{i}": g["concern"] for i, g in enumerate(groups)}
-        meta = cluster(names, effort, cfg, spend, max_cost)
-        groups = [{"concern": m["concern"], "members": [k for gk in m["members"] for k in groups[int(gk[1:])]["members"]]}
-                  for m in meta]
-    seen, out = set(), []
-    for g in groups:
-        mem = [k for k in g["members"] if k in items and k not in seen]
-        seen.update(mem)
-        if mem:
-            out.append({"concern": g["concern"], "members": mem})
-    out += [{"concern": items[k][:60], "members": [k]} for k in keys if k not in seen]
-    return out
-
-
 def _entry(r: dict) -> dict:
     """The fields of a rulebook entry the model writes."""
     return {k: r.get(k) for k in ("kind", "when", "expect", "why", "examples", "paths")}
@@ -407,22 +363,33 @@ def _regress(rule: dict, old_ev: list[int], cm: dict, effort: str, cfg: Config, 
     return [c["id"] for c in cs if c["id"] not in ok]
 
 
-def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evid: dict, out: str, cm: dict,
-                    effort: str, cfg: Config, spend: list[float], max_cost: float,
-                    workers: int = 4, n: int = 3, signals: dict | None = None) -> tuple[list[dict], list[dict]]:
-    """Apply new candidates (`items` keys "c...", grouped with the base entries "b<id>") to a rulebook.
+def _show_entry(r: dict) -> str:
+    """An existing entry for the WRITE prompt."""
+    return (f"- {r['id']} (v{r.get('version', 1)}, {r.get('kind')}): When {r.get('when')}: {r.get('expect')}"
+            f" | examples: {'; '.join(r.get('examples') or [])} | paths {r.get('paths') or []}"
+            f" | evidence: {len(r.get('evidence') or [])} comments")
 
-    Groups of new candidates only become new entries (ABSTRACT, run `n` times and merged by
-    MERGE_ABSTRACT: the level of abstraction varies from run to run). Groups that mix existing entries
-    with candidates or failure signals, or hold several existing entries, go to REVISE: keep | evidence
-    | generalize | merge | add | revise | retire | contradict. A revised entry must still explain its
-    old evidence and corrected tests (else the revision is rejected).
+
+def update_rulebook(base_rules: list[dict], items: dict, evid: dict, out: str, cm: dict,
+                    effort: str, cfg: Config, spend: list[float], max_cost: float,
+                    workers: int = 4, n: int = 3, signals: dict | None = None,
+                    retry: dict | None = None, notes: dict | None = None) -> tuple[list[dict], list[dict]]:
+    """Apply the missed findings and the failure signals to a rulebook, in one WRITE step.
+
+    `items`: key -> text: "c<id>" a finding (what the reviewer asked), "s<n>" a failure signal of an
+    existing entry (`signals` maps it to its record); `evid`: key -> its comment ids. The model sees
+    the whole active rulebook, the signals and the findings (with the reviewer's words and code) and
+    decides: evidence | generalize | merge | add | revise | retire | contradict | skip | keep. It runs
+    `n` times and MERGE_WRITE merges the drafts (the level of abstraction varies from run to run).
+    Findings go in batches of WRITE_BATCH, each with the whole rulebook; the signals go with the
+    first batch. `retry`: finding key -> ids of the entries already written from its comment (they
+    did not make the reviewer raise it); `notes`: finding key -> what earlier attempts made of it.
 
     Existing entries change only on evidence that they are wrong: "revise" (rewrite, version + 1, the
-    old text kept in "history") and "retire" are accepted only when the decision names a failure signal
-    ("s..." keys; `signals` maps them to their records) or a contradicting candidate. Generalize and
-    merge never rewrite: they add a parent principle with "members", and each member without one gets
-    a "principle" link. `lmreview vet` then checks every kind of change on the source PRs.
+    old text kept in "history") and "retire" are accepted only when the decision names failure
+    signals from MIN_SIGNAL_PRS PRs or a finding (opposite, or a retry). A revision must still
+    explain the entry's old evidence and corrected tests. Generalize and merge add a replacement
+    that retires what it replaces. `lmreview vet` then checks every kind of change on the source PRs.
 
     Returns:
         (the whole rulebook: base entries, changed or not, then new ones; the list of changes)
@@ -430,57 +397,47 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
     today = dt.date.today().isoformat()
     base = {f"b{r['id']}": {**r, "version": r.get("version", 1), "history": list(r.get("history") or [])}
             for r in base_rules}
-    fresh = [(i, g) for i, g in enumerate(groups) if not any(k in base for k in g["members"])]
-    revise = [(i, g) for i, g in enumerate(groups) if any(k in base for k in g["members"])
-              and (any(k not in base for k in g["members"]) or len(g["members"]) > 1)]
     added, changes = [], []
+    book = "\n".join(_show_entry(r) for r in base.values() if r.get("status", "active") == "active") or "(empty)"
 
-    def show(k: str) -> str:
-        if k in base:
-            r = base[k]
-            return (f"- {k} = existing entry {r['id']} (v{r['version']}, {r.get('kind')}): When {r.get('when')}: "
-                    f"{r.get('expect')} | examples: {'; '.join(r.get('examples') or [])} | paths {r.get('paths') or []}")
-        # the human comments too, with the code they were on (the same view as attribution): the
-        # candidate may already be narrower than the principle the reviewer stated
+    def finding(k: str) -> str:
         said = "\n".join("    " + _fmt(cm[e], rich=False).replace("\n", "\n    ") for e in evid.get(k, []) if e in cm)
-        return f"- {k}: {items[k]}" + (f"\n  evidence:\n{said}" if said else "")
+        rt = (retry or {}).get(k)
+        return (f"- {k}: asks: {items[k]}"
+                + (f"\n  RETRY: entry {', '.join(rt)} was written from this comment, and the reviewer given it still "
+                   "missed the point" if rt else "")
+                + (f"\n  earlier attempts: {(notes or {})[k]}" if (notes or {}).get(k) else "")
+                + f"\n  what the reviewer said:\n{said}")
 
-    def text(gb: list) -> str:
-        return "\n\n".join(f"Group {i} ({g['concern']}):\n" + "\n".join(map(show, g["members"])) for i, g in gb)
+    skeys = [k for k in items if k.startswith("s")]
+    ckeys = [k for k in items if k.startswith("c")]
+    batches = [ckeys[i:i + WRITE_BATCH] for i in range(0, len(ckeys), WRITE_BATCH)] or ([[]] if skeys else [])
 
-    batches = [fresh[i:i + ABSTRACT_BATCH] for i in range(0, len(fresh), ABSTRACT_BATCH)]
-    def abstract(gb: list) -> tuple[object, float]:
-        # n drafts, then a merge that settles the level (abstraction varies run to run)
+    def fill(t: str, i: int, b: list[str]) -> str:
+        sig = "\n".join(f"- {k}: {items[k]}" for k in skeys) if i == 0 and skeys else "(none)"
+        return (t.replace("@MINPRS@", str(MIN_SIGNAL_PRS)).replace("@BOOK@", book).replace("@SIGNALS@", sig)
+                .replace("@FINDINGS@", "\n\n".join(map(finding, b)) or "(none)"))
+
+    def write(job: tuple[int, list[str]]) -> tuple[object, float]:
+        i, b = job
+
         def merge(ok: list) -> tuple[object, float]:
-            drafts = "\n\n".join(f"Draft {i}:\n{json.dumps(d, indent=1)}" for i, (d, _) in enumerate(ok, 1))
-            return _ask(MERGE_ABSTRACT.format(groups=text(gb), drafts=drafts), effort, cfg)
-        e = ensemble(lambda: _ask(ABSTRACT.format(groups=text(gb)), effort, cfg), n, merge,
-                     ok=lambda r: isinstance(r[0], list))
+            drafts = "\n\n".join(f"Draft {j}:\n{json.dumps(d, indent=1)}" for j, (d, _) in enumerate(ok, 1))
+            return _ask(fill(MERGE_WRITE, i, b).replace("@DRAFTS@", drafts), effort, cfg)
+        e = ensemble(lambda: _ask(fill(WRITE, i, b), effort, cfg), n, merge, ok=lambda r: isinstance(r[0], list))
         return e.result[0], sum(c for _, c in e.runs) + (e.merge[1] if e.merge else 0.0)
 
-    res, cost = capped_map(abstract, batches, workers,
-                           max(0.0, max_cost - spend[0]), label=lambda gb: f"abstract {len(gb)} groups")
-    spend[0] += cost
-    for r in (x for part in res if isinstance(part, list) for x in part):
-        if isinstance(r, dict) and r.get("expect") and isinstance(r.get("group"), int) and 0 <= r["group"] < len(groups):
-            g = groups[r["group"]]
-            ev = _uniq(e for k in g["members"] for e in evid.get(k, []))
-            added.append((_entry(r), ev, g["concern"]))
-            changes.append({"op": "add", "members": g["members"], "concern": g["concern"]})
-
-    batches = [revise[i:i + ABSTRACT_BATCH] for i in range(0, len(revise), ABSTRACT_BATCH)]
-    prompt = REVISE.replace("@MINPRS@", str(MIN_SIGNAL_PRS))
-    res, cost = capped_map(lambda gb: _ask(prompt.replace("@GROUPS@", text(gb)), effort, cfg), batches, workers,
-                           max(0.0, max_cost - spend[0]), label=lambda gb: f"revise {len(gb)} groups")
+    res, cost = capped_map(write, list(enumerate(batches)), workers, max(0.0, max_cost - spend[0]),
+                           label=lambda j: f"write {len(j[1])} findings")
     spend[0] += cost
     waiting: set[str] = set()  # signals of a refused revise/retire: kept open for a later distill
     replaced: set[str] = set()  # base keys a generalize / merge replaces
     for d in (x for part in res if isinstance(part, list) for x in part):
-        if not isinstance(d, dict) or not isinstance(d.get("group"), int) or not 0 <= d["group"] < len(groups):
+        if not isinstance(d, dict):
             continue
-        g, op = groups[d["group"]], d.get("op")
-        mem = [k for k in d.get("members") or [] if k in g["members"] and k not in base]
-        bkeys = [f"b{x}" for x in d.get("rules") or [] if f"b{x}" in g["members"]]
+        g, op = {"concern": str(d.get("concern") or "")}, d.get("op")
+        mem = [k for k in d.get("members") or [] if k in items]
+        bkeys = [f"b{x}" for x in d.get("rules") or [] if f"b{x}" in base]
         ev = _uniq(e for k in mem for e in evid.get(k, []))
         ch = {"op": op, "rules": [base[b]["id"] for b in bkeys], "members": mem, "concern": g["concern"]}
         if op == "evidence" and bkeys:
@@ -504,14 +461,14 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
             replaced |= set(bkeys)
             ch |= {"op": f"{op}-replace", "words": [sum(map(_size, olds)), _size(d)]}
         elif op in ("revise", "retire") and bkeys:
-            sig = [k for k in d.get("members") or [] if k in g["members"] and k.startswith("s")
+            sig = [k for k in d.get("members") or [] if k in items and k.startswith("s")
                    and (signals or {}).get(k, {}).get("rule") == base[bkeys[0]]["id"]]
             sig_prs = {(signals or {})[k]["target"].split("@")[0] for k in sig}
             if not mem and len(sig_prs) < MIN_SIGNAL_PRS:
                 # one PR's invalid finding is weak evidence (and the judge may be wrong): wait for more.
                 # These signals stay open, so they count again when another PR shows the same problem.
                 ch |= {"op": f"{op}-refused", "why": f"failure signals on {len(sig_prs)} PR(s), need {MIN_SIGNAL_PRS}, "
-                       "or a contradicting candidate"}
+                       "or a finding"}
                 waiting |= set(sig)
                 changes.append(ch)
                 continue
@@ -545,6 +502,8 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
                     ch |= {"version": r["version"], "when": r["when"], "expect": r["expect"], "changed": d["changed"]}
         elif op == "add" and d.get("expect") and mem:
             added.append((_entry(d) | {"kind": d.get("kind") or "principle"}, ev, g["concern"]))
+        elif op == "skip" and mem:
+            ch["why"] = d.get("why")
         elif op == "contradict" and bkeys:
             base[bkeys[0]]["contested"] = _uniq(list(base[bkeys[0]].get("contested") or []) + ev)
             ch["why"] = d.get("why")
@@ -554,7 +513,7 @@ def update_rulebook(base_rules: list[dict], groups: list[dict], items: dict, evi
 
     for k, x in (signals or {}).items():  # considered once: later distills do not reopen them
         b = base.get(f"b{x['rule']}")
-        if b is not None and k not in waiting and any(k in g["members"] for g in groups):
+        if b is not None and k not in waiting and k in items:
             b["signals_seen"] = list(b.get("signals_seen") or []) + [[x["reviewer"], x["target"], x["finding"]]]
 
     def finish(r: dict) -> dict:
@@ -840,15 +799,6 @@ def rule_diff(old: list[dict], new: list[dict], width: int = 160) -> list[tuple[
     return out
 
 
-def attach_signals(groups: list[dict], items: dict, evid: dict, text: dict, rec: dict) -> None:
-    """Put each failure signal into the group of the entry it is about (in place), so REVISE sees it."""
-    for k, r in rec.items():
-        g = next((g for g in groups if f"b{r['rule']}" in g["members"]), None)
-        if g is not None:
-            g["members"].append(k)
-            items[k], evid[k] = text[k], []
-
-
 def distill(out: str, base: str | None = None, misses_of: str | None = None, area: str | None = None,
             limit: int | None = None, effort: str = "high", workers: int = 4, max_cost: float = 5.0,
             reuse: str | None = None, keep_unaddressed: bool = False, cfg: Config | None = None,
@@ -861,9 +811,10 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     `prs`, so that the misses are the base book's own.
     distill does not judge: it reads the judge results on disk (`lmreview judge` / `eval` make them; runs
     without one are left out). The missed points are what to learn, and findings citing a base entry
-    that were refuted are its failure signals. Steps: (1) attribute the missed comments; (2) cluster them with the base entries and their signals;
-    (3) abstract each group; (4) update the book (additions; revise/retire only on a failure signal or
-    an opposite comment); (5) induce principles over the standalone entries (`do_induce`, off by
+    that were refuted are its failure signals. Steps: (1) attribute the missed comments; (2) write: one step that
+    sees the whole base book, its failure signals and the learnable findings and decides per finding
+    (evidence, generalize, merge, add; revise/retire only on failure signals, an opposite finding or a
+    retry); (3) update the book; (4) induce principles over the standalone entries (`do_induce`, off by
     default); then drop every new entry without an evidence comment of its own. Whether the
     result is kept is `lmreview vet`'s call.
 
@@ -892,9 +843,9 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     by_id = {c["id"]: c for c in cs}
     batches = [cs[i:i + BATCH] for i in range(0, len(cs), BATCH)]
     n_cand = int(len(cs) * 0.7)  # pilot: ~75% learnable
-    est = (0 if reuse else len(batches) * EST["attribute"]) + (n_cand // CLUSTER_CHUNK + 1) * EST["cluster"] \
-        + (n_cand * 0.6 // ABSTRACT_BATCH + 1) * EST["abstract"] * (n + 1 if n > 1 else 1) \
-        + (EST["abstract"] if do_induce else 0)  # n drafts + merge; one induce call
+    est = (0 if reuse else len(batches) * EST["attribute"]) \
+        + (n_cand // WRITE_BATCH + 1) * EST["write"] * (n + 1 if n > 1 else 1) \
+        + (EST["write"] if do_induce else 0)  # n drafts + merge; one induce call
     note(f"distill {out}: {len(cs)} comments" + (f" missed by {misses_of}" if misses_of else "")
          + f", {len(batches)} attribution batches; est ${est:.1f}, cap ${max_cost:.1f}")
     if max_cost <= 0:
@@ -902,17 +853,17 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
 
     work = cfg.data / "distill" / out
     work.mkdir(parents=True, exist_ok=True)
-    if reuse:  # attribution of an earlier run (same inputs): only cluster + abstract are re-done
+    if reuse:  # attribution of an earlier run (same inputs): only the write step is re-done
         res, spent = [[json.loads(l) for l in (cfg.data / "distill" / reuse / "attribution.jsonl").open()]], 0.0
     else:
-        note(f"[1/5] attribute {len(cs)} comments in {len(batches)} batches")
+        note(f"[1/3] attribute {len(cs)} comments in {len(batches)} batches")
         res, spent = capped_map(lambda b: _ask(ATTRIBUTE.format(comments="\n\n".join(map(_fmt, b))), effort, cfg),
                                 batches, workers, max_cost - pre, label=lambda b: f"attribute {len(b)}")
         spent += pre
     att = [{**a, "id": _id(a.get("id"))} for r in res if isinstance(r, list) for a in r if isinstance(a, dict)]
     att = [a for a in att if a["id"] in by_id]
     # A comment judged not learnable is never learned, so that needs a second, independent call to agree;
-    # where it finds the comment learnable, its candidate rule is used.
+    # where it finds the comment learnable, its description of the ask is used.
     out_ = [a for a in att if a.get("kind") != "learnable"]
     if out_ and not reuse:
         note(f"      second opinion on {len(out_)} comments judged not learnable")
@@ -925,46 +876,42 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
             b = second.get(a["id"])
             if b is None:  # no second opinion (cost cap or garbled): stays open, as learnable without a rule
                 a.update(first=a.get("kind"), kind="unconfirmed")
-            elif b.get("kind") == "learnable" and b.get("rule"):
-                a.update(first=a.get("kind"), kind="learnable", rule=b["rule"], paths=b.get("paths") or [])
+            elif b.get("kind") == "learnable" and b.get("asks"):
+                a.update(first=a.get("kind"), kind="learnable", asks=b["asks"])
             else:
                 a["second"] = b.get("kind")
     (work / "attribution.jsonl").write_text("".join(json.dumps(a) + "\n" for a in att))
     note(f"      attribution: {dict(C.Counter(a.get('kind') for a in att))}; {len(cs) - len(att)} not attributed")
 
-    # candidates: learnable comments + entries of the base rulebook (which carry their evidence)
-    items, evid = {}, {}
-    for a in att:
-        if a.get("kind") == "learnable" and a.get("rule"):
-            k = f"c{a['id']}"
-            items[k] = f"{a['rule']} (PR #{by_id[a['id']]['pr']}; paths {a.get('paths') or []})" + (
-                f" [earlier attempts failed, write it differently: {notes[a['id']]}]" if (notes or {}).get(a["id"]) else "")
-            evid[k] = [a["id"]]
-    if base:
-        for r in map(json.loads, filter(str.strip, book_path(base).open())):
-            if r.get("status", "active") != "active":  # retired entries are carried over untouched
-                continue
-            k = f"b{r['id']}"
-            items[k] = f"When {r.get('when')}: {r.get('expect')} (existing rule; paths {r.get('paths') or []})"
-            evid[k] = r.get("evidence") or []
-    spend = [spent]
-    note(f"[2/5] cluster {sum(k.startswith('c') for k in items)} candidates with {sum(k.startswith('b') for k in items)} "
-         f"existing entries (${spend[0]:.2f} so far)")
-    groups = cluster(items, effort, cfg, spend, max_cost)
-    _, cm = load_gold(cfg)
+    # findings: the learnable comments (an attribution from before "asks" has a candidate "rule" instead)
     base_rules = [json.loads(l) for l in book_path(base).open() if l.strip()] if base else []
+    written = C.defaultdict(list)  # comment -> active entries already written from it
+    for r in base_rules:
+        if r.get("status", "active") == "active":
+            for e in r.get("evidence") or []:
+                written[norm(e)].append(r["id"])
+    items, evid, retry, why = {}, {}, {}, {}
+    for a in att:
+        if a.get("kind") == "learnable" and (a.get("asks") or a.get("rule")):
+            k = f"c{a['id']}"
+            items[k], evid[k] = a.get("asks") or a["rule"], [a["id"]]
+            if written.get(a["id"]):
+                retry[k] = written[a["id"]]
+            if (notes or {}).get(a["id"]):
+                why[k] = notes[a["id"]]
+    spend = [spent]
+    _, cm = load_gold(cfg)
     sig_text, sig = failure_signals(base_rules, cfg, reviewer=misses_of, prs=set(prs or []) or None) \
         if base_rules and misses_of else ({}, {})
-    attach_signals(groups, items, evid, sig_text, sig)
-    note(f"      {len(groups)} groups, {sum(any(m.startswith('c') for m in g['members']) for g in groups)} with new "
-         f"candidates; {len(sig)} failure signals attached")
-    note(f"[3-4/5] abstract new groups and update the book (${spend[0]:.2f} so far)")
-    (work / "clusters.json").write_text(json.dumps(groups, indent=1))
-    rules, changes = update_rulebook(base_rules, groups, items, evid, out, cm, effort, cfg, spend, max_cost, workers,
-                                     n=n, signals=sig)
+    for k in sig:
+        items[k], evid[k] = sig_text[k], []
+    note(f"[2/3] write: {len(evid) - len(sig)} findings ({len(retry)} retries), {len(sig)} failure signals, "
+         f"{sum(r.get('status', 'active') == 'active' for r in base_rules)} existing entries (${spend[0]:.2f} so far)")
+    rules, changes = update_rulebook(base_rules, items, evid, out, cm, effort, cfg, spend, max_cost, workers,
+                                     n=n, signals=sig, retry=retry, notes=why)
     note(f"      changes: {dict(C.Counter(ch['op'] for ch in changes))}")
     if do_induce:
-        note(f"[5/5] induce principles over standalone entries (${spend[0]:.2f} so far)")
+        note(f"[3/3] induce principles over standalone entries (${spend[0]:.2f} so far)")
         rules, more = induce(rules, cm, effort, cfg, spend, max_cost, out)
         changes += more
         note(f"      induce: {dict(C.Counter(ch['op'] for ch in more)) or 'no change'}")
@@ -987,7 +934,7 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     md = [f"# Rulebook {out}", "",
           f"From {len(cs)} train comments" + (f" missed by {misses_of}" if misses_of else "")
           + (f", area {area}" if area else "") + (f", extending {base}" if base else "")
-          + f"; attribution: {dict(kinds)}; {len(groups)} concern groups; cost ${spent:.2f}",
+          + f"; attribution: {dict(kinds)}; cost ${spent:.2f}",
           f"{len(rules)} entries: " + ", ".join(f"{k} {v}" for k, v in C.Counter(r["kind"] for r in rules).items()), ""]
     md += ["## Changes", ""] + [f"- {ch['op']}: " + ", ".join(ch.get("rules") or ch.get("new") or [])
                                  + f" ({ch['concern']})" + (f"; lost old evidence {ch['lost']}" if ch.get("lost") else "")
@@ -1006,7 +953,7 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
         md.append("")
     book_path(out).with_suffix(".md").write_text("\n".join(md) + "\n")
     return (f"rules/{out}.jsonl: {len(rules)} entries ({dict(C.Counter(r['kind'] for r in rules))}) from "
-            f"{len(cs)} comments ({dict(kinds)}), {len(groups)} groups, ${spent:.2f}")
+            f"{len(cs)} comments ({dict(kinds)}), ${spent:.2f}")
 
 
 def coverage(rules_name: str, split: str = "test", area: str | None = None, misses_of: str | None = None,

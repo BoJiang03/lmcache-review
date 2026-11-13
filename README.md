@@ -50,8 +50,11 @@ book     = vet(book, new_book, human_comments)           # keep only what works 
   sample first (split into points, each with a type and severity; cached), so every judge call sees
   them the same way, and each point of a long review is matched and learned on its own. A finding
   that cites a rule and is judged invalid is a failure signal for that rule.
-- **distill** turns missed comments into rules (attribute, cluster, abstract, update the book). It
-  sees each comment with its diff hunk, and each failure signal with the code it pointed at.
+- **distill** turns missed comments into rules in two steps. attribute decides which comments are
+  worth learning and what each asked the author to do. write sees the whole book, the failure signals
+  and those comments (with the reviewer's words and diff hunk) and decides per comment: evidence for an
+  existing entry, generalize or revise one, or add a new one. A comment whose entry already exists and
+  still missed it is marked a retry.
 - **vet** reviews again with the old and the new book where they differ. The part that works
   becomes the next version. A change that fails is not just reverted: its comments go back to
   distill with the reason, so the next attempt is written differently.

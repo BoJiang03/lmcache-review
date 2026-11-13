@@ -154,12 +154,12 @@ remove those samples from that reviewer's test set.
 ```
 human-only misses ─┐
 failure signals ───┴─distill──> NEW book ──vet NEW --base OLD --write NEXT──> NEXT (the passing part)
- (findings citing   1 judge the runs of OLD    1 generality flags (free)
-  an entry, judged  2 attribute                2 effect: source PRs, OLD vs NEW
-  invalid)          3 cluster with OLD entries 2b revisions: their trigger is fixed
-                    4 abstract (3 drafts)      3 side effects: affected OLD entries' sources
-                    5 update: add | evidence | parent principle | revise | retire
-                    6 induce (--induce only): standalone entries under principles
+ (findings citing   (reads judge results)      1 generality flags (free)
+  an entry, judged  1 attribute                2 effect: source PRs, OLD vs NEW
+  invalid)          2 write, with all of OLD   2b revisions: their trigger is fixed
+                      (3 drafts merged):       3 side effects: affected OLD entries' sources
+                      evidence | generalize | merge | add | revise | retire | skip
+                    3 induce (--induce only): standalone entries under principles
                     every new entry needs a comment of its own, else it is dropped
                                               ...later: fair-target A/B, whole-book eval -> team-vN
 ```
@@ -168,9 +168,11 @@ failure signals ───┴─distill──> NEW book ──vet NEW --base OLD 
 - **distill** (`lmreview distill OUT --base OLD --misses-of v0f+OLD@high-rc --prs N ...`) does not
   review. First run `lmreview review` with the OLD book on the train PRs to learn from, so the misses
   are OLD's own. distill then:
-  - Step 1 judges those runs against the human comments (cached; vet reuses runs and scores). The
-    missed comments are what to learn. Findings citing an OLD entry that were judged invalid are its
-    failure signals.
+  - It reads the judge results of those runs (`lmreview judge` makes them). The missed points are
+    what to learn. Findings citing an OLD entry that were judged invalid are its failure signals.
+  - attribute keeps the comments worth learning and says what each asked the author to do (not a
+    rule). write then sees all of OLD, the signals and those comments, and writes or changes the
+    entries; a comment that an OLD entry was already written from is marked RETRY.
   - Additions are the normal case: a new entry, evidence on an existing one, or a parent principle
     above existing entries, which stay as written and are linked by `principle`/`members`.
   - An existing entry is rewritten (`revise`: version + 1, old text in `history`) or `retire`d only

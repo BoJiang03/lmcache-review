@@ -71,7 +71,7 @@ def main(argv: list[str] | None = None) -> None:
     o.add_argument("--judge-cost", type=float, default=get("budget", "round")["judge"])
     o.add_argument("--distill-cost", type=float, default=get("budget", "round")["distill"])
     o.add_argument("--vet-cost", type=float, default=get("budget", "round")["vet"])
-    o.add_argument("--induce", action=argparse.BooleanOptionalAction, default=get("distill", "induce"), help="distill step 3 (principles over standalone entries); "
+    o.add_argument("--induce", action=argparse.BooleanOptionalAction, default=get("distill", "induce"), help="distill step 5 (principles over standalone entries); "
                    "off by default: its parents explain no new comment and are dropped anyway")
     sub.add_parser("rollback", help="make an earlier version the book in use, as a new version").add_argument(
         "version", help="e.g. v0001")
@@ -84,7 +84,7 @@ def main(argv: list[str] | None = None) -> None:
                                        "with OUT: the old named-book mode")
     d.add_argument("out", nargs="?", help="old mode: new rulebook name, e.g. r1")
     d.add_argument("--base", help="rulebook to extend")
-    d.add_argument("--induce", action=argparse.BooleanOptionalAction, default=get("distill", "induce"), help="run step 3: principles over standalone entries (an "
+    d.add_argument("--induce", action=argparse.BooleanOptionalAction, default=get("distill", "induce"), help="run step 5: principles over standalone entries (an "
                    "experiment: a new parent without evidence of its own is dropped)")
     d.add_argument("--compress", action="store_true", help="state mode: run even with nothing to_distill, "
                    "to shrink the book (merge / generalize entries that ask for the same change)")

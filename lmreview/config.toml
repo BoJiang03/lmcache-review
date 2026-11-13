@@ -12,6 +12,7 @@ shell = false        # -sh: the agents also get a sandboxed shell (needs bubblew
 
 [judge]
 effort = "high"      # cached scores record their effort; a different one refuses to reuse them
+second_opinion = true  # a missed point, or a rule's finding judged invalid, counts only if a second call agrees
 
 [distill]
 effort = "high"

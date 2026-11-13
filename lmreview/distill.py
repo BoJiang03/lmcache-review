@@ -39,7 +39,7 @@ from .settings import get
 from .state import book_path
 from .ensemble import ensemble
 from .progress import note
-from .score import REPORTS, _normalize, hkey, load_gold
+from .score import REPORTS, _normalize, hkey, load_gold, refuted
 
 BATCH = 30          # comments per attribution / coverage call
 CLUSTER_CHUNK = 400  # candidates per clustering call
@@ -687,12 +687,12 @@ def failure_signals(rules: list[dict], cfg: Config, per_rule: int = 3, reviewer:
             sp = cfg.data / "scores" / d.name / f.name
             if not sp.exists():
                 continue
-            bad = {a["id"]: a.get("why") for a in json.loads(sp.read_text()).get("ai") or [] if a.get("valid") is False}
+            bad = {a["id"]: (a.get("second") or {}).get("why") or a.get("why")
+                   for a in json.loads(sp.read_text()).get("ai") or [] if refuted(a)}
             run = json.loads(f.read_text())
             if prs and run["pr"] not in prs:
                 continue
-            for x in run.get("findings") or []:
-                r = x.get("rule")
+            for x, r in ((x, r) for x in run.get("findings") or [] for r in sorted(finding_rules(x))):
                 key = (r, run["pr"], (x.get("title") or "")[:60])
                 if r in ids and x["id"] in bad and n[r] < per_rule and key not in seen \
                         and f.stat().st_mtime >= since.get(r, 0) \

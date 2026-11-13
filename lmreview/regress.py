@@ -26,7 +26,7 @@ from .schema import cites as finding_rules
 from .distill import COVERAGE, _ask, _fmt, _id
 from .reviewer import load_rules, parse_reviewer, reviewer_context, run_reviewer
 from .annotate import cid_of
-from .score import REPORTS, hkey, load_gold, score_one
+from .score import REPORTS, hkey, load_gold, refuted, score_one
 from .workspace import cached_pr, sample_workspace
 
 FIELDS = ("when", "expect", "examples", "paths", "status")
@@ -157,7 +157,7 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
                    for x in (hkey(res["score"], h), cid_of(hkey(res["score"], h)))}
             hit_any = {x for h in res["score"]["human"] if h.get("matched_ai")
                        for x in (hkey(res["score"], h), cid_of(hkey(res["score"], h)))}
-            invalid = {a["id"] for a in res["score"].get("ai") or [] if a.get("valid") is False}
+            invalid = {a["id"] for a in res["score"].get("ai") or [] if refuted(a)}
             bads.append(len(cites & invalid))
             flags.append(all(c in hit for c in t["comments"]))
             anys.append(all(c in hit_any for c in t["comments"]))

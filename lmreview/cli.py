@@ -91,7 +91,7 @@ def main(argv: list[str] | None = None) -> None:
     d.add_argument("--prs", type=int, nargs="+", help="only these train PRs")
     d.add_argument("--misses-of", metavar="REVIEWER",
                    help="learn from this reviewer's runs (normally <prompt>+BASE@high-rc): its misses and the "
-                        "invalid findings citing BASE entries; unjudged runs are judged here (paid, cached)")
+                        "refuted findings citing BASE entries; runs must be judged first (`lmreview eval --reviewer R`)")
     d.add_argument("--area", help="only comments on PRs that touch this area; usually omit it, so team-wide standards voiced in other areas count too")
     d.add_argument("--limit", type=int, help="at most this many comments")
     d.add_argument("--reuse", help="reuse the attribution of this earlier distill run (same inputs); only re-merge")

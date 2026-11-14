@@ -56,7 +56,10 @@ book     = vet(book, new_book, human_comments)           # keep only what works 
   existing entry, generalize or revise one, or add a new one. A comment whose entry already exists and
   still missed it is marked a retry. consolidate then tidies the whole book: several drafts run in
   parallel and only the changes most of them agree on are made (merge entries that ask for the same
-  change, rewrite new entries at the wrong level, flag contradictions).
+  change, rewrite new entries at the wrong level, flag contradictions). Its last sub-step verifies
+  every change to an existing entry's text: the entry must act differently on the case that motivated
+  the change, or a merge must act exactly as what it replaces. A pure rephrasing, or a difference no
+  case asks for, is undone.
 - **vet** reviews again with the old and the new book where they differ. The part that works
   becomes the next version. A change that fails is not just reverted: its comments go back to
   distill with the reason, so the next attempt is written differently.

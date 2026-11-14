@@ -40,10 +40,12 @@ def parse_reviewer(name: str) -> tuple[str, str | None, str]:
     `v0b+r1@highx3` (x3: three runs in parallel, then one merge run; see parallel_of; -rc: see
     rulecheck_of; -sh: the agents also get a sandboxed shell, see shell_of).
 
+    A "#<tag>" suffix (a repeat run of the same reviewer, e.g. "#r2") is ignored.
+
     Returns:
         (prompt version, rulebook name or None, effort; default "high").
     """
-    m = _NAME.fullmatch(name)
+    m = _NAME.fullmatch(name.split("#")[0])
     if not m:
         raise ValueError(f"bad reviewer name {name!r}; expected <prompt>[+<rules>][@<effort>][x<n>][-rc][-sh]")
     if (m[5] or m[6]) and not m[3]:  # else "v0b+foo-rc" is ambiguous: rulebook "foo-rc", or "foo" + rule check

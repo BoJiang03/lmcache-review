@@ -160,7 +160,9 @@ failure signals ───┴─distill──> NEW book ──vet NEW --base OLD 
                       (3 drafts merged):       3 side effects: affected OLD entries' sources
                       evidence | generalize | add | revise | retire | skip
                     3 consolidate the whole book (3 drafts, voted):
-                      merge | rewrite NEW | flag contradictions
+                      absorb | merge | rewrite NEW | flag contradictions;
+                      then verify every text change of an OLD entry
+                      (3 blind calls): rephrasing / drift undone
                     4 induce (--induce only): standalone entries under principles
                     every new entry needs a comment of its own, else it is dropped
                                               ...later: fair-target A/B, whole-book eval -> team-vN

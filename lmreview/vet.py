@@ -137,7 +137,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         for _, e in effect:
             n_in[where[e]] = n_in.get(where[e], 0) + 1
         def cached(k: tuple) -> int:  # runs already on disk for this sample (ties go to cached ones)
-            return sum(any((cfg.data / "runs" / f"{prompt}+{b}@{effort}{suffix}").glob(f"{k[0]}-{k[1][:8]}*.json"))
+            return sum(any((cfg.data / "runs").glob(f"{prompt}+{b}@{effort}{suffix}*/{k[0]}-{k[1][:8]}*.json"))
                        for b in (base, book))
         best = {k[0]: max((x for x in n_in if x[0] == k[0]), key=lambda x: (n_in[x], cached(x))) for k in n_in}
         picked = {best[k[0]] for k in n_in}
@@ -152,7 +152,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     have = {tgt(e) for _, e in effect} | {t for i in revised for t in
                                          [x["target"] for x in (N[i].get("revised") or {}).get("signals") or []]}
     def has_new(t: str) -> bool:
-        return any((cfg.data / "runs" / f"{prompt}+{book}@{effort}{suffix}").glob(f"{t.replace('@', '-')}*.json"))
+        return any((cfg.data / "runs").glob(f"{prompt}+{book}@{effort}{suffix}*/{t.replace('@', '-')}*.json"))
     side = []
     for i in affected:
         cs = [e for e in sorted(old_ev[i]) if e in where and (i, e) not in eff_set]
@@ -168,7 +168,8 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     # rule-only replays check only the rules this change is about: the changed and retired entries, the
     # entries the cases test, and everything linked to those in either book (principle / members / replaces)
     only = None
-    if suffix == "-ro":
+    ruleonly = suffix.startswith("-ro")  # -ro or -ro-sh
+    if ruleonly:
         rel_old = _related_ids(old_rules)
         only = set(touched) | set(retired) | {i for i, _ in cases}
         only |= {x for i in list(only) for x in rel.get(i, {i}) | rel_old.get(i, {i})}
@@ -177,7 +178,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         return cfg.data / "runs" / (f"{prompt}+{b}@{effort}{suffix}" + run_tag(only) + ("" if k == 1 else f"#r{k}"))
     todo = [(book, t, k) for t in samples for k in range(1, reps + 1)
             if not any(run_dir(book, k).glob(f"{t.split('@')[0]}-{t.split('@')[1]}*.json"))]
-    est = len(todo) * (EST_RO if suffix == "-ro" else EST_RUN * (2 if suffix else 1))  # base runs: only where NEW misses a side case
+    est = len(todo) * (EST_RO if ruleonly else EST_RUN * (2 if suffix else 1))  # base runs: only where NEW misses a side case
     flags = {i: f for i in sorted(touched) if (f := lint(N[i]))}
 
     L = [f"# Vet of {book} (from {base})", "",

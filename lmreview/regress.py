@@ -17,6 +17,7 @@ The third layer, a whole-book eval on test before promotion, is `lmreview eval` 
 
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 
@@ -77,7 +78,7 @@ def text_check(rules: list[dict], ids: list[str], cm: dict, cfg: Config, effort:
 
 
 def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float, cfg: Config,
-           workers: int = 4, suffix: str = "") -> tuple[list[dict], float]:
+           workers: int = 4, suffix: str = "", only: set[str] | None = None) -> tuple[list[dict], float]:
     """Layer 2: re-review each case's target with `book` (the prompt and effort of the test's rule
     reviewer, plus `suffix`, e.g. "-rc") `reps` times; runs are cached under data/runs, so a rerun costs nothing.
 
@@ -85,12 +86,16 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
     of a target ask about (all of them where a case checks a revision's invalid findings), and a run
     with no findings is scored without a judge call.
 
+    `only` (rule-only reviewers): the rule check sees only these rule ids of `book`; such runs are cached
+    apart, under the reviewer name plus "#o<hash of the ids>".
+
     Returns:
         (one row per case: entry, target, reviewer, per-run pass flags, passed), cost.
     """
     ss, cm = load_gold(cfg)
     spent, lock = [0.0], threading.Lock()
     reserved, est = [0.0], EST_RO if suffix == "-ro" else EST_RUN * (2 if suffix else 1)  # expected cost of the reviews running now
+    tag = "" if only is None else "#o" + hashlib.sha1(",".join(sorted(only)).encode()).hexdigest()[:8]
     need: dict[str, set] = {}  # target -> comments its cases ask about (None: every comment)
     for _, t in cases:
         if need.get(t["target"], set()) is not None:
@@ -109,7 +114,7 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
         if key is None:
             raise ValueError(f"test target {target} is not a sample in the gold set")
         s, name = ss[key], f"{pr}-{key[1][:8]}.json"
-        d = cfg.data / "runs" / (rv if k == 1 else f"{rv}#r{k}")
+        d = cfg.data / "runs" / (rv + tag + ("" if k == 1 else f"#r{k}"))
         d.mkdir(parents=True, exist_ok=True)
         cached = (d / name).exists()
         if not cached:
@@ -119,7 +124,7 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
                 reserved[0] += est
             try:
                 with sample_workspace(cfg, s, f"regress{k}", reviewer_context(rv)) as (wt, base):
-                    r = run_reviewer(wt, cached_pr(cfg, key[0], s["time"]), rv)
+                    r = run_reviewer(wt, cached_pr(cfg, key[0], s["time"]), rv, only=only)
             finally:
                 with lock:
                     reserved[0] -= est

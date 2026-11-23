@@ -173,7 +173,8 @@ def rules_section(rules: list[dict], paths: list[str], examples: bool = False) -
             + "\n".join(lines) + "\n")
 
 
-def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, live: bool = False) -> dict:
+def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, live: bool = False,
+                 only: set[str] | None = None) -> dict:
     """Run `reviewer` (see parse_reviewer) in workspace `wt` for PR `raw`; `live`: a PR reviewed now
     (not a historical sample), which only matters for a shell's network (see shell_of).
 
@@ -183,6 +184,8 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
          "denials", "effort", "version", "rules", "reviewer"}. With `x<n>` (n > 1) the findings are
         the merge run's, each with "support" (how many runs raised it); "parallel" = n, "runs" = each
         run's findings/error/cost, "cost" = all runs plus the merge.
+
+    `only`: with a rule-only reviewer (-ro), check only these rule ids of the book (vet uses it).
     """
     version, rules, effort = parse_reviewer(reviewer.split("#")[0])
     if re.fullmatch(r"p[0-9a-f]{8}", version):
@@ -191,6 +194,10 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
             prompt_id(save=True)  # keep the text of every prompt a run used
     prompt = prompt_template(version)[0].format(**pr_meta(raw))
     use = applicable(load_rules(rules), changed_paths(wt)) if rules else []
+    if only is not None:  # a rule-only run on some rules of the book (vet: the changed ones and their links)
+        if not ruleonly_of(reviewer):
+            raise ValueError("only= is for rule-only (-ro) reviewers")
+        use = [r for r in use if r["id"] in only]
     if rules:
         sec = rules_section(load_rules(rules), changed_paths(wt), rule_examples(version))
         prompt = prompt.replace("\nFinish with one JSON block", sec + "\nFinish with one JSON block", 1) \

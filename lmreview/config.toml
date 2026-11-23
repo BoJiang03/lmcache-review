@@ -28,6 +28,21 @@ max_tries = 2          # distill attempts per comment before it goes to a person
 side_per_entry = 2     # side effects: source comments replayed per affected entry
 reps = 1               # runs per replayed case and book
 
+[select]
+# round only: which new training samples to review (lmreview/selection.py). Each sample scores the sum,
+# over its change-request and nit points, of how often the reviewer misses a point of that kind; the
+# top `keep` share of the new samples is reviewed.
+keep = 0.5           # share of the new samples kept (on 252 samples the top half held ~88% of the misses)
+min_points = 30      # a kind's miss rate comes from the reviewer's own judged runs once it has this many points
+
+[select.weights]     # default miss rates per <type>/<severity> (Opus@high, v0b+team-v1, 252 samples); others 0.5
+"nit/nit" = 0.88
+"nit/minor" = 0.5
+"change_request/nit" = 0.86
+"change_request/minor" = 0.56
+"change_request/major" = 0.26
+"change_request/blocker" = 0.0
+
 # Default cost caps in dollars (each command's --max-cost / round's --*-cost).
 [budget]
 review = 15.0
@@ -38,6 +53,7 @@ vet = 30.0
 regress = 10.0
 
 [budget.round]
+select = 5.0         # annotating the new samples (judge reuses the annotations)
 review = 30.0
 judge = 10.0
 distill = 5.0

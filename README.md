@@ -102,7 +102,8 @@ bin/lmreview sync                         # update the dataset from GitHub (free
 bin/lmreview eval | regress | audit       # measurements and checks
 ```
 
-A bare PR number in `round` means its commits that still have a missed comment. Paid commands take
+A bare PR number in `round` means its commits that still have a missed comment; of those not reviewed
+yet, `round` reviews only the half most likely to hold misses (see `[select]` in config.toml). Paid commands take
 a cost cap and stop starting new LLM calls when they reach it. Every run prints timestamped
 progress and is logged to `data/logs/`.
 

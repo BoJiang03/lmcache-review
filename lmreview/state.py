@@ -530,20 +530,27 @@ def pick_samples(prs: list[int | str], cfg: Config | None = None) -> list[str]:
 def round_(prs: list[int | str], review_cost: float | None = None, judge_cost: float | None = None,
            distill_cost: float | None = None, vet_cost: float | None = None, cfg: Config | None = None,
            induce: bool | None = None) -> str:
-    """One round on samples `prs` (PR:commit, or PR numbers: see pick_samples): review with the book in use, judge, then
+    """One round on samples `prs` (PR:commit, or PR numbers: see pick_samples): select the new samples worth
+    reviewing (selection.py; samples named PR:commit are kept as given), review with the book in use, judge, then
     distill + vet until their comments are all resolved / not rulable / needs_human (at most MAX_TRIES)."""
     b = settings()["budget"]["round"]
+    explicit = {str(p) for p in prs if ":" in str(p)}  # samples named by hand are not filtered
     review_cost, judge_cost, distill_cost, vet_cost = (
         b[k] if v is None else v for k, v in (("review", review_cost), ("judge", judge_cost),
                                              ("distill", distill_cost), ("vet", vet_cost)))
     from .replay import replay
     rv = reviewer()
     prs = pick_samples(prs, cfg)
-    nums = {int(str(p).split(":")[0]) for p in prs}
     out = []
     with step("round", f"{len(prs)} sample spec(s) {' '.join(map(str, prs))}; book {vname(head())}; caps review "
               f"${review_cost:.0f}, judge ${judge_cost:.0f}, distill ${distill_cost:.0f}, vet ${vet_cost:.0f} "
               f"(per attempt, at most {MAX_TRIES})") as st:
+        with step("select", "new samples worth reviewing") as s0:
+            from .selection import select
+            kept, s0.cost = select([p for p in prs if p not in explicit], rv, float(b["select"]), cfg or Config())
+            prs = [p for p in prs if p in explicit or p in kept]
+        st.cost += s0.cost
+        nums = {int(str(p).split(":")[0]) for p in prs}
         with step("review", rv) as s1:
             s1.cost = replay(rv, "train", None, 4, review_cost, prs, cfg=cfg)
         st.cost += s1.cost

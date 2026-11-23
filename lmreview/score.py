@@ -140,6 +140,7 @@ def score_one(cfg: Config, run: dict, sample: dict, gold: list[dict], out: pathl
     ai = "\n".join(f"[{f.id}] ({f.severity}, {f.scope}) {f.where()} {f.title}: {f.body[:800]}"
                    for f in load_findings(run) or []) or "(none)"
     cost = ann["cost"]
+    usage: dict = {}  # the judge's own calls (annotation is cached and counted in `cost` only)
     got: dict = {"points": [], "ai": []}
     ctx = prompt_template(run["version"])[1] if run.get("version") else ()
     if want:
@@ -147,6 +148,7 @@ def score_one(cfg: Config, run: dict, sample: dict, gold: list[dict], out: pathl
             r = llm.run(PROMPT.format(human=human, ai=ai, **pr_meta(cached_pr(cfg, run["pr"], sample["time"]))),
                         effort, cwd=str(wt), tools=TOOLS)
         got, cost = llm.extract_json(r["text"]), cost + r["cost"]
+        usage = llm.add_usage(usage, r.get("usage"))
     m = {e.get("id"): e for e in got.get("points") or [] if isinstance(e, dict)}
     ai_out = [a for a in got.get("ai") or [] if isinstance(a, dict)]
     fs = {f.id: f for f in load_findings(run) or []}
@@ -163,6 +165,7 @@ def score_one(cfg: Config, run: dict, sample: dict, gold: list[dict], out: pathl
                                         **pr_meta(cached_pr(cfg, run["pr"], sample["time"]))),
                          effort, cwd=str(wt), tools=TOOLS)
         cost += r2["cost"]
+        usage = llm.add_usage(usage, r2.get("usage"))
         try:
             second = llm.extract_json(r2["text"])
         except ValueError:
@@ -184,7 +187,7 @@ def score_one(cfg: Config, run: dict, sample: dict, gold: list[dict], out: pathl
         e = m.get(by_point.get(id(p)), {})
         hs.append(p | {"matched_ai": [str(x) for x in e.get("matched_ai") or []], "match_why": e.get("match_why", "")}
                   | ({"second": e["second"]} if e.get("second") else {}))
-    res = {"human": hs, "ai": ai_out, "second_opinion": bool(second), "pr": run["pr"], "commit": run["commit"], "cost": cost,
+    res = {"human": hs, "ai": ai_out, "second_opinion": bool(second), "pr": run["pr"], "commit": run["commit"], "cost": cost, "usage": usage,
            "effort": effort, "judge": JUDGE, "annotator": ann["annotator"],
            "denials": [], "gold_ids": [c["id"] for c in gold]}
     out.parent.mkdir(parents=True, exist_ok=True)

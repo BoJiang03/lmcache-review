@@ -223,10 +223,11 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
     if not e.merged and out["findings"] is not None:  # one usable run, or the merge failed: unmerged
         out["findings"] = [{**f, "support": 1} for f in out["findings"]]
     merge_cost = e.merge["cost"] if e.merge else 0.0
-    keep = {"parallel": n, "merged": e.merged, "merge_cost": merge_cost,
+    usage = llm.add_usage(*(x.get("usage") for x in e.runs), e.merge.get("usage") if e.merge else None)
+    keep = {"parallel": n, "merged": e.merged, "merge_cost": merge_cost, "usage": usage,
             "merge_error": None if e.merged or not e.merge else e.merge["error"],
             # raw kept per run so scripts/reparse_invalid.py can recover any of them
-            "runs": [{k: x[k] for k in ("findings", "error", "raw", "cost", "turns", "kind", "verdicts") if k in x}
+            "runs": [{k: x[k] for k in ("findings", "error", "raw", "cost", "turns", "kind", "verdicts", "usage") if k in x}
                      for x in e.runs]}
     return {**out, "cost": sum(x["cost"] for x in e.runs) + merge_cost, **keep, **meta}
 
@@ -276,7 +277,7 @@ def _parsed(r: dict, rulecheck: bool = False, fix: Callable[[object], object] | 
     except (ValueError, SchemaError) as e:  # SchemaError is a ValueError; kept explicit for clarity
         error = str(e)
     out = {"findings": findings, "error": error, "raw": r["text"], "cost": r["cost"], "turns": r["turns"],
-           "denials": r["denials"]}
+           "denials": r["denials"], "usage": r.get("usage") or {}}
     return out | ({"kind": "rulecheck", "verdicts": verdicts} if rulecheck else {})
 
 

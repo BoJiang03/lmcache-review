@@ -38,7 +38,7 @@ def sandbox_settings(profile: str, cwd: str) -> dict:
 
 
 def run(prompt: str, effort: str, cwd: str | None = None, tools: str = "", timeout: int = 1800,
-        system: str | None = None, sandbox: str | None = None) -> dict:
+        system: str | None = None, sandbox: str | None = None, model: str | None = None) -> dict:
     """Run one headless Claude call.
 
     Args:
@@ -52,6 +52,7 @@ def run(prompt: str, effort: str, cwd: str | None = None, tools: str = "", timeo
             account e-mail reminder; those are the same with or without `system`.
         sandbox: required when `tools` has Bash: "replay" or "live" (see sandbox_settings). The call
             fails rather than run a shell unsandboxed (Claude Code only warns when it cannot sandbox).
+        model: the model id; None = Claude Code's default.
 
     Returns:
         {"text": final text, "cost": usd, "turns": n, "denials": [blocked tool calls]}.
@@ -73,13 +74,19 @@ def run(prompt: str, effort: str, cwd: str | None = None, tools: str = "", timeo
                "--allowedTools", *tools.split(","), "--strict-mcp-config", "--permission-mode", "dontAsk",
                "--settings", json.dumps(sandbox_settings(sandbox, str(pathlib.Path(cwd).resolve()))),
                "--effort", effort] + (["--system-prompt", system] if system else [])
+    if model:
+        cmd += ["--model", model]
+    stdin = None
+    if len(prompt.encode()) > 100_000:  # one argv string is capped at 128 KiB: pass a long prompt on stdin
+        cmd.remove(prompt)
+        stdin = prompt
     tmp = None
     if shell:  # Claude Code keeps its own files (other sessions' too) in $TMPDIR/claude-<uid>: give
         # this call a private, empty one next to the workspace, outside the denied paths
         tmp = tempfile.mkdtemp(prefix="tmp-", dir=pathlib.Path(cwd).resolve().parent)
         env["TMPDIR"] = tmp
     try:
-        p = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout, input=stdin)
     finally:
         if tmp:
             shutil.rmtree(tmp, ignore_errors=True)
@@ -92,9 +99,28 @@ def run(prompt: str, effort: str, cwd: str | None = None, tools: str = "", timeo
     if d.get("is_error"):
         raise RuntimeError(f"claude -p error: {str(d.get('result'))[:500]}")
     return {"text": d.get("result") or "", "cost": d.get("total_cost_usd") or 0.0,
-            "turns": d.get("num_turns"), "effort": effort,
+            "turns": d.get("num_turns"), "effort": effort, "usage": usage_of(d),
             "denials": [{"tool": x.get("tool_name"), "input": str(x.get("tool_input"))[:200]}
                         for x in d.get("permission_denials") or []]}
+
+
+def usage_of(d: dict) -> dict:
+    """Tokens and cost per model of one `claude -p` result, to see where the money goes:
+    {model: {"input", "cache_write", "cache_read", "output", "thinking", "cost"}}."""
+    keys = {"input": "inputTokens", "cache_write": "cacheCreationInputTokens", "cache_read": "cacheReadInputTokens",
+            "output": "outputTokens", "thinking": "thinkingTokens", "cost": "costUSD"}
+    return {m: {k: u.get(v) or 0 for k, v in keys.items()} for m, u in (d.get("modelUsage") or {}).items()}
+
+
+def add_usage(*us: dict | None) -> dict:
+    """Sum usage_of() dicts."""
+    out: dict = {}
+    for u in us:
+        for m, x in (u or {}).items():
+            o = out.setdefault(m, {})
+            for k, v in x.items():
+                o[k] = o.get(k, 0) + v
+    return out
 
 
 def extract_json(text: str) -> object:

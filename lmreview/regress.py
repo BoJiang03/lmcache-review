@@ -24,14 +24,15 @@ from .budget import capped_map
 from .config import Config
 from .schema import cites as finding_rules
 from .distill import COVERAGE, _ask, _fmt, _id
-from .reviewer import load_rules, parse_reviewer, reviewer_context, run_reviewer
-from .annotate import cid_of
+from .reviewer import load_rules, parse_reviewer, reviewer_context, ruleonly_of, run_reviewer
+from .annotate import annotate, cid_of, points
 from .settings import get
 from .score import REPORTS, hkey, load_gold, refuted, score_one
 from .workspace import cached_pr, sample_workspace
 
 FIELDS = ("when", "expect", "examples", "paths", "status")
 EST_RUN = 1.6  # one review plus its judge, in dollars
+EST_RO = 0.8   # one rule-only run (-ro) plus its targeted judge
 
 
 def changed(new: list[dict], base: list[dict] | None) -> list[str]:
@@ -80,12 +81,20 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
     """Layer 2: re-review each case's target with `book` (the prompt and effort of the test's rule
     reviewer, plus `suffix`, e.g. "-rc") `reps` times; runs are cached under data/runs, so a rerun costs nothing.
 
+    With a rule-only reviewer (suffix "-ro") the judge is targeted: it sees only the comments the cases
+    of a target ask about (all of them where a case checks a revision's invalid findings), and a run
+    with no findings is scored without a judge call.
+
     Returns:
         (one row per case: entry, target, reviewer, per-run pass flags, passed), cost.
     """
     ss, cm = load_gold(cfg)
     spent, lock = [0.0], threading.Lock()
-    reserved, est = [0.0], EST_RUN * (2 if suffix else 1)  # expected cost of the reviews running now
+    reserved, est = [0.0], EST_RO if suffix == "-ro" else EST_RUN * (2 if suffix else 1)  # expected cost of the reviews running now
+    need: dict[str, set] = {}  # target -> comments its cases ask about (None: every comment)
+    for _, t in cases:
+        if need.get(t["target"], set()) is not None:
+            need[t["target"]] = None if not t["comments"] else need.get(t["target"], set()) | {cid_of(c) for c in t["comments"]}
 
     def reviewer_of(t: dict) -> str:
         version, _, effort = parse_reviewer(t["with"].split("#")[0])
@@ -122,8 +131,21 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
         if run.get("findings") is None:
             return (rv, target, k, {"run": run, "score": None}), mine
         sp = cfg.data / "scores" / d.name / name
+        gold = [cm[i] for i in s["gold_ids"]]
+        if ruleonly_of(rv):
+            ann = annotate(cfg, s, gold, str(get("annotate", "effort")))  # the whole sample, so the cache stays whole
+            want = need[target]
+            if want is not None:
+                if sp.exists() and not want <= set(json.loads(sp.read_text())["gold_ids"]):
+                    want |= set(json.loads(sp.read_text())["gold_ids"])  # judged for fewer comments: judge again
+                    sp.unlink()
+                gold = [c for c in gold if c["id"] in want]
+            if not run["findings"]:  # nothing to match: every point missed, no judge call
+                sc = {"human": [p | {"matched_ai": []} for p in points(ann, gold)], "ai": [],
+                      "gold_ids": [c["id"] for c in gold]}
+                return (rv, target, k, {"run": run, "score": sc, "cached": cached}), mine
         judged = sp.exists()
-        sc = score_one(cfg, run, s, [cm[i] for i in s["gold_ids"]], sp, str(get("judge", "effort")))
+        sc = score_one(cfg, run, s, gold, sp, str(get("judge", "effort")))
         with lock:
             spent[0] += 0 if judged else sc.get("cost", 0)
         mine += 0 if judged else sc.get("cost", 0)

@@ -15,6 +15,7 @@ from . import github, llm
 from .annotate import cid_of
 from .ensemble import ensemble
 from .config import PROMPTS, Config
+from .settings import get
 from .state import book_path, part_path, prompt_path
 from .schema import SCHEMA_VERSION, SEVERITIES, Finding, SchemaError, cites, load_findings, parse_findings, to_dicts
 from .workspace import TOOLS, live_workspace, pr_meta
@@ -29,16 +30,17 @@ def _default_reviewer() -> str:
 DEFAULT_REVIEWER = os.environ.get("LMREVIEW_REVIEWER") or _default_reviewer()
 
 
-_NAME = re.compile(r"([\w.-]+?)(?:\+([\w.-]+?))?(?:@([a-z]+))?(?:x(\d+))?(-r[co])?(-sh)?")
+_NAME = re.compile(r"([\w.-]+?)(?:\+([\w.-]+?))?(?:@([a-z]+))?(?:x(\d+))?(-r[co])?(-ms)?(-sh)?")
 SHELL_NOTE = ("\n\nYou also have a shell (Bash), sandboxed: use it to check behavior instead of guessing, e.g. run "
               "a short Python snippet against the code or a test that needs no GPU. The network may be unavailable "
               "and you can only write inside the working directory; do not change the repository's files.\n")
 
 
 def parse_reviewer(name: str) -> tuple[str, str | None, str]:
-    """A reviewer is named `<prompt>[+<rules>][@<effort>][x<n>][-rc|-ro][-sh]`, e.g. `v0b+r1@high` or
+    """A reviewer is named `<prompt>[+<rules>][@<effort>][x<n>][-rc|-ro][-ms][-sh]`, e.g. `v0b+r1@high` or
     `v0b+r1@highx3` (x3: three runs in parallel, then one merge run; see parallel_of; -rc: see
-    rulecheck_of; -ro: see ruleonly_of; -sh: the agents also get a sandboxed shell, see shell_of).
+    rulecheck_of; -ro: see ruleonly_of; -ms: see cheap_main_of; -sh: the agents also get a sandboxed
+    shell, see shell_of).
 
     A "#<tag>" suffix (a repeat run of the same reviewer, e.g. "#r2") is ignored.
 
@@ -47,9 +49,9 @@ def parse_reviewer(name: str) -> tuple[str, str | None, str]:
     """
     m = _NAME.fullmatch(name.split("#")[0])
     if not m:
-        raise ValueError(f"bad reviewer name {name!r}; expected <prompt>[+<rules>][@<effort>][x<n>][-rc|-ro][-sh]")
-    if (m[5] or m[6]) and not m[3]:  # else "v0b+foo-rc" is ambiguous: rulebook "foo-rc", or "foo" + rule check
-        raise ValueError(f"bad reviewer name {name!r}: -rc / -ro / -sh need an explicit @<effort> before them")
+        raise ValueError(f"bad reviewer name {name!r}; expected <prompt>[+<rules>][@<effort>][x<n>][-rc|-ro][-ms][-sh]")
+    if (m[5] or m[6] or m[7]) and not m[3]:  # else "v0b+foo-rc" is ambiguous: rulebook "foo-rc", or "foo" + rule check
+        raise ValueError(f"bad reviewer name {name!r}: -rc / -ro / -ms / -sh need an explicit @<effort> before them")
     return m[1], m[2], m[3] or "high"
 
 
@@ -63,6 +65,18 @@ def shell_of(name: str) -> bool:
     """Whether `name` gives its agents a shell (`-sh` suffix), run in Claude Code's sandbox: no network
     when replaying a historical sample, network when reviewing a PR now; never outside the workspace."""
     m = _NAME.fullmatch(name.split("#")[0])
+    return bool(m and m[7])
+
+
+def cheap_main_of(name: str) -> bool:
+    """Whether `name` runs its main review agents on the cheaper model of [hybrid] (`-ms`), for learning.
+
+    The rule check keeps the reviewer's model and effort, and no merge call runs: the findings of the
+    runs stand side by side (each with support 1). The main agents' findings lose their rule citations,
+    so every rule signal (a rule's finding judged invalid) comes from the rule check. On 30 samples this
+    found 93% of the misses the full reviewer finds, with 15% false misses (full reviewer vs itself: 9%),
+    at $1.35 instead of $3.10 a sample."""
+    m = _NAME.fullmatch(name.split("#")[0])
     return bool(m and m[6])
 
 
@@ -70,7 +84,7 @@ def rulecheck_of(name: str) -> bool:
     """Whether `name` asks for a rule-check run next to the reviews (`-rc` suffix, needs a rulebook):
     one more agent that must give a verdict on every applicable rule, merged with the reviews."""
     m = _NAME.fullmatch(name.split("#")[0])
-    return bool(m and m[5] and m[2])
+    return bool(m and m[5] == "-rc" and m[2])
 
 
 def ruleonly_of(name: str) -> bool:
@@ -212,8 +226,21 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
         prompt = prompt.replace("\nFinish with one JSON block", SHELL_NOTE + "\nFinish with one JSON block", 1) \
             if "\nFinish with one JSON block" in prompt else prompt + SHELL_NOTE
 
+    ms = cheap_main_of(reviewer)
+
     def once() -> dict:
-        return _parsed(llm.run(prompt, effort, cwd=str(wt), tools=tools, system=system, sandbox=sb))
+        if not ms:
+            return _parsed(llm.run(prompt, effort, cwd=str(wt), tools=tools, system=system, sandbox=sb))
+        r = _parsed(llm.run(prompt, str(get("hybrid", "main_effort")), cwd=str(wt), tools=tools, system=system,
+                            sandbox=sb, model=str(get("hybrid", "main_model"))))
+        if r["findings"] is not None:  # rule signals come from the rule check only
+            r["findings"] = [{**f, "rule": None, "rules": []} for f in r["findings"]]
+        return r
+
+    def side_by_side(ok: list[dict]) -> dict:  # -ms: no merge call, ids made unique as "<run>.<id>"
+        fs = [{**f, "id": f"{i}.{f.get('id') or k}", "support": 1}
+              for i, x in enumerate(ok, 1) for k, f in enumerate(x["findings"], 1)]
+        return {"findings": fs, "error": None, "raw": "", "cost": 0.0, "turns": 0, "denials": [], "usage": {}}
 
     def rulecheck() -> dict:  # must give a verdict per rule, so a long rulebook cannot crowd rules out
         p = part_path(version, "rulecheck").read_text().format(rules="\n".join(rule_lines(use, rule_examples(version))), **pr_meta(raw))
@@ -237,7 +264,8 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
         if r["findings"] is not None:
             r["findings"] = [{**f, "support": 1} for f in r["findings"]]
         return {**r, **meta}
-    e = ensemble(once, n, merge, ok=lambda x: x["findings"] is not None, extra=[rulecheck] if rc else [])
+    e = ensemble(once, n, side_by_side if ms else merge, ok=lambda x: x["findings"] is not None,
+                 extra=[rulecheck] if rc else [])
     if n == 1 and not rc:
         return {**e.result, **meta}
     n += rc  # the rule check counts as a run for "support"

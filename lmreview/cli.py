@@ -7,7 +7,7 @@
     round PR ...                         all four on these samples, distill + vet until settled
     status | rollback vN | discard       look at / move the state
 
-A reviewer is named <prompt>[+<book>][@<effort>][x<n>][-rc]; the default is the current prompt
+A reviewer is named <prompt>[+<book>][@<effort>][x<n>][-rc|-ro]; the default is the current prompt
 (prompts/reviewer.md) with the book in use. Paid commands stop starting new LLM calls once
 --max-cost is reached (0 = print the plan). Nothing is posted to GitHub.
 """
@@ -110,7 +110,8 @@ def main(argv: list[str] | None = None) -> None:
     v.add_argument("--base", help="the rulebook it was built from (default: from rules/RULES.meta.json)")
     v.add_argument("--prompt", help="default: that of the runs distill learned from, else v0f")
     v.add_argument("--effort", help="default: as --prompt, else high")
-    v.add_argument("--suffix", help="reviewer suffix, '' for no rule check (default: as --prompt, else -rc)")
+    v.add_argument("--suffix", help="reviewer suffix (default -ro: the rule check alone with a targeted judge; -rc: the full review "
+                   "with the rule check, as before)")
     v.add_argument("--reps", type=int, default=get("vet", "reps"))
     v.add_argument("--max-cost", type=float, default=get("budget", "vet"), help="0 = print the plan only")
     v.add_argument("--all", action="store_true", help="replay every base entry, not only the affected ones")
@@ -133,7 +134,7 @@ def main(argv: list[str] | None = None) -> None:
         note(f"lmreview {' '.join(argv if argv is not None else sys.argv[1:])} | log: {tee(a.cmd, Config().data)}")
     if getattr(a, "parallel", None):
         name, sep, rep = a.reviewer.partition("#")  # keep a repeat tag such as #r2
-        m = re.fullmatch(r"(.*?)(?:x\d+)?((?:-rc)?(?:-sh)?)", name)
+        m = re.fullmatch(r"(.*?)(?:x\d+)?((?:-r[co])?(?:-sh)?)", name)
         a.reviewer = m[1] + (f"x{a.parallel}" if a.parallel > 1 else "") + m[2] + sep + rep
     if a.cmd == "sync":
         from .sync import sync

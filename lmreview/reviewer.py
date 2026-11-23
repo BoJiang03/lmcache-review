@@ -29,16 +29,16 @@ def _default_reviewer() -> str:
 DEFAULT_REVIEWER = os.environ.get("LMREVIEW_REVIEWER") or _default_reviewer()
 
 
-_NAME = re.compile(r"([\w.-]+?)(?:\+([\w.-]+?))?(?:@([a-z]+))?(?:x(\d+))?(-rc)?(-sh)?")
+_NAME = re.compile(r"([\w.-]+?)(?:\+([\w.-]+?))?(?:@([a-z]+))?(?:x(\d+))?(-r[co])?(-sh)?")
 SHELL_NOTE = ("\n\nYou also have a shell (Bash), sandboxed: use it to check behavior instead of guessing, e.g. run "
               "a short Python snippet against the code or a test that needs no GPU. The network may be unavailable "
               "and you can only write inside the working directory; do not change the repository's files.\n")
 
 
 def parse_reviewer(name: str) -> tuple[str, str | None, str]:
-    """A reviewer is named `<prompt>[+<rules>][@<effort>][x<n>][-rc][-sh]`, e.g. `v0b+r1@high` or
+    """A reviewer is named `<prompt>[+<rules>][@<effort>][x<n>][-rc|-ro][-sh]`, e.g. `v0b+r1@high` or
     `v0b+r1@highx3` (x3: three runs in parallel, then one merge run; see parallel_of; -rc: see
-    rulecheck_of; -sh: the agents also get a sandboxed shell, see shell_of).
+    rulecheck_of; -ro: see ruleonly_of; -sh: the agents also get a sandboxed shell, see shell_of).
 
     A "#<tag>" suffix (a repeat run of the same reviewer, e.g. "#r2") is ignored.
 
@@ -47,9 +47,9 @@ def parse_reviewer(name: str) -> tuple[str, str | None, str]:
     """
     m = _NAME.fullmatch(name.split("#")[0])
     if not m:
-        raise ValueError(f"bad reviewer name {name!r}; expected <prompt>[+<rules>][@<effort>][x<n>][-rc][-sh]")
+        raise ValueError(f"bad reviewer name {name!r}; expected <prompt>[+<rules>][@<effort>][x<n>][-rc|-ro][-sh]")
     if (m[5] or m[6]) and not m[3]:  # else "v0b+foo-rc" is ambiguous: rulebook "foo-rc", or "foo" + rule check
-        raise ValueError(f"bad reviewer name {name!r}: -rc / -sh need an explicit @<effort> before them")
+        raise ValueError(f"bad reviewer name {name!r}: -rc / -ro / -sh need an explicit @<effort> before them")
     return m[1], m[2], m[3] or "high"
 
 
@@ -71,6 +71,15 @@ def rulecheck_of(name: str) -> bool:
     one more agent that must give a verdict on every applicable rule, merged with the reviews."""
     m = _NAME.fullmatch(name.split("#")[0])
     return bool(m and m[5] and m[2])
+
+
+def ruleonly_of(name: str) -> bool:
+    """Whether `name` is a rule-only reviewer (`-ro`, needs a rulebook): the rule-check agent alone, without
+    the full review. vet uses it to check rule changes: a rule's hits come from the rule check (on the v0007
+    runs every matched point found through a rule-citing finding had the rule check among its sources), so
+    replaying the full review there only pays for the part no rule change touches."""
+    m = _NAME.fullmatch(name.split("#")[0])
+    return bool(m and m[5] == "-ro" and m[2])
 
 
 def prompt_template(version: str) -> tuple[str, tuple[str, ...]]:
@@ -189,7 +198,7 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
     system = prompt_system(version)
     meta = {"schema_version": SCHEMA_VERSION, "effort": effort, "version": version, "rules": rules,
             "reviewer": reviewer}
-    n, rc = parallel_of(reviewer), rulecheck_of(reviewer) and bool(use)
+    n, rc, ro = parallel_of(reviewer), rulecheck_of(reviewer) and bool(use), ruleonly_of(reviewer)
     sh = shell_of(reviewer)
     tools, sb = (TOOLS + ",Bash", "live" if live else "replay") if sh else (TOOLS, None)
     if sh:
@@ -215,6 +224,12 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
                                effort, cwd=str(wt), tools=tools, system=system, sandbox=sb),
                        fix=lambda obj: _from_sources(obj, src))
 
+    if ro:  # the rule check alone; no applicable rule: nothing to check, no run
+        r = rulecheck() if use else {"findings": [], "error": None, "raw": "", "cost": 0.0, "turns": 0,
+                                     "denials": [], "usage": {}, "kind": "rulecheck", "verdicts": []}
+        if r["findings"] is not None:
+            r["findings"] = [{**f, "support": 1} for f in r["findings"]]
+        return {**r, **meta}
     e = ensemble(once, n, merge, ok=lambda x: x["findings"] is not None, extra=[rulecheck] if rc else [])
     if n == 1 and not rc:
         return {**e.result, **meta}

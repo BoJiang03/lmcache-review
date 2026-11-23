@@ -18,7 +18,10 @@ distill only writes rules; vet decides whether they are kept. Three checks, then
 2b. revisions: a revised entry is re-reviewed on the samples whose invalid findings triggered the
    revision; a finding citing it that is judged invalid again means the revision did not fix it.
 
-2, 2b and 3 share the runs: one review per sample with NEW, and with BASE only where needed. Runs are cached under data/runs/<reviewer>/,
+2, 2b and 3 share the runs: one review per sample with NEW, and with BASE only where needed. By default a
+"review" here is the rule check alone (reviewer suffix -ro, see reviewer.ruleonly_of) with a judge that sees
+only the comments the cases ask about: a rule change shows in the rule check, so the full review is not
+replayed (about $0.8 per sample instead of $3.5). Runs are cached under data/runs/<reviewer>/,
 so an earlier A/B with the same reviewer names costs nothing here. Single runs are noisy, so each
 failing case gets one more run with NEW before it counts (`retry`).
 
@@ -38,11 +41,11 @@ from .annotate import cid_of, norm
 from .settings import get
 from .state import book_path
 from .progress import note
-from .regress import EST_RUN, FIELDS, replay
+from .regress import EST_RO, EST_RUN, FIELDS, replay
 
 SIDE_PER_ENTRY = int(get("vet", "side_per_entry"))  # side effects: source comments replayed per affected entry (`--all`: every one)
 from .distill import book_meta, write_meta
-from .reviewer import load_rules, parse_reviewer, rulecheck_of
+from .reviewer import load_rules, parse_reviewer
 from .score import REPORTS, load_gold
 
 LINKS = ("principle", "members")
@@ -87,8 +90,8 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         book: the new rulebook (a distill result).
         base: the rulebook it was built from (default: from rules/<book>.meta.json).
         prompt, effort, suffix: the reviewer is `<prompt>+<book>@<effort><suffix>`, and the same with base.
-            Default: those of the runs distill learned from (meta "runs"), so their cached runs and
-            scores of base are reused; else v0f, high, -rc.
+            Default: prompt and effort of the runs distill learned from (meta "runs"), else v0f and high;
+            suffix -ro (the rule check alone, targeted judge; -rc replays the full review as before).
         reps: runs per sample and book; a comment counts as matched if any run matches it.
         max_cost: cap for all runs together; 0 prints the plan only.
         everything: replay every active entry of base on its sources, not only the affected ones.
@@ -109,8 +112,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     if meta.get("runs"):
         version, _, eff = parse_reviewer(meta["runs"].split("#")[0])
         prompt, effort = prompt or version, effort or eff
-        suffix = suffix if suffix is not None else ("-rc" if rulecheck_of(meta["runs"]) else "")
-    prompt, effort, suffix = prompt or "v0f", effort or "high", "-rc" if suffix is None else suffix
+    prompt, effort, suffix = prompt or "v0f", effort or "high", "-ro" if suffix is None else suffix
     act = lambda rs: {r["id"]: r for r in rs if r.get("status", "active") == "active"}  # noqa: E731
     new_rules, old_rules = load_rules(book), load_rules(base)
     N, O = act(new_rules), act(old_rules)
@@ -168,7 +170,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         return cfg.data / "runs" / (f"{prompt}+{b}@{effort}{suffix}" + ("" if k == 1 else f"#r{k}"))
     todo = [(book, t, k) for t in samples for k in range(1, reps + 1)
             if not any(run_dir(book, k).glob(f"{t.split('@')[0]}-{t.split('@')[1]}*.json"))]
-    est = len(todo) * EST_RUN * (2 if suffix else 1)  # base runs come only where NEW misses a side case
+    est = len(todo) * (EST_RO if suffix == "-ro" else EST_RUN * (2 if suffix else 1))  # base runs: only where NEW misses a side case
     flags = {i: f for i in sorted(touched) if (f := lint(N[i]))}
 
     L = [f"# Vet of {book} (from {base})", "",

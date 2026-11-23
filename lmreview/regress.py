@@ -99,7 +99,7 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
     """
     ss, cm = load_gold(cfg)
     spent, lock = [0.0], threading.Lock()
-    reserved, est = [0.0], EST_RO if suffix == "-ro" else EST_RUN * (2 if suffix else 1)  # expected cost of the reviews running now
+    reserved, est = [0.0], EST_RO if suffix.startswith("-ro") else EST_RUN * (2 if suffix else 1)  # expected cost of the reviews running now
     tag = run_tag(only)
     need: dict[str, set] = {}  # target -> comments its cases ask about (None: every comment)
     for _, t in cases:
@@ -144,6 +144,9 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
         gold = [cm[i] for i in s["gold_ids"]]
         if ruleonly_of(rv):
             ann = annotate(cfg, s, gold, str(get("annotate", "effort")))  # the whole sample, so the cache stays whole
+            with lock:
+                spent[0] += ann["cost"]
+            mine += ann["cost"]
             want = need[target]
             if want is None and sp.exists() and set(json.loads(sp.read_text())["gold_ids"]) != set(s["gold_ids"]):
                 sp.unlink()  # judged for some comments only: a revision check needs them all

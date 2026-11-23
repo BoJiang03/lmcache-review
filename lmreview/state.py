@@ -560,7 +560,7 @@ def round_(prs: list[int | str], review_cost: float | None = None, judge_cost: f
             return "\n".join(out + ["nothing selected", "", status()])
         nums = {int(str(p).split(":")[0]) for p in prs}
         with step("review", rv) as s1:
-            s1.cost = replay(rv, "train", None, 4, review_cost, prs, cfg=cfg)
+            s1.cost = replay(rv, "train", None, 4, max(0.0, review_cost - s0.cost), prs, cfg=cfg)
         st.cost += s1.cost
         out.append(f"review {rv}: ${s1.cost:.2f}")
         out.append(judge("train", nums, judge_cost, rv, cfg))

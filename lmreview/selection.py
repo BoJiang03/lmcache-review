@@ -59,6 +59,7 @@ def select(specs: list[str], reviewer: str, max_cost: float, cfg: Config) -> tup
          ones; a new sample that could not be annotated within `max_cost` is left out), cost.
     """
     from .replay import run_path
+    from .reviewer import rule_evidence
     from .score import load_gold
     ss, cm = load_gold(cfg)
 
@@ -66,6 +67,11 @@ def select(specs: list[str], reviewer: str, max_cost: float, cfg: Config) -> tup
         pr, c = spec.split(":")
         return next(s for (p, cc), s in ss.items() if p == int(pr) and cc.startswith(c))
 
+    ev = rule_evidence(reviewer)  # replay skips samples whose comments the book came from: never select them
+    leak = [x for x in specs if ev & set(sample(x)["gold_ids"])]
+    specs = [x for x in specs if x not in leak]
+    if leak:
+        note(f"select: {len(leak)} sample(s) skipped, the book was distilled from their comments", "dim")
     new = [x for x in specs if not run_path(cfg, reviewer, sample(x)).exists()]
     if not new:
         note("select: no new samples (all already reviewed)", "dim")

@@ -160,8 +160,10 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         cs.sort(key=lambda e: (tgt(e) not in have, not has_new(tgt(e))))
         # a retired (replaced) entry: the comments it was proven to correct (its "corrected" tests), since
         # the replacement must keep what it did; with no such record, every source comment
-        if i in retired and not everything and (pr := _proven(O[i])):
-            side += [(i, e) for e in cs if e in pr]
+        # (a test may be on another PR than the entry's sources: take every proven comment in the gold set)
+        pr = [e for e in sorted(_proven(O[i]), key=str) if e in where and (i, e) not in eff_set] if i in retired else []
+        if pr and not everything:
+            side += [(i, e) for e in pr]
         else:
             side += [(i, e) for e in (cs if everything or i in retired else cs[:SIDE_PER_ENTRY])]
         have |= {tgt(e) for e in cs[:SIDE_PER_ENTRY]}

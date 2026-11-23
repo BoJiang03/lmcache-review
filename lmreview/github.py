@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 
-REPO_OWNER, REPO_NAME = "LMCache", "LMCache"
+# the repository reviewed; LMREVIEW_GH_REPO=LMCache/LMCache_inprocess (with LMREVIEW_REPO pointing at its
+# checkout) reviews the in-process engine's PRs
+REPO_OWNER, REPO_NAME = os.environ.get("LMREVIEW_GH_REPO", "LMCache/LMCache").split("/")
 
 AUTHOR = "author { login __typename }"
 

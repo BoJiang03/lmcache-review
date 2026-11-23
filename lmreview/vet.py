@@ -8,8 +8,8 @@ distill only writes rules; vet decides whether they are kept. Three checks, then
    comment's sample is re-reviewed with BASE and with NEW. The entry works if NEW matches the comment
    with a finding citing it (or a linked principle/member). These runs leak (the entry was written
    from that comment): they show that the reviewer applies the rule, not that it generalizes. An
-   existing entry that gained evidence is the exception: BASE already had it, so a BASE hit there is
-   a fair hit (the rule generalized to a PR it was not written from).
+   existing entry that only gained evidence (same text, scope and links) is not replayed: the
+   reviewer sees the same rule as before, so the runs could not tell anything about the change.
 3. side effects: the entries of BASE whose rendering or neighbours changed (a new parent principle,
    a revision, a new link; `--all`: every entry) are replayed on up to SIDE_PER_ENTRY of their own source
    comments (`--all`: every one). NEW runs first; a comment NEW still matches with a citation is kept.
@@ -132,6 +132,10 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     effect = [(i, norm(e)) for i, r in N.items() for e in r.get("evidence") or []
               if norm(e) not in in_base and norm(e) in where]  # comments new to the book (a parent's
     # inherited evidence is not new: its members' source comments are replayed as side effects)
+    # an entry of base whose text, scope and links did not change only recorded more evidence: the
+    # reviewer sees the same rule, so there is nothing to replay (its new comments are not checked)
+    ev_only = sorted({i for i, _ in effect if i in O and i not in touched})
+    effect = [(i, e) for i, e in effect if i not in ev_only]
     if not every_sample:  # one sample per PR: the one holding most of the new comments
         n_in: dict = {}
         for _, e in effect:
@@ -165,6 +169,13 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     cases = ([(i, {"target": tgt(e), "with": w, "comments": [e]}) for i, e in effect + side]
              + [(i, {"target": t, "with": w, "comments": []}) for i, t in fixes])
     samples = {t["target"] for _, t in cases}
+    # rule-only replays check only the rules this change is about: the changed and retired entries, the
+    # entries the cases test, and everything linked to those in either book (principle / members / replaces)
+    only = None
+    if suffix == "-ro":
+        rel_old = _related_ids(old_rules)
+        only = set(touched) | set(retired) | {i for i, _ in cases}
+        only |= {x for i in list(only) for x in rel.get(i, {i}) | rel_old.get(i, {i})}
 
     def run_dir(b: str, k: int) -> pathlib.Path:
         return cfg.data / "runs" / (f"{prompt}+{b}@{effort}{suffix}" + ("" if k == 1 else f"#r{k}"))
@@ -177,7 +188,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
          f"- reviewer: {prompt}+<book>@{effort}{suffix}, {reps} run(s) per sample and book"
          + ("; failures get one more run" if retry else ""),
          f"- changed entries: {len(touched)} (revised {len(revised)}, retired {len(retired)}); "
-         f"evidence comments added: {len(effect)}; base entries replayed for side effects: {len(affected)} "
+         f"evidence comments added: {len(effect)} (plus evidence only, not replayed: {len(ev_only)} entries); base entries replayed for side effects: {len(affected)} "
          f"({len(side)} comments{', all entries' if everything else ''}); revision fixes to check: {len(fixes)}",
          f"- {len(samples)} samples with the new book ({len(todo)} not cached yet, est ${est:.0f}; the old book only "
          f"where the new one misses a side-effect comment), cap ${max_cost:.0f}", "",
@@ -191,7 +202,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     for x in L[2:5]:
         note(x.lstrip("- "))
     note(f"[1/3] review {len(samples)} samples with the new book {book}")
-    rows_n, c_n = replay(book, cases, reps, max_cost, cfg, suffix=suffix)
+    rows_n, c_n = replay(book, cases, reps, max_cost, cfg, suffix=suffix, only=only)
     Nw = {key(r): r for r in rows_n}
     # the old book: where the new one missed a side-effect comment (lost, or missed by both?), and
     # effect cases whose old run is cached anyway (for the report)
@@ -202,7 +213,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
               + [(i, {"target": tgt(e), "with": w, "comments": [e]}) for i, e in effect if cached_old(tgt(e))])
     note(f"[2/3] review {len({t['target'] for _, t in need_b})} samples with the old book {base} "
          f"(${c_n:.2f} so far)")
-    rows_b, c_b = replay(base, need_b, reps, max(0.0, max_cost - c_n), cfg, suffix=suffix) if need_b else ([], 0.0)
+    rows_b, c_b = replay(base, need_b, reps, max(0.0, max_cost - c_n), cfg, suffix=suffix, only=only) if need_b else ([], 0.0)
     B = {key(r): r for r in rows_b}
     ck = lambda i, e: (i, tgt(e), (e,))  # noqa: E731
     fk = lambda i, t: (i, t, ())  # noqa: E731
@@ -245,7 +256,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
                  + [(i, {"target": t, "with": w, "comments": []}) for i, t in J["not_fixed"]])
         if again:
             note(f"[3/3] {len(again)} failing case(s) get one more run with {book} (${c_b + c_n:.2f} so far)")
-            rows_r, c_r = replay(book, again, reps + 1, max(0.0, max_cost - c_b - c_n), cfg, suffix=suffix)
+            rows_r, c_r = replay(book, again, reps + 1, max(0.0, max_cost - c_b - c_n), cfg, suffix=suffix, only=only)
             Nw |= {key(r): r for r in rows_r if r["passed"] is not None}
             J = judge()
 

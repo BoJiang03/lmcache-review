@@ -26,7 +26,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from lmreview import state  # noqa: E402
 from lmreview.config import Config  # noqa: E402
-from lmreview.distill import judge_runs  # noqa: E402
+from lmreview.score import judge_runs  # noqa: E402
 from lmreview.progress import note, step  # noqa: E402
 from lmreview.replay import replay  # noqa: E402
 

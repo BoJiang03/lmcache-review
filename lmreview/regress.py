@@ -36,6 +36,11 @@ EST_RUN = 1.6  # one review plus its judge, in dollars
 EST_RO = 0.8   # one rule-only run (-ro) plus its targeted judge
 
 
+def run_tag(only: set[str] | None) -> str:
+    """The cache tag of rule-only runs restricted to the rule ids `only` ("" when not restricted)."""
+    return "" if only is None else "#o" + hashlib.sha1(",".join(sorted(only)).encode()).hexdigest()[:8]
+
+
 def changed(new: list[dict], base: list[dict] | None) -> list[str]:
     """Active entries of `new` that are new or differ from `base` in text, scope or status (all
     active entries when there is no base)."""
@@ -95,7 +100,7 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
     ss, cm = load_gold(cfg)
     spent, lock = [0.0], threading.Lock()
     reserved, est = [0.0], EST_RO if suffix == "-ro" else EST_RUN * (2 if suffix else 1)  # expected cost of the reviews running now
-    tag = "" if only is None else "#o" + hashlib.sha1(",".join(sorted(only)).encode()).hexdigest()[:8]
+    tag = run_tag(only)
     need: dict[str, set] = {}  # target -> comments its cases ask about (None: every comment)
     for _, t in cases:
         if need.get(t["target"], set()) is not None:
@@ -140,6 +145,8 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
         if ruleonly_of(rv):
             ann = annotate(cfg, s, gold, str(get("annotate", "effort")))  # the whole sample, so the cache stays whole
             want = need[target]
+            if want is None and sp.exists() and set(json.loads(sp.read_text())["gold_ids"]) != set(s["gold_ids"]):
+                sp.unlink()  # judged for some comments only: a revision check needs them all
             if want is not None:
                 if sp.exists() and not want <= set(json.loads(sp.read_text())["gold_ids"]):
                     want |= set(json.loads(sp.read_text())["gold_ids"])  # judged for fewer comments: judge again

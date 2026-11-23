@@ -8,7 +8,9 @@ import re
 import pathlib
 import shutil
 import subprocess
+import sys
 import tempfile
+import time
 
 # Env vars that make a nested `claude` think it is a child of this session.
 _STRIP = [k for k in os.environ if k.startswith("CLAUDE_CODE_")
@@ -80,6 +82,36 @@ def run(prompt: str, effort: str, cwd: str | None = None, tools: str = "", timeo
     if len(prompt.encode()) > 100_000:  # one argv string is capped at 128 KiB: pass a long prompt on stdin
         cmd.remove(prompt)
         stdin = prompt
+    t0, out, err = time.time(), None, None
+    try:
+        out = _call(cmd, cwd, env, shell, timeout, stdin)
+        return {**out, "effort": effort}
+    except BaseException as e:
+        err = f"{type(e).__name__}: {e}"[:500]
+        raise
+    finally:
+        from .progress import record_call
+        record_call(prompt, (out or {}).get("text", ""), {
+            "caller": _caller(), "model": model or "default", "effort": effort, "tools": tools, "system": bool(system),
+            "cwd": pathlib.Path(cwd).name if cwd else None, "secs": round(time.time() - t0, 1),
+            "cost": (out or {}).get("cost"), "turns": (out or {}).get("turns"), "usage": (out or {}).get("usage"),
+            "error": err})
+
+
+def _caller(depth: int = 3) -> str:
+    """What the call was for: the innermost `depth` lmreview functions outside this module, innermost first,
+    e.g. "distill._ask < distill.consolidate < distill.distill" (shared helpers alone say little)."""
+    out, f = [], sys._getframe(1)
+    while f and len(out) < depth:
+        mod = f.f_globals.get("__name__", "")
+        if mod != __name__ and not f.f_code.co_name.startswith("<") and mod.split(".")[0] in ("lmreview", "__main__"):
+            out.append(f"{mod.split('.')[-1]}.{f.f_code.co_name}")
+        f = f.f_back
+    return " < ".join(out) or "?"
+
+
+def _call(cmd: list[str], cwd: str | None, env: dict, shell: bool, timeout: int, stdin: str | None) -> dict:
+    """Run the built `claude -p` command and parse its JSON result."""
     tmp = None
     if shell:  # Claude Code keeps its own files (other sessions' too) in $TMPDIR/claude-<uid>: give
         # this call a private, empty one next to the workspace, outside the denied paths
@@ -99,7 +131,7 @@ def run(prompt: str, effort: str, cwd: str | None = None, tools: str = "", timeo
     if d.get("is_error"):
         raise RuntimeError(f"claude -p error: {str(d.get('result'))[:500]}")
     return {"text": d.get("result") or "", "cost": d.get("total_cost_usd") or 0.0,
-            "turns": d.get("num_turns"), "effort": effort, "usage": usage_of(d),
+            "turns": d.get("num_turns"), "usage": usage_of(d),
             "denials": [{"tool": x.get("tool_name"), "input": str(x.get("tool_input"))[:200]}
                         for x in d.get("permission_denials") or []]}
 

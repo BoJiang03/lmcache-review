@@ -156,12 +156,12 @@ def config() -> dict:
     return dict(settings()["review"])
 
 
-def suffix(book: bool = True) -> str:
-    """The reviewer-name suffix the [review] settings ask for after @<effort>: [x<n>][-rc][-sh]
-    (no rule check without a book)."""
+def suffix(book: bool = True, learn: bool = False) -> str:
+    """The reviewer-name suffix the [review] settings ask for after @<effort>: [x<n>][-rc][-ms][-sh]
+    (no rule check without a book; -ms only for learning, when [hybrid] learn is on)."""
     c = config()
     return ((f"x{c['parallel']}" if c["parallel"] > 1 else "") + ("-rc" if c["rulecheck"] and book else "")
-            + ("-sh" if c["shell"] else ""))
+            + ("-ms" if learn and get("hybrid", "learn") else "") + ("-sh" if c["shell"] else ""))
 
 
 PARTS = ("rulecheck", "merge")  # the other agents' prompts, versioned with reviewer.md
@@ -204,11 +204,12 @@ def prompt_path(version: str) -> pathlib.Path:
     return PROMPTS / f"reviewer_{version}.md"
 
 
-def reviewer(book: str | None = None) -> str:
-    """The reviewer name of the current prompt and config with `book` (default: the book in use)."""
+def reviewer(book: str | None = None, learn: bool = False) -> str:
+    """The reviewer name of the current prompt and config with `book` (default: the book in use); `learn`:
+    the one learning reviews with ([hybrid] learn: the main review on a cheaper model, `-ms`)."""
     c = config()
     book = book or (vname(head()) if head() else None)
-    return f"{prompt_id()}" + (f"+{book}" if book else "") + f"@{c['effort']}" + suffix(bool(book))
+    return f"{prompt_id()}" + (f"+{book}" if book else "") + f"@{c['effort']}" + suffix(bool(book), learn)
 
 
 # ---- the ledger -------------------------------------------------------------------------------------
@@ -250,7 +251,7 @@ def judge(split: str = "train", prs: set[int] | None = None, max_cost: float = 1
     from .score import judge_runs
     if split != "train":  # the ledger feeds distill, which must never learn from test / new
         raise ValueError("judge files comments for distill: only the train split")
-    cfg, rv = cfg or Config(), rv or reviewer()
+    cfg, rv = cfg or Config(), rv or reviewer(learn=True)
     with lock(), step("judge", f"runs of {rv} on {split}" + (f", PRs {sorted(prs)}" if prs else "")
                       + f"; cap ${max_cost:.0f}") as st:
         judged, cost = judge_runs(cfg, rv, prs, split, max_cost)
@@ -387,7 +388,7 @@ def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: 
         _write(STATE / "candidate" / "meta.json", json.dumps(
             {"name": name, "parent": parent, "comments": ids, "created": _now()}, indent=1) + "\n")
         try:
-            msg = distill(name, vname(parent), reviewer(), effort=effort, workers=workers,
+            msg = distill(name, vname(parent), reviewer(learn=True), effort=effort, workers=workers,
                           max_cost=max_cost, cfg=cfg, comments=ids, prs=sorted({r["pr"] for r in todo}) or None,
                           notes={r["comment"]: tries_note(r) for r in todo if r.get("tries")}, do_induce=induce)
         except BaseException:
@@ -539,7 +540,7 @@ def round_(prs: list[int | str], review_cost: float | None = None, judge_cost: f
         b[k] if v is None else v for k, v in (("review", review_cost), ("judge", judge_cost),
                                              ("distill", distill_cost), ("vet", vet_cost)))
     from .replay import replay
-    rv = reviewer()
+    rv = reviewer(learn=True)
     prs = pick_samples(prs, cfg)
     out = []
     with step("round", f"{len(prs)} sample spec(s) {' '.join(map(str, prs))}; book {vname(head())}; caps review "
@@ -547,9 +548,15 @@ def round_(prs: list[int | str], review_cost: float | None = None, judge_cost: f
               f"(per attempt, at most {MAX_TRIES})") as st:
         with step("select", "new samples worth reviewing") as s0:
             from .selection import select
-            kept, s0.cost = select([p for p in prs if p not in explicit], rv, float(b["select"]), cfg or Config())
+            # annotating counts toward the review cap too: a round with no review budget annotates nothing
+            kept, s0.cost = select([p for p in prs if p not in explicit], rv,
+                                   min(float(b["select"]), review_cost), cfg or Config())
             prs = [p for p in prs if p in explicit or p in kept]
         st.cost += s0.cost
+        if not prs:  # an empty list would mean every train sample to replay and judge
+            note("select kept no samples: nothing to review", "warn")
+            st.result = f"book {vname(head())}"
+            return "\n".join(out + ["nothing selected", "", status()])
         nums = {int(str(p).split(":")[0]) for p in prs}
         with step("review", rv) as s1:
             s1.cost = replay(rv, "train", None, 4, review_cost, prs, cfg=cfg)

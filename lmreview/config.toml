@@ -28,6 +28,13 @@ max_tries = 2          # distill attempts per comment before it goes to a person
 side_per_entry = 2     # side effects: source comments replayed per affected entry
 reps = 1               # runs per replayed case and book
 
+[hybrid]
+# Learning (round, and judge / distill reading its runs) reviews with the reviewer in use plus -ms: the main
+# review runs on this model and effort, the rule check stays as [review] says, and no merge call runs.
+learn = true         # false: learning uses the reviewer in use as is
+main_model = "claude-sonnet-5-5"
+main_effort = "medium"
+
 [select]
 # round only: which new training samples to review (lmreview/selection.py). Each sample scores the sum,
 # over its change-request and nit points, of how often the reviewer misses a point of that kind; the

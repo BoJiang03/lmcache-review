@@ -7,7 +7,7 @@
     round PR ...                         all four on these samples, distill + vet until settled
     status | rollback vN | discard       look at / move the state
 
-A reviewer is named <prompt>[+<book>][@<effort>][x<n>][-rc|-ro]; the default is the current prompt
+A reviewer is named <prompt>[+<book>][@<effort>][x<n>][-rc|-ro][-ms]; the default is the current prompt
 (prompts/reviewer.md) with the book in use. Paid commands stop starting new LLM calls once
 --max-cost is reached (0 = print the plan). Nothing is posted to GitHub.
 """
@@ -134,7 +134,7 @@ def main(argv: list[str] | None = None) -> None:
         note(f"lmreview {' '.join(argv if argv is not None else sys.argv[1:])} | log: {tee(a.cmd, Config().data)}")
     if getattr(a, "parallel", None):
         name, sep, rep = a.reviewer.partition("#")  # keep a repeat tag such as #r2
-        m = re.fullmatch(r"(.*?)(?:x\d+)?((?:-r[co])?(?:-sh)?)", name)
+        m = re.fullmatch(r"(.*?)(?:x\d+)?((?:-r[co])?(?:-ms)?(?:-sh)?)", name)
         a.reviewer = m[1] + (f"x{a.parallel}" if a.parallel > 1 else "") + m[2] + sep + rep
     if a.cmd == "sync":
         from .sync import sync

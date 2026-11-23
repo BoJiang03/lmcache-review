@@ -107,7 +107,11 @@ review ─> judge ─┬─> covered        (the reviewer found it)
 The commands below with explicit book names (`distill OUT --base`, `vet BOOK --base`, `regress`) are
 the lower-level tools the process uses; use them for experiments, not for the book in use.
 
-There are four commands. Reviewers are named `<prompt>[+<rulebook>][@<effort>][x<n>][-rc][-sh]`, e.g. `v0b+r2@high`.
+There are four commands. Reviewers are named `<prompt>[+<rulebook>][@<effort>][x<n>][-rc|-ro][-ms][-sh]`, e.g. `v0b+r2@high`.
+`-ro` runs the rule check alone (vet replays use it). `-ms` is the learning reviewer: the main review runs on
+the cheaper model of `[hybrid]` with no merge call, the rule check stays as configured, and only the rule
+check's findings cite rules. `round`, `judge` and `distill` use it when `[hybrid] learn` is on; a live
+review and vet do not.
 
 The reviewer sees each rule's id, kind, when, expect and why, never its `examples`. Examples carry the
 source PR's particulars (names, values): too specific for the reviewer, and on the source PR they leak

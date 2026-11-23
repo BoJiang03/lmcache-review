@@ -50,4 +50,4 @@ class Config:
 
 PROMPTS = pathlib.Path(__file__).resolve().parent / "prompts"
 RULES = pathlib.Path(__file__).resolve().parent / "rules"  # distilled rulebooks, versioned in git
-REPO_URLS = {"repo": "https://github.com/LMCache/LMCache.git", "vllm": "https://github.com/vllm-project/vllm.git"}
+REPO_URLS = {"repo": f"https://github.com/{os.environ.get('LMREVIEW_GH_REPO', 'LMCache/LMCache')}.git", "vllm": "https://github.com/vllm-project/vllm.git"}

@@ -32,6 +32,7 @@ fail the book. `write` saves NEW without the failing changes, as the next workin
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import pathlib
 import re
@@ -157,8 +158,12 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     for i in affected:
         cs = [e for e in sorted(old_ev[i]) if e in where and (i, e) not in eff_set]
         cs.sort(key=lambda e: (tgt(e) not in have, not has_new(tgt(e))))
-        # a retired (replaced) entry: every source comment, since the replacement must keep them all
-        side += [(i, e) for e in (cs if everything or i in retired else cs[:SIDE_PER_ENTRY])]
+        # a retired (replaced) entry: the comments it was proven to correct (its "corrected" tests), since
+        # the replacement must keep what it did; with no such record, every source comment
+        if i in retired and not everything and (pr := _proven(O[i])):
+            side += [(i, e) for e in cs if e in pr]
+        else:
+            side += [(i, e) for e in (cs if everything or i in retired else cs[:SIDE_PER_ENTRY])]
         have |= {tgt(e) for e in cs[:SIDE_PER_ENTRY]}
     fixes = list(dict.fromkeys((i, x["target"]) for i in revised
                                for x in (N[i].get("revised") or {}).get("signals") or []))
@@ -270,6 +275,17 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         fair += is_fair
         eff_lines.append(f"- {i} #{tgt(e)} c{e} ({cm[e]['author']}): {res}; base {mark(ba)}"
                          + (" (base cites it: fair hit)" if is_fair else ""))
+    today = dt.date.today().isoformat()
+    tests: dict[str, list[dict]] = {}
+    for i, e in effect:  # an effect comment was missed by the round's review: that miss is the control
+        b, n = B.get(ck(i, e), {}), Nw.get(ck(i, e), {})
+        if n.get("passed"):
+            tests.setdefault(i, []).append(
+                {"target": tgt(e), "control": f"{w}{suffix} on {base}" if b.get("any") is not None else "round miss",
+                 "with": f"{prompt}+{book}@{effort}{suffix}", "result": "both-hit" if b.get("any") else "corrected",
+                 "comments": [e], "date": today, "note": "vet effect"})
+    reverted = {i for i, _ in J["lost"]} | {i for i, _ in J["not_fixed"]}  # back to the base text: untested
+    tests = {i: ts for i, ts in tests.items() if i not in reverted}
     fails = J["no_effect"] or J["lost"] or J["not_fixed"]
     verdict = "FAIL" if fails else ("INCOMPLETE" if J["unknown"] or J["s_unknown"] or J["f_unknown"] else "PASS")
     n_eff = len({i for i, _ in effect})
@@ -285,10 +301,10 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     L += [f"- LOST {i}{' (retired)' if i in retired else ''} #{tgt(e)} c{e} ({cm[e]['author']}: "
           f"{cm[e]['body'][:100]!r})" for i, e in J["lost"]]
     if out is not None:
-        out.update(verdict=verdict, J=J, effect=effect, kept=_passing(new_rules, old_rules, O, J, rel),
+        out.update(verdict=verdict, J=J, effect=effect, kept=_with_tests(_passing(new_rules, old_rules, O, J, rel), tests),
                    cost=c_b + c_n + c_r, retired=retired)
     if write:
-        kept_book = _passing(new_rules, old_rules, O, J, rel)
+        kept_book = _with_tests(_passing(new_rules, old_rules, O, J, rel), tests)
         book_path(write).write_text("".join(json.dumps(r) + "\n" for r in kept_book))
         write_meta(write, {**meta, "base": base, "vetted_from": book})  # keeps "seen" for the next distill
         L += ["", f"wrote rules/{write}.jsonl: {len(kept_book)} entries (failing changes dropped or reverted)"]
@@ -298,6 +314,22 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
          {"PASS": "ok", "FAIL": "err"}.get(verdict, "warn"))
     (REPORTS / f"vet_{book}.md").write_text("\n".join(L) + "\n")
     return "\n".join(L)
+
+
+def _proven(r: dict) -> set:
+    """The comments entry `r` was shown to correct: its "corrected" tests (vet effect or an A/B)."""
+    return {norm(c) for t in r.get("tests") or [] if t.get("result") == "corrected" for c in t.get("comments") or []}
+
+
+def _with_tests(rules: list[dict], tests: dict[str, list[dict]]) -> list[dict]:
+    """`rules` with vet's effect records appended to each entry's "tests" (one per target and comments)."""
+    out = []
+    for r in rules:
+        old = r.get("tests") or []
+        have = {(t.get("target"), tuple(t.get("comments") or [])) for t in old}
+        add = [t for t in tests.get(r["id"], []) if (t["target"], tuple(t["comments"])) not in have]
+        out.append({**r, "tests": old + add} if add else r)
+    return out
 
 
 def _passing(new_rules: list[dict], old_rules: list[dict], O: dict, J: dict, rel: dict) -> list[dict]:

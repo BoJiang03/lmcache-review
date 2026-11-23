@@ -93,7 +93,10 @@ review ─> judge ─┬─> covered        (the reviewer found it)
                                                        tries = 2 ─> needs_human
 ```
 
-- `lmreview round PR[:commit] ...` runs review, judge, then distill + vet until the comments settle.
+- `lmreview round PR[:commit] ...` runs select, review, judge, then distill + vet until the comments settle.
+  select reviews only the new samples most worth it: each scores the sum, over its change-request and nit
+  points, of how often the reviewer misses that kind of point; the top half is kept (`[select]` in config.toml;
+  samples named as PR:commit are always kept).
   The steps also run one by one: `review --split train --only-pr ...`, `judge`, `distill`, `vet`.
 - `vet` promotes what works as the next version and drops or reverts the rest. A failed comment keeps
   its attempt (book, entries, why), and the next `distill` is told to write it differently.

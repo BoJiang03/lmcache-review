@@ -158,10 +158,11 @@ def config() -> dict:
 
 def suffix(book: bool = True, learn: bool = False) -> str:
     """The reviewer-name suffix the [review] settings ask for after @<effort>: [x<n>][-rc][-ms][-sh]
-    (no rule check without a book; -ms only for learning, when [hybrid] learn is on)."""
+    (no rule check without a book; -ms only for learning with a book, when [hybrid] learn is on: with no rule
+    check the cheaper main review alone loses too much)."""
     c = config()
     return ((f"x{c['parallel']}" if c["parallel"] > 1 else "") + ("-rc" if c["rulecheck"] and book else "")
-            + ("-ms" if learn and get("hybrid", "learn") else "") + ("-sh" if c["shell"] else ""))
+            + ("-ms" if learn and book and get("hybrid", "learn") else "") + ("-sh" if c["shell"] else ""))
 
 
 PARTS = ("rulecheck", "merge")  # the other agents' prompts, versioned with reviewer.md
@@ -429,7 +430,7 @@ def vet_step(max_cost: float | None = None, reps: int | None = None, everything:
         res: dict = {}
         note(f"▶ vet {c['name']} against {vname(c['parent'])} ({len(c['comments'])} comments); cap ${max_cost:.0f}")
         conf = config()
-        report = vet(c["name"], vname(c["parent"]), prompt_id(), conf["effort"], suffix(),
+        report = vet(c["name"], vname(c["parent"]), prompt_id(), conf["effort"], "-ro" + ("-sh" if conf["shell"] else ""),
                      reps=reps, max_cost=max_cost, everything=everything, cfg=cfg, out=res)
         if max_cost <= 0 or not res:
             return report

@@ -8,8 +8,8 @@ distill only writes rules; vet decides whether they are kept. Three checks, then
    comment's sample is re-reviewed with BASE and with NEW. The entry works if NEW matches the comment
    with a finding citing it (or a linked principle/member). These runs leak (the entry was written
    from that comment): they show that the reviewer applies the rule, not that it generalizes. An
-   existing entry that only gained evidence (same text, scope and links) is not replayed: the
-   reviewer sees the same rule as before, so the runs could not tell anything about the change.
+   existing entry that only gained evidence is replayed too: its comment was missed with that entry in
+   the book, so only a run shows whether the miss was noise (resolved) or the entry does not fire on it.
 3. side effects: the entries of BASE whose rendering or neighbours changed (a new parent principle,
    a revision, a new link; `--all`: every entry) are replayed on up to SIDE_PER_ENTRY of their own source
    comments (`--all`: every one). NEW runs first; a comment NEW still matches with a citation is kept.
@@ -41,7 +41,7 @@ from .annotate import cid_of, norm
 from .settings import get
 from .state import book_path
 from .progress import note
-from .regress import EST_RO, EST_RUN, FIELDS, replay
+from .regress import EST_RO, EST_RUN, FIELDS, replay, run_tag
 
 SIDE_PER_ENTRY = int(get("vet", "side_per_entry"))  # side effects: source comments replayed per affected entry (`--all`: every one)
 from .distill import book_meta, write_meta
@@ -132,10 +132,6 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     effect = [(i, norm(e)) for i, r in N.items() for e in r.get("evidence") or []
               if norm(e) not in in_base and norm(e) in where]  # comments new to the book (a parent's
     # inherited evidence is not new: its members' source comments are replayed as side effects)
-    # an entry of base whose text, scope and links did not change only recorded more evidence: the
-    # reviewer sees the same rule, so there is nothing to replay (its new comments are not checked)
-    ev_only = sorted({i for i, _ in effect if i in O and i not in touched})
-    effect = [(i, e) for i, e in effect if i not in ev_only]
     if not every_sample:  # one sample per PR: the one holding most of the new comments
         n_in: dict = {}
         for _, e in effect:
@@ -178,7 +174,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         only |= {x for i in list(only) for x in rel.get(i, {i}) | rel_old.get(i, {i})}
 
     def run_dir(b: str, k: int) -> pathlib.Path:
-        return cfg.data / "runs" / (f"{prompt}+{b}@{effort}{suffix}" + ("" if k == 1 else f"#r{k}"))
+        return cfg.data / "runs" / (f"{prompt}+{b}@{effort}{suffix}" + run_tag(only) + ("" if k == 1 else f"#r{k}"))
     todo = [(book, t, k) for t in samples for k in range(1, reps + 1)
             if not any(run_dir(book, k).glob(f"{t.split('@')[0]}-{t.split('@')[1]}*.json"))]
     est = len(todo) * (EST_RO if suffix == "-ro" else EST_RUN * (2 if suffix else 1))  # base runs: only where NEW misses a side case
@@ -188,7 +184,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
          f"- reviewer: {prompt}+<book>@{effort}{suffix}, {reps} run(s) per sample and book"
          + ("; failures get one more run" if retry else ""),
          f"- changed entries: {len(touched)} (revised {len(revised)}, retired {len(retired)}); "
-         f"evidence comments added: {len(effect)} (plus evidence only, not replayed: {len(ev_only)} entries); base entries replayed for side effects: {len(affected)} "
+         f"evidence comments added: {len(effect)}; base entries replayed for side effects: {len(affected)} "
          f"({len(side)} comments{', all entries' if everything else ''}); revision fixes to check: {len(fixes)}",
          f"- {len(samples)} samples with the new book ({len(todo)} not cached yet, est ${est:.0f}; the old book only "
          f"where the new one misses a side-effect comment), cap ${max_cost:.0f}", "",

@@ -64,3 +64,14 @@
 {"time": "2026-11-24T01:48:12+00:00", "step": "compress", "name": "v0014c1", "parent": 13, "retired": 2, "cost": 0.79, "summary": "25 entries, 3324 words (from 26, 3445); 2 retired; $0.79"}
 {"time": "2026-11-24T01:49:02+00:00", "step": "promote", "version": 14, "parent": 13, "by": "vet", "from": "v0014c1"}
 {"time": "2026-11-24T01:49:02+00:00", "step": "vet", "name": "v0014c1", "verdict": "PASS", "cost": 0.59, "version": 14, "resolved": 0, "failed": 0, "needs_human": 0}
+{"time": "2026-11-24T02:23:19+00:00", "step": "judge", "reviewer": "p5e1d195f+v0010@high-rc-ms", "runs": 1, "cost": 0.0, "covered": 0, "to_distill": 3, "resolved": 0, "no_gt": 0, "cited_helpful": 0, "cited_harmful": 0}
+{"time": "2026-11-24T18:00:49+00:00", "step": "judge", "reviewer": "p8ac175c5+v0014@high-rc-ms", "runs": 16, "cost": 0.95, "covered": 20, "to_distill": 17, "resolved": 0, "no_gt": 0, "cited_helpful": 34, "cited_harmful": 0}
+{"time": "2026-11-24T18:04:41+00:00", "step": "distill", "name": "v0015c1", "parent": 14, "comments": 17, "not_rulable": 2, "summary": "rules/v0015c1.jsonl: 42 entries ({'principle': 39, 'knowledge': 3}) from 17 comments ({'learnable': 12, 'unconfirmed': 3, 'context': 1, 'not_issue': 1}), $1.26"}
+{"time": "2026-11-24T18:07:21+00:00", "step": "promote", "version": 15, "parent": 14, "by": "vet", "from": "v0015c1"}
+{"time": "2026-11-24T18:07:21+00:00", "step": "vet", "name": "v0015c1", "verdict": "FAIL", "cost": 2.14, "version": 15, "resolved": 9, "failed": 6, "needs_human": 0}
+{"time": "2026-11-24T18:10:10+00:00", "step": "distill", "name": "v0016c1", "parent": 15, "comments": 6, "not_rulable": 1, "summary": "rules/v0016c1.jsonl: 43 entries ({'principle': 40, 'knowledge': 3}) from 6 comments ({'unconfirmed': 2, 'learnable': 3, 'context': 1}), $1.05"}
+{"time": "2026-11-24T18:13:08+00:00", "step": "promote", "version": 16, "parent": 15, "by": "vet", "from": "v0016c1"}
+{"time": "2026-11-24T18:13:08+00:00", "step": "vet", "name": "v0016c1", "verdict": "FAIL", "cost": 3.19, "version": 16, "resolved": 1, "failed": 0, "needs_human": 4}
+{"time": "2026-11-24T18:17:39+00:00", "step": "distill", "name": "v0017c1", "parent": 16, "comments": 1, "not_rulable": 0, "summary": "rules/v0017c1.jsonl: 43 entries ({'principle': 40, 'knowledge': 3}) from 1 comments ({'learnable': 1}), $0.77"}
+{"time": "2026-11-24T18:20:50+00:00", "step": "vet", "name": "v0017c1", "verdict": "FAIL", "cost": 1.9, "version": 16, "resolved": 0, "failed": 0, "needs_human": 1}
+{"time": "2026-11-24T18:22:46+00:00", "step": "human", "comment": "3634297415", "status": "not_rulable", "why": "a bare rename preference with no reason"}

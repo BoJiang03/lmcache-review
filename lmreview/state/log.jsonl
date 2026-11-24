@@ -47,3 +47,17 @@
 {"time": "2026-11-24T00:28:55+00:00", "step": "distill", "name": "v0010c1", "parent": 9, "comments": 7, "not_rulable": 0, "summary": "rules/v0010c1.jsonl: 24 entries ({'principle': 22, 'knowledge': 2}) from 7 comments ({'learnable': 7}), $1.13"}
 {"time": "2026-11-24T00:30:27+00:00", "step": "promote", "version": 10, "parent": 9, "by": "vet", "from": "v0010c1"}
 {"time": "2026-11-24T00:30:27+00:00", "step": "vet", "name": "v0010c1", "verdict": "FAIL", "cost": 1.13, "version": 10, "resolved": 6, "failed": 0, "needs_human": 1}
+{"time": "2026-11-24T00:44:49+00:00", "step": "judge", "reviewer": "p5e1d195f+v0010@high-rc-ms", "runs": 8, "cost": 1.54, "covered": 20, "to_distill": 15, "resolved": 0, "no_gt": 0, "cited_helpful": 10, "cited_harmful": 0}
+{"time": "2026-11-24T00:47:49+00:00", "step": "distill", "name": "v0011c1", "parent": 10, "comments": 15, "not_rulable": 2, "summary": "rules/v0011c1.jsonl: 31 entries ({'principle': 28, 'knowledge': 3}) from 15 comments ({'learnable': 13, 'context': 2}), $1.93"}
+{"time": "2026-11-24T00:50:35+00:00", "step": "promote", "version": 11, "parent": 10, "by": "vet", "from": "v0011c1"}
+{"time": "2026-11-24T00:50:35+00:00", "step": "vet", "name": "v0011c1", "verdict": "PASS", "cost": 3.05, "version": 11, "resolved": 13, "failed": 0, "needs_human": 0}
+{"time": "2026-11-24T00:59:13+00:00", "step": "compress", "name": "v0012c1", "parent": 11, "retired": 0, "cost": 1.82, "summary": "30 entries, 3803 words (from 30, 3803); 0 retired; $1.82"}
+{"time": "2026-11-24T01:08:21+00:00", "step": "compress", "name": "v0012c2", "parent": 11, "retired": 0, "cost": 1.84, "summary": "30 entries, 3803 words (from 30, 3803); 0 retired; $1.84"}
+{"time": "2026-11-24T01:15:39+00:00", "step": "compress", "name": "v0012c3", "parent": 11, "retired": 5, "cost": 2.18, "summary": "27 entries, 3659 words (from 30, 3803); 5 retired; $2.18"}
+{"time": "2026-11-24T01:17:30+00:00", "step": "promote", "version": 12, "parent": 11, "by": "vet", "from": "v0012c3"}
+{"time": "2026-11-24T01:17:30+00:00", "step": "vet", "name": "v0012c3", "verdict": "PASS", "cost": 2.29, "version": 12, "resolved": 0, "failed": 0, "needs_human": 0}
+{"time": "2026-11-24T01:20:41+00:00", "step": "compress", "name": "v0013c1", "parent": 12, "retired": 2, "cost": 0, "summary": "26 entries, 3646 words (from 27, 3659); 2 retired; $1.62"}
+{"time": "2026-11-24T01:27:20+00:00", "step": "compress-eval", "name": "v0013c1", "base": "v0012", "cost": 6.41, "cells": {"True/True": 1, "True/False": 0, "False/True": 2, "False/False": 0}}
+{"time": "2026-11-24T01:32:03+00:00", "step": "compress", "name": "v0013c2", "parent": 12, "retired": 4, "cost": 0.97, "summary": "25 entries, 3279 words (from 27, 3659); 4 retired; $0.97"}
+{"time": "2026-11-24T01:37:03+00:00", "step": "promote", "version": 13, "parent": 12, "by": "vet", "from": "v0013c2"}
+{"time": "2026-11-24T01:37:03+00:00", "step": "vet", "name": "v0013c2", "verdict": "FAIL", "cost": 5.41, "version": 13, "resolved": 0, "failed": 0, "needs_human": 0}

@@ -83,3 +83,10 @@
 {"time": "2026-11-24T20:57:38+00:00", "step": "distill", "name": "v0018c1", "parent": 17, "comments": 3, "not_rulable": 0, "summary": "rules/v0018c1.jsonl: 49 entries ({'principle': 46, 'knowledge': 3}) from 3 comments ({'learnable': 3}), $1.13"}
 {"time": "2026-11-24T20:59:17+00:00", "step": "promote", "version": 18, "parent": 17, "by": "vet", "from": "v0018c1"}
 {"time": "2026-11-24T20:59:17+00:00", "step": "vet", "name": "v0018c1", "verdict": "FAIL", "cost": 1.11, "version": 18, "resolved": 2, "failed": 0, "needs_human": 1}
+{"time": "2026-11-24T21:14:25+00:00", "step": "judge", "reviewer": "p8ac175c5+v0018@high-rc-ms", "runs": 7, "cost": 2.5, "covered": 11, "to_distill": 33, "resolved": 0, "no_gt": 1, "cited_helpful": 25, "cited_harmful": 1}
+{"time": "2026-11-24T21:20:56+00:00", "step": "distill", "name": "v0019c1", "parent": 18, "comments": 33, "not_rulable": 10, "summary": "rules/v0019c1.jsonl: 55 entries ({'principle': 51, 'knowledge': 4}) from 33 comments ({'learnable': 22, 'not_issue': 2, 'rejected': 7, 'contested': 1}), $2.79"}
+{"time": "2026-11-24T21:24:35+00:00", "step": "promote", "version": 19, "parent": 18, "by": "vet", "from": "v0019c1"}
+{"time": "2026-11-24T21:24:35+00:00", "step": "vet", "name": "v0019c1", "verdict": "FAIL", "cost": 2.95, "version": 19, "resolved": 16, "failed": 7, "needs_human": 0}
+{"time": "2026-11-24T21:29:22+00:00", "step": "distill", "name": "v0020c1", "parent": 19, "comments": 7, "not_rulable": 0, "summary": "rules/v0020c1.jsonl: 59 entries ({'principle': 55, 'knowledge': 4}) from 7 comments ({'learnable': 7}), $2.04"}
+{"time": "2026-11-24T21:32:41+00:00", "step": "promote", "version": 20, "parent": 19, "by": "vet", "from": "v0020c1"}
+{"time": "2026-11-24T21:32:41+00:00", "step": "vet", "name": "v0020c1", "verdict": "FAIL", "cost": 3.34, "version": 20, "resolved": 6, "failed": 0, "needs_human": 1}

@@ -1422,7 +1422,9 @@
    "pcd13a0ae+v0006c1@high-rc 3584@324a2ba0 r9",
    "pcd13a0ae+v0006c1@high-rc 3968@433a5b33 f15",
    "pcd13a0ae+v0006c1@high-rc 4075@650ba890 f13",
-   "pcd13a0ae+v0006c1@high-rc 4042@b5c5b222 r23"
+   "pcd13a0ae+v0006c1@high-rc 4042@b5c5b222 r23",
+   "p5e1d195f+v0010@high-rc-ms 3835@1d3e0242 2.r2",
+   "p5e1d195f+v0010@high-rc-ms 4640@ae7a7d7f 2.r6"
   ]
  },
  "v0003c1-007": {
@@ -1450,7 +1452,11 @@
    "pcd13a0ae+v0006c1@high-rc 3584@324a2ba0 r10",
    "pcd13a0ae+v0006c1@high-rc 3877@c5314ca7 r11",
    "pcd13a0ae+v0006c1@high-rc 3968@433a5b33 f16",
-   "pcd13a0ae+v0006c1@high-rc 4042@b5c5b222 r18"
+   "pcd13a0ae+v0006c1@high-rc 4042@b5c5b222 r18",
+   "p5e1d195f+v0010@high-rc-ms 3520@cb6fc6ff 2.r1",
+   "p5e1d195f+v0010@high-rc-ms 3835@1d3e0242 2.r1",
+   "p5e1d195f+v0010@high-rc-ms 4640@ae7a7d7f 2.r3",
+   "p5e1d195f+v0010@high-rc-ms 4671@69bc8706 2.r1"
   ]
  },
  "v0003c1-008": {
@@ -1624,13 +1630,27 @@
  "v0008c1-002": {
   "harmful": [],
   "helpful": [
-   "p5e1d195f+v0008@high-rc-ms 3336@d2563633 2.r1"
+   "p5e1d195f+v0008@high-rc-ms 3336@d2563633 2.r1",
+   "p5e1d195f+v0010@high-rc-ms 4640@ae7a7d7f 2.r1"
   ]
  },
  "v0008c1-003": {
   "harmful": [],
   "helpful": [
-   "p5e1d195f+v0008@high-rc-ms 3336@d2563633 2.r2"
+   "p5e1d195f+v0008@high-rc-ms 3336@d2563633 2.r2",
+   "p5e1d195f+v0010@high-rc-ms 4640@ae7a7d7f 2.r2"
+  ]
+ },
+ "v0009c5-008": {
+  "harmful": [],
+  "helpful": [
+   "p5e1d195f+v0010@high-rc-ms 4640@ae7a7d7f 2.r5"
+  ]
+ },
+ "v0010c1-001": {
+  "harmful": [],
+  "helpful": [
+   "p5e1d195f+v0010@high-rc-ms 3835@1d3e0242 2.r3"
   ]
  }
 }

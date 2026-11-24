@@ -16,7 +16,7 @@ from .annotate import cid_of
 from .ensemble import ensemble
 from .config import PROMPTS, Config
 from .settings import get
-from .state import book_path, part_path, prompt_path
+from .state import book_path, part_path, prompt_params, prompt_path
 from .schema import SCHEMA_VERSION, SEVERITIES, Finding, SchemaError, cites, load_findings, parse_findings, to_dicts
 from .workspace import TOOLS, live_workspace, pr_meta
 
@@ -242,9 +242,28 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
               for i, x in enumerate(ok, 1) for k, f in enumerate(x["findings"], 1)]
         return {"findings": fs, "error": None, "raw": "", "cost": 0.0, "turns": 0, "denials": [], "usage": {}}
 
-    def rulecheck() -> dict:  # must give a verdict per rule, so a long rulebook cannot crowd rules out
-        p = part_path(version, "rulecheck").read_text().format(rules="\n".join(rule_lines(use, rule_examples(version))), **pr_meta(raw))
-        return _parsed(llm.run(p, effort, cwd=str(wt), tools=tools, system=system, sandbox=sb), rulecheck=True)
+    def rulecheck() -> dict:
+        """The rule-check agent: a verdict per rule, so a long rulebook cannot crowd rules out. With the
+        current prompt it reads the diff and discussion without tools, on a long book after a picking
+        stage (rule_stage); an older prompt version reads the workspace with tools."""
+        t = part_path(version, "rulecheck").read_text()
+        if "{context}" not in t:  # an older prompt: the agent reads the workspace with tools
+            p = t.format(rules="\n".join(rule_lines(use, rule_examples(version))), **pr_meta(raw))
+            return _parsed(llm.run(p, effort, cwd=str(wt), tools=tools, system=system, sandbox=sb), rulecheck=True)
+        if not re.fullmatch(r"p[0-9a-f]{8}", version):  # a named prompt would silently get today's check
+            raise ValueError(f"prompt {version} predates the tool-less rule check; use a p<sha8> version")
+        ctx = rulecheck_context(wt)
+        rce = str(prompt_params(version)["rulecheck_effort"])  # its own effort, part of the prompt id
+        check, pick = rule_stage(version, use, ctx, raw, rce, system)
+        p = t.format(rules="\n".join(rule_lines(check, rule_examples(version))), context=ctx, **pr_meta(raw))
+        r = _parsed(llm.run(p, rce, cwd=str(wt), tools="", system=system), rulecheck=True)
+        if pick:  # rules left out in stage 1 get a verdict too: not applicable
+            left = [x["id"] for x in use if x not in check]
+            r["verdicts"] = list(r.get("verdicts") or []) + [
+                {"rule": i, "applies": False, "violated": False, "why": "not picked from its when-line"} for i in left]
+            r.update(cost=r["cost"] + pick["cost"], usage=llm.add_usage(r.get("usage"), pick.get("usage")),
+                     stage={"picked": [x["id"] for x in check], "left": left, "cost": pick["cost"]})
+        return r
 
     def merge(ok: list[dict]) -> dict:  # one more agent run on the same workspace: it may read code
         src = {f"{i}.{f.get('id') or k}": (i, f) for i, x in enumerate(ok, 1)
@@ -277,9 +296,63 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
     keep = {"parallel": n, "merged": e.merged, "merge_cost": merge_cost, "usage": usage,
             "merge_error": None if e.merged or not e.merge else e.merge["error"],
             # raw kept per run so scripts/reparse_invalid.py can recover any of them
-            "runs": [{k: x[k] for k in ("findings", "error", "raw", "cost", "turns", "kind", "verdicts", "usage") if k in x}
+            "runs": [{k: x[k] for k in ("findings", "error", "raw", "cost", "turns", "kind", "verdicts", "usage", "stage") if k in x}
                      for x in e.runs]}
     return {**out, "cost": sum(x["cost"] for x in e.runs) + merge_cost, **keep, **meta}
+
+
+def rulecheck_context(wt: pathlib.Path) -> str:
+    """What the tool-less rule check reads: the PR's diff and the review discussion so far.
+
+    Args:
+        wt: the sample's workspace (PR.diff, PR_HISTORY.md).
+
+    Returns:
+        The prompt text of both, as markdown sections.
+    """
+    parts = ["# PR.diff\n```diff\n" + (wt / "PR.diff").read_text(errors="replace") + "\n```"]
+    h = wt / "PR_HISTORY.md"
+    if h.exists():
+        parts.append("# PR_HISTORY.md (the review discussion so far)\n" + h.read_text(errors="replace"))
+    return "\n\n".join(parts)
+
+
+def rule_stage(version: str, use: list[dict], ctx: str, raw: dict, effort: str,
+               system: str | None) -> tuple[list[dict], dict | None]:
+    """Stage 1 of a rule check on a long rulebook: when the rules in `use` total more words than [review]
+    rulecheck_stage_words, one call picks from their "when" lines the rules this PR could be in.
+
+    Args:
+        version: the prompt version (its rulepick.md part).
+        use: the rules that apply to the PR's paths.
+        ctx: the diff and discussion (rulecheck_context).
+        raw: the PR, for its number and title.
+        effort: thinking effort of the call.
+        system: the system prompt of the prompt version.
+
+    Returns:
+        (the rules to check in full, the picking call's {"cost", "usage"} or None when not staged; a
+         failed or empty pick checks every rule).
+    """
+    words = sum(len(f"{r.get('when', '')} {r.get('expect', '')} {r.get('why', '')}".split()) for r in use)
+    if words <= int(prompt_params(version)["rulecheck_stage_words"]):
+        return use, None
+    try:
+        t = part_path(version, "rulepick").read_text()
+    except FileNotFoundError:  # a prompt version from before staging
+        return use, None
+    lines = "\n".join(f"- {r['id']}: {r.get('when') or r.get('rule', '')}" for r in use)
+    try:
+        res = llm.run(t.format(rules=lines, context=ctx, **pr_meta(raw)), effort, tools="", system=system)
+    except Exception:  # a failed pick checks every rule rather than losing the rule check
+        return use, None
+    try:
+        ids = {x for x in (llm.extract_json(res["text"]) or {}).get("picked") or [] if isinstance(x, str)}
+    except (ValueError, AttributeError, TypeError):
+        ids = set()
+    pick = {"cost": res.get("cost") or 0.0, "usage": res.get("usage")}
+    chosen = [r for r in use if r["id"] in ids]
+    return (chosen or use), pick
 
 
 def _unfiled(verdicts: object, findings: list) -> list[dict]:

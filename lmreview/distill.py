@@ -63,11 +63,15 @@ after it: every reply with who wrote it, and whether the thread was resolved and
   engine that a reviewer could apply to FUTURE pull requests. In "asks", say in at most 40 words what
   the reviewer asked the author to do and why, as the reviewer put it (with the principle if they
   stated one). Describe this comment; do not write a rule: rules are written later, from all the
-  findings and the whole rulebook together.
+  findings and the whole rulebook together. When the team took only part of the comment (the author
+  adopted one ask and argued down another, and no reviewer insisted on it), it is "learnable" and
+  "asks" covers only the part that was taken.
 - "context": it needs knowledge outside the code (an offline decision, roadmap, another PR's state).
-- "not_issue": a question, praise, or nothing actionable.
-- "rejected": the team did not take the suggestion: the reviewer (or another reviewer) withdrew it,
-  agreed with the author's objection, or resolved the thread with the code left as it was.
+- "not_issue": a question, praise, or nothing actionable; also a bare preference that states no reason
+  and follows from no standard the comment or its thread names.
+- "rejected": the team took no part of the suggestion: the reviewer (or another reviewer) withdrew it,
+  agreed with the author's objection, or resolved the thread with the code left as it was; or the
+  file never changed again and nothing in the discussion shows the change was made in other files.
 - "contested": only the PR author objected (or resolved the thread without the change), and no
   reviewer agreed. Whether the team stands by the suggestion is unknown; do not decide it.
 
@@ -275,17 +279,15 @@ def _misses(cfg: Config, reviewer: str, split: str) -> list[int]:
     return ids
 
 
-def inputs(cfg: Config, misses_of: str | None, area: str | None, split: str = "train",
-           keep_unaddressed: bool = False) -> list[dict]:
-    """Human comments of `split` to distill from (or to test coverage on)."""
+def inputs(cfg: Config, misses_of: str | None, area: str | None, split: str = "train") -> list[dict]:
+    """Human comments of `split` to distill from (or to test coverage on). A comment whose file never
+    changed again is kept: it may ask for changes elsewhere; attribute reads the thread and decides."""
     ss, cm = load_gold(cfg)
     if misses_of:
         ids = _misses(cfg, misses_of, split)
     else:
         ids = [i for s in ss.values() if s["split"] == split for i in s["gold_ids"]]
     cs = [cm[i] for i in dict.fromkeys(ids)]
-    if not keep_unaddressed:
-        cs = [c for c in cs if c.get("addressed_reason") != "file-unchanged"]
     if not area:
         return cs
     # by PR (as `review --area` picks samples), not by the comment's own area: a team standard voiced
@@ -297,7 +299,9 @@ def inputs(cfg: Config, misses_of: str | None, area: str | None, split: str = "t
 OUTCOME = {"lines-changed": "the commented lines were changed afterwards",
            "file-deleted": "the file was deleted afterwards",
            "file-changed-elsewhere": "the file changed afterwards, but not at these lines",
-           "no-later-commits": "no later commits in the PR"}
+           "no-later-commits": "no later commits in the PR",
+           "file-unchanged": "the PR got later commits, but this file never changed again (taken only if "
+                             "the change was made in other files: see the discussion)"}
 
 
 REPLY_CHARS = 1500  # per reply; a longer one keeps its end (where the conclusion usually is)
@@ -454,7 +458,8 @@ def update_rulebook(base_rules: list[dict], items: dict, evid: dict, out: str, c
         def merge(ok: list) -> tuple[object, float]:
             drafts = "\n\n".join(f"Draft {j}:\n{json.dumps(d, indent=1)}" for j, (d, _) in enumerate(ok, 1))
             return _ask(fill(MERGE_WRITE, i, b).replace("@DRAFTS@", drafts), effort, cfg)
-        e = ensemble(lambda: _ask(fill(WRITE, i, b), effort, cfg), n, merge, ok=lambda r: isinstance(r[0], list))
+        e = ensemble(lambda: _ask(fill(WRITE, i, b), effort, cfg), n, merge, ok=lambda r: isinstance(r[0], list),
+                     warm=True)
         return e.result[0], sum(c for _, c in e.runs) + (e.merge[1] if e.merge else 0.0)
 
     res, cost = capped_map(write, list(enumerate(batches)), workers, max(0.0, max_cost - spend[0]),
@@ -721,7 +726,8 @@ def _consolidate(rules: list[dict], base_ids: set[str], out: str, cm: dict, effo
 
     def once(_: int) -> tuple[object, float]:
         return _ask(prompt.replace("@BOOK@", book), effort, cfg)
-    res, cost = capped_map(once, list(range(n)), n, max(0.0, max_cost - spend[0]), label=lambda _: "consolidate draft")
+    res, cost = capped_map(once, list(range(n)), n, max(0.0, max_cost - spend[0]), label=lambda _: "consolidate draft",
+                           warm=True)
     spend[0] += cost
     drafts = [[d for d in r if isinstance(d, dict)] for r in res if isinstance(r, list)]
     if not drafts:
@@ -1505,9 +1511,65 @@ def rule_diff(old: list[dict], new: list[dict], width: int = 160) -> list[tuple[
     return out
 
 
+
+def attribute(cs: list[dict], effort: str, cfg: Config, workers: int, max_cost: float) -> tuple[list[dict], float]:
+    """Attribute comments `cs` (ATTRIBUTE): one call, then a second, independent one on every comment.
+
+    One call alone neither learns a comment (a rule written from a comment that only confirmed the code)
+    nor drops it. Where the two disagree on learnable vs not, a third call decides by majority (the
+    attribution kept is the third's when it says learnable, else that of the first two calls that sided
+    with it); with no third answer
+    (cost cap, garbled) the comment stays open as "unconfirmed" and a later attempt asks again.
+
+    Args:
+        cs: the comments (with their hunk, later changes and discussion; see _fmt).
+        effort: the calls' effort.
+        cfg: paths.
+        workers: parallel calls.
+        max_cost: stop starting calls once reached.
+
+    Returns:
+        (attributions: dicts with "id", "kind", "asks"/"why", "second", and "votes" when a third call
+        ran, cost).
+    """
+    by_id = {c["id"]: c for c in cs}
+
+    def ask(group: list[list[dict]], label: str, cap: float) -> tuple[dict, float]:
+        res, cost = capped_map(lambda b: _ask(ATTRIBUTE.format(comments="\n\n".join(map(_fmt, b))), effort, cfg),
+                               group, workers, cap, label=lambda b: f"{label} {len(b)}")
+        got = {_resolve(a.get("id"), by_id): a for r in res if isinstance(r, list) for a in r if isinstance(a, dict)}
+        return {k: v for k, v in got.items() if k in by_id}, cost
+
+    split = lambda ids: [[by_id[i] for i in ids[n:n + BATCH]] for n in range(0, len(ids), BATCH)]  # noqa: E731
+    first, spent = ask(split(list(by_id)), "attribute", max_cost)
+    if not first:
+        return [], spent
+    note(f"      second opinion on {len(first)} comments")
+    second, c2 = ask(split(list(first)), "recheck", max(0.0, max_cost - spent))
+    spent += c2
+    learn = lambda a: (a or {}).get("kind") == "learnable"  # noqa: E731
+    split_ids = [i for i in first if i in second and learn(first[i]) != learn(second[i])]
+    third: dict = {}
+    if split_ids:
+        note(f"      third opinion on {len(split_ids)} comments the two calls disagree on")
+        third, c3 = ask(split(split_ids), "tiebreak", max(0.0, max_cost - spent))
+        spent += c3
+    att = []
+    for i, a in first.items():
+        b, t = second.get(i), third.get(i)
+        if b is None or (i in split_ids and t is None):
+            a = {**a, "first": a.get("kind"), "second": (b or {}).get("kind"), "kind": "unconfirmed"}
+        elif i in split_ids:
+            votes = [a.get("kind"), b.get("kind"), t.get("kind")]
+            a = {**(t if learn(t) else a if learn(a) == learn(t) else b), "second": b.get("kind"), "votes": votes}
+        else:
+            a = {**a, "second": b.get("kind")}
+        att.append({**a, "id": i})
+    return att, spent
+
 def distill(out: str, base: str | None = None, misses_of: str | None = None, area: str | None = None,
             limit: int | None = None, effort: str = "high", workers: int = 4, max_cost: float = 5.0,
-            reuse: str | None = None, keep_unaddressed: bool = False, cfg: Config | None = None,
+            reuse: str | None = None, cfg: Config | None = None,
             n: int = 3, do_induce: bool = False, prs: list[int] | None = None,
             comments: list[int] | None = None, notes: dict[int, str] | None = None, tidy: bool = False) -> str:
     """Build rules/<out>.jsonl; returns a short summary. `max_cost` 0 = plan only (prints the estimate).
@@ -1540,7 +1602,7 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
         _, cm0 = load_gold(cfg)
         cs, seen = [cm0[i] for i in comments if i in cm0], set()
     else:
-        cs = inputs(cfg, misses_of, area, "train", keep_unaddressed)
+        cs = inputs(cfg, misses_of, area, "train")
         seen = set(book_meta(base).get("seen") or []) if base else set()  # comments an earlier distill already processed
     if prs:
         cs = [c for c in cs if c["pr"] in set(prs)]
@@ -1563,32 +1625,13 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     work = cfg.data / "distill" / out
     work.mkdir(parents=True, exist_ok=True)
     if reuse:  # attribution of an earlier run (same inputs): only the write step is re-done
-        res, spent = [[json.loads(l) for l in (cfg.data / "distill" / reuse / "attribution.jsonl").open()]], 0.0
+        att = [{**a, "id": _resolve(a.get("id"), by_id)} for a in
+               map(json.loads, (cfg.data / "distill" / reuse / "attribution.jsonl").open())]
+        att, spent = [a for a in att if a["id"] in by_id], 0.0
     else:
         note(f"[1/4] attribute {len(cs)} comments in {len(batches)} batches")
-        res, spent = capped_map(lambda b: _ask(ATTRIBUTE.format(comments="\n\n".join(map(_fmt, b))), effort, cfg),
-                                batches, workers, max_cost - pre, label=lambda b: f"attribute {len(b)}")
+        att, spent = attribute(cs, effort, cfg, workers, max_cost - pre)
         spent += pre
-    att = [{**a, "id": _resolve(a.get("id"), by_id)} for r in res if isinstance(r, list) for a in r if isinstance(a, dict)]
-    att = [a for a in att if a["id"] in by_id]
-    # Every attribution needs a second, independent call to agree: one call alone neither learns a comment
-    # (a rule written from a comment that only confirmed the code) nor drops it. Where the two calls
-    # disagree on learnable vs not, the comment stays open (unconfirmed): a later attempt asks again.
-    if att and not reuse:
-        note(f"      second opinion on {len(att)} comments")
-        res2, c2 = capped_map(lambda b: _ask(ATTRIBUTE.format(comments="\n\n".join(map(_fmt, b))), effort, cfg),
-                              [[by_id[a["id"]] for a in att[i:i + BATCH]] for i in range(0, len(att), BATCH)],
-                              workers, max(0.0, max_cost - spent), label=lambda b: f"recheck {len(b)}")
-        spent += c2
-        asked = {a["id"] for a in att}
-        second = {_resolve(a.get("id"), asked): a for r in res2 if isinstance(r, list) for a in r if isinstance(a, dict)}
-        for a in att:
-            b = second.get(a["id"])
-            if b is None or (a.get("kind") == "learnable") != (b.get("kind") == "learnable"):
-                # no second opinion (cost cap or garbled), or the calls disagree: stays open
-                a.update(first=a.get("kind"), second=(b or {}).get("kind"), kind="unconfirmed")
-            else:
-                a["second"] = b.get("kind")
     (work / "attribution.jsonl").write_text("".join(json.dumps(a) + "\n" for a in att))
     note(f"      attribution: {dict(C.Counter(a.get('kind') for a in att))}; {len(cs) - len(att)} not attributed")
 
@@ -1679,7 +1722,7 @@ def coverage(rules_name: str, split: str = "test", area: str | None = None, miss
     cfg = cfg or Config()
     rules = [r for r in map(json.loads, filter(str.strip, book_path(rules_name).open()))
              if r.get("status", "active") == "active"]
-    cs = inputs(cfg, misses_of, area, split, keep_unaddressed=True)
+    cs = inputs(cfg, misses_of, area, split)
     batches = [cs[i:i + BATCH] for i in range(0, len(cs), BATCH)]
     print(f"coverage {rules_name} on {split}" + (f" ({area})" if area else "") + f": {len(cs)} comments, "
           f"{len(batches)} calls; est ${len(batches) * EST['attribute']:.1f}, cap ${max_cost:.1f}", flush=True)

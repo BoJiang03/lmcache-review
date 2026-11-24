@@ -33,7 +33,7 @@ from .workspace import cached_pr, sample_workspace
 
 FIELDS = ("when", "expect", "examples", "paths", "status")
 EST_RUN = 1.6  # one review plus its judge, in dollars
-EST_RO = 0.8   # one rule-only run (-ro) plus its targeted judge
+EST_RO = 0.3   # one rule-only run (-ro) plus its targeted judge (tool-less medium rule check: $0.1-0.25 in batch 4)
 
 
 def run_tag(only: set[str] | None) -> str:
@@ -98,7 +98,7 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
         (one row per case: entry, target, reviewer, per-run pass flags, passed), cost.
     """
     ss, cm = load_gold(cfg)
-    spent, lock = [0.0], threading.Lock()
+    spent, lock = [0.0], threading.Condition()  # notified when a running review ends
     reserved, est = [0.0], EST_RO if suffix.startswith("-ro") else EST_RUN * (2 if suffix else 1)  # expected cost of the reviews running now
     tag = run_tag(only)
     need: dict[str, set] = {}  # target -> comments its cases ask about (None: every comment)
@@ -123,20 +123,24 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
         d.mkdir(parents=True, exist_ok=True)
         cached = (d / name).exists()
         if not cached:
-            with lock:  # cached runs are always read; a new one starts only if it fits with those running
-                if spent[0] >= max_cost or (reserved[0] and spent[0] + reserved[0] + est > max_cost):
+            with lock:  # cached runs are always read; a new one waits until it fits with those running
+                while spent[0] < max_cost and reserved[0] and spent[0] + reserved[0] + est > max_cost:
+                    lock.wait()
+                if spent[0] >= max_cost:
                     return (rv, target, k, None), 0.0
                 reserved[0] += est
+            cost = 0.0
             try:
                 with sample_workspace(cfg, s, f"regress{k}", reviewer_context(rv)) as (wt, base):
                     r = run_reviewer(wt, cached_pr(cfg, key[0], s["time"]), rv, only=only)
-            finally:
+                cost = float(r.get("cost") or 0.0)
+                (d / name).write_text(json.dumps({"pr": key[0], "commit": key[1], "base": base, **r}, indent=1))
+            finally:  # always release the reservation, or the runs waiting for budget wait forever
                 with lock:
                     reserved[0] -= est
-            (d / name).write_text(json.dumps({"pr": key[0], "commit": key[1], "base": base, **r}, indent=1))
-            with lock:
-                spent[0] += r["cost"]
-            mine += r["cost"]
+                    spent[0] += cost
+                    lock.notify_all()
+            mine += cost
         run = json.loads((d / name).read_text())
         if run.get("findings") is None:
             return (rv, target, k, {"run": run, "score": None}), mine

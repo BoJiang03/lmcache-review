@@ -14,11 +14,24 @@ import pathlib
 from .budget import capped_map
 from .progress import note
 from .config import Config
-from .reviewer import DEFAULT_REVIEWER, load_rules, rulecheck_of, parse_reviewer, reviewer_context, rule_evidence, run_reviewer
+from .reviewer import DEFAULT_REVIEWER, cheap_main_of, load_rules, rulecheck_of, parse_reviewer, reviewer_context, rule_evidence, run_reviewer
 from .workspace import cached_pr, sample_workspace
 
 EST_COST = 1.2  # $/sample for a high-effort review, from earlier runs; used only for the estimate
 EST_RC = 3.3    # with the rule check and vLLM context (v0c+pk8/pk9@high-rc: $3.0-3.5)
+EST_MS = 0.4    # learning reviewer -ms (Sonnet main, tool-less rule check): $0.30/sample in round batch 4
+
+
+def est_cost(reviewer: str) -> float:
+    """Expected $/sample of `reviewer`, for the plan line and the cost cap's look-ahead.
+
+    Args:
+        reviewer: a reviewer name (see reviewer.parse_reviewer).
+
+    Returns:
+        Dollars per sample: EST_MS for -ms, EST_RC for -rc, else EST_COST.
+    """
+    return EST_MS if cheap_main_of(reviewer) else EST_RC if rulecheck_of(reviewer) else EST_COST
 
 
 def _picked(s: dict, prs: list) -> bool:
@@ -78,8 +91,8 @@ def replay(reviewer: str = DEFAULT_REVIEWER, split: str = "test", limit: int | N
         ss = [s for s in ss if s not in leak]
     todo = [s for s in ss if not run_path(cfg, reviewer, s).exists()]
     note(f"{reviewer} on {split}" + (f" ({area})" if area else "") + f": {len(ss)} samples, {len(ss) - len(todo)} cached, {len(todo)} to run "
-          f"(est ${len(todo) * (EST_RC if rulecheck_of(reviewer) else EST_COST):.0f}, cap ${max_cost:.0f})")
+          f"(est ${len(todo) * est_cost(reviewer):.0f}, cap ${max_cost:.0f})")
     _, spent = capped_map(lambda s: replay_one(cfg, s, reviewer), todo, workers, max_cost,
                           label=lambda s: f"#{s['pr']}-{s['commit'][:8]}",
-                          est=EST_RC if rulecheck_of(reviewer) else EST_COST)
+                          est=est_cost(reviewer))
     return spent

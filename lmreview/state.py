@@ -453,6 +453,49 @@ def compress_feedback() -> list[dict]:
     return [json.loads(l) for l in p.open() if l.strip()] if p.exists() else []
 
 
+def book_words(n: int | None = None) -> int:
+    """Words in the active entries of a version: what every review loads.
+
+    Args:
+        n: the version (default: the book in use).
+
+    Returns:
+        The total size in words (when, expect, why) of its active entries.
+    """
+    from .distill import _size
+    return sum(_size(r) for r in load_book(vname(head() if n is None else n)) if r.get("status", "active") == "active")
+
+
+def compress_if_big(vet_cost: float, cfg: Config | None = None) -> list[str]:
+    """The last step of a round: when the book in use is over [compress] words, compress it and vet the
+    candidate. Skipped when the last compress already ran on this same version (it found what it could).
+
+    Args:
+        vet_cost: the cap for vetting the compress candidate.
+        cfg: data locations (default: Config()).
+
+    Returns:
+        Lines for the round's summary (empty when skipped).
+    """
+    cap, w = int(get("compress", "words")), book_words()
+    if w <= cap:
+        note(f"book {vname(head())}: {w} words, not over {cap}: no compress")
+        return []
+    p = STATE / "log.jsonl"
+    tried = p.exists() and any(x["step"] == "compress" and x.get("parent") == head() for x in map(json.loads, p.open()))
+    if tried:
+        note(f"book {vname(head())}: {w} words, over {cap}, but compress already ran on this version")
+        return []
+    note(f"book {vname(head())}: {w} words, over {cap}: compress, then vet")
+    out = [compress_step(cfg=cfg)]
+    if candidate():
+        out.append(vet_step(vet_cost, cfg=cfg).split("\n\n")[-1])
+        if candidate():
+            note("vet INCOMPLETE (cost cap): candidate kept; rerun `lmreview vet` with a higher --max-cost")
+    out.append(f"book {vname(head())}: {book_words()} words (was {w}; compress at > {cap})")
+    return out
+
+
 def compress_step(max_cost: float | None = None, cfg: Config | None = None) -> str:
     """Make the book in use smaller as a candidate (distill.compress: absorb and merge only); `lmreview vet`
     then keeps the changes that lose none of their entries' proven cases."""
@@ -666,7 +709,8 @@ def round_(prs: list[int | str], review_cost: float | None = None, judge_cost: f
            induce: bool | None = None) -> str:
     """One round on samples `prs` (PR:commit, or PR numbers: see pick_samples): select the new samples worth
     reviewing (selection.py; samples named PR:commit are kept as given), review with the book in use, judge, then
-    distill + vet until their comments are all resolved / not rulable / needs_human (at most MAX_TRIES)."""
+    distill + vet until their comments are all resolved / not rulable / needs_human (at most MAX_TRIES); last,
+    compress + vet when the book is over [compress] words (compress_if_big)."""
     b = settings()["budget"]["round"]
     explicit = {str(p) for p in prs if ":" in str(p)}  # samples named by hand are not filtered
     review_cost, judge_cost, distill_cost, vet_cost = (
@@ -714,7 +758,9 @@ def round_(prs: list[int | str], review_cost: float | None = None, judge_cost: f
                 if candidate():  # INCOMPLETE
                     note("vet INCOMPLETE (cost cap): candidate kept; rerun `lmreview vet` with a higher --max-cost")
                     break
+        if not candidate():
+            out += compress_if_big(vet_cost, cfg)
         st.result = f"book {vname(head())}"
-        st.cost = llm.SPENT - spent0  # every paid call of the round: select, review, judge, distill, vet
+        st.cost = llm.SPENT - spent0  # every paid call of the round: select, review, judge, distill, vet, compress
         out.append(f"round total: ${st.cost:.2f}")
     return "\n".join(out + ["", status()])

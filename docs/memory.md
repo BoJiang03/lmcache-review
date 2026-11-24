@@ -79,6 +79,36 @@ Studied on memory alone, with cheap synthetic applications first.
 - Retirement: sparse rewards; retire on harmful evidence only?
 - Retrieval: staged loading so a large book costs little per situation.
 
+## Design lessons from lmreview (proposal, not settled)
+
+Written 2026-11-24 from what lmreview ran into. Not agreed: some points are disputed, and several
+hold only in lmreview's setting. They are sorted below by how far they seem to carry; that sorting is
+itself a guess.
+
+Possibly general:
+- **Gated writes.** An entry is admitted only after evidence that it helps; "the model thought it was
+  worth remembering" is not enough. Repeated, unchecked self-writes can degrade a memory rather than
+  improve it.
+- **Small entries with provenance.** Each entry is a short unit (situation, expectation, reason)
+  linked to the observations it came from, so a change knows what to re-check and a person can trace
+  it.
+- **Outcome accounting.** Each use records whether it helped or hurt; that record, not age or size,
+  is what revises or retires an entry.
+- **Versions and rollback.** Every change is a new version; any version can be restored; a model
+  upgrade re-checks what was proven.
+
+Specific to lmreview's setting:
+- **How a write is checked.** Majority votes on "worth learning", writing at the level of the
+  reviewer's stated principle, and replay before admission all rely on human review comments as
+  ground truth and on a PR commit as a replayable input.
+- **Forced per-entry use.** A separate checker gives a verdict on every applicable entry, because
+  entries in one long prompt crowded each other out. This fits a checklist-like task (does this diff
+  break the rule?), not memory used for recall.
+- **Local replay.** Re-checking only the changed entries' cases assumes entries compose and their
+  effect is predictable (docs/mechanism.md). Untested, and only meaningful where cases replay.
+- **People at policy points only.** People settle what the machine cannot decide twice and which kinds
+  of feedback to learn from, not individual entries. Depends on having ground truth for the rest.
+
 ## Example application: lmreview
 
 | Memory concept | lmreview |

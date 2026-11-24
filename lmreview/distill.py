@@ -243,6 +243,17 @@ def _id(x: object) -> object:
     return norm(x) if isinstance(x, (int, str)) else x
 
 
+def _resolve(x: object, keys: "set | dict") -> object:
+    """The key in `keys` an attribution's id names. A point of a split comment has the id
+    "<comment>:<k>", which the model sometimes returns as the bare comment id: that resolves to the
+    point when the comment has exactly one point among `keys`."""
+    x = _id(x)
+    if x in keys:
+        return x
+    hits = [k for k in keys if str(k).split(":")[0] == str(x)]
+    return hits[0] if len(hits) == 1 else x
+
+
 def _misses(cfg: Config, reviewer: str, split: str) -> list[int]:
     """Gold comment ids of `split` that `reviewer` missed (change requests / nits, from its judge results)."""
     ss, _ = load_gold(cfg)
@@ -1286,7 +1297,7 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     by_id = {c["id"]: c for c in cs}
     batches = [cs[i:i + BATCH] for i in range(0, len(cs), BATCH)]
     n_cand = int(len(cs) * 0.7)  # pilot: ~75% learnable
-    est = (0 if reuse else len(batches) * EST["attribute"]) \
+    est = (0 if reuse else 2 * len(batches) * EST["attribute"]) \
         + (n_cand // WRITE_BATCH + 1) * EST["write"] * (n + 1 if n > 1 else 1) \
         + EST["consolidate"] * (CONSOLIDATE_DRAFTS + 1) \
         + (EST["write"] if do_induce else 0)  # n drafts + merge; consolidate drafts + final; one induce call
@@ -1304,24 +1315,24 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
         res, spent = capped_map(lambda b: _ask(ATTRIBUTE.format(comments="\n\n".join(map(_fmt, b))), effort, cfg),
                                 batches, workers, max_cost - pre, label=lambda b: f"attribute {len(b)}")
         spent += pre
-    att = [{**a, "id": _id(a.get("id"))} for r in res if isinstance(r, list) for a in r if isinstance(a, dict)]
+    att = [{**a, "id": _resolve(a.get("id"), by_id)} for r in res if isinstance(r, list) for a in r if isinstance(a, dict)]
     att = [a for a in att if a["id"] in by_id]
-    # A comment judged not learnable is never learned, so that needs a second, independent call to agree;
-    # where it finds the comment learnable, its description of the ask is used.
-    out_ = [a for a in att if a.get("kind") != "learnable"]
-    if out_ and not reuse:
-        note(f"      second opinion on {len(out_)} comments judged not learnable")
+    # Every attribution needs a second, independent call to agree: one call alone neither learns a comment
+    # (a rule written from a comment that only confirmed the code) nor drops it. Where the two calls
+    # disagree on learnable vs not, the comment stays open (unconfirmed): a later attempt asks again.
+    if att and not reuse:
+        note(f"      second opinion on {len(att)} comments")
         res2, c2 = capped_map(lambda b: _ask(ATTRIBUTE.format(comments="\n\n".join(map(_fmt, b))), effort, cfg),
-                              [[by_id[a["id"]] for a in out_[i:i + BATCH]] for i in range(0, len(out_), BATCH)],
+                              [[by_id[a["id"]] for a in att[i:i + BATCH]] for i in range(0, len(att), BATCH)],
                               workers, max(0.0, max_cost - spent), label=lambda b: f"recheck {len(b)}")
         spent += c2
-        second = {_id(a.get("id")): a for r in res2 if isinstance(r, list) for a in r if isinstance(a, dict)}
-        for a in out_:
+        asked = {a["id"] for a in att}
+        second = {_resolve(a.get("id"), asked): a for r in res2 if isinstance(r, list) for a in r if isinstance(a, dict)}
+        for a in att:
             b = second.get(a["id"])
-            if b is None:  # no second opinion (cost cap or garbled): stays open, as learnable without a rule
-                a.update(first=a.get("kind"), kind="unconfirmed")
-            elif b.get("kind") == "learnable" and b.get("asks"):
-                a.update(first=a.get("kind"), kind="learnable", asks=b["asks"])
+            if b is None or (a.get("kind") == "learnable") != (b.get("kind") == "learnable"):
+                # no second opinion (cost cap or garbled), or the calls disagree: stays open
+                a.update(first=a.get("kind"), second=(b or {}).get("kind"), kind="unconfirmed")
             else:
                 a["second"] = b.get("kind")
     (work / "attribution.jsonl").write_text("".join(json.dumps(a) + "\n" for a in att))

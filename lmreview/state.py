@@ -226,6 +226,36 @@ def save_ledger(rows: dict[int, dict]) -> None:
     _write(STATE / "ledger.jsonl", _jsonl(sorted(rows.values(), key=lambda r: (r["pr"], r["commit"], str(r["comment"])))))
 
 
+def outcomes() -> dict[str, dict[str, list[str]]]:
+    """Per entry: the judged findings of learning reviews that cited it, as "helpful" (judged valid) and
+    "harmful" (refuted: the judge and a second opinion agree it is wrong). Keys are
+    "<reviewer> <pr>@<commit8> <finding id>", so a run judged again is counted once."""
+    p = STATE / "outcomes.json"
+    return json.loads(p.read_text()) if p.exists() else {}
+
+
+def record_outcomes(rv: str, judged: list) -> dict[str, int]:
+    """Add the outcomes of the judged runs `judged` ([(run, score)]) of reviewer `rv` to outcomes()."""
+    from .schema import cites
+    from .score import refuted
+    rec, n = outcomes(), {"helpful": 0, "harmful": 0}
+    for run, sc in judged:
+        verdict = {a["id"]: a for a in sc.get("ai") or []}
+        for x in run.get("findings") or []:
+            a = verdict.get(x["id"])
+            kind = None if a is None else "harmful" if refuted(a) else "helpful" if a.get("valid") is True else None
+            if not kind:
+                continue  # unsure, or one call against it: not evidence either way
+            key = f"{rv} {run['pr']}@{run['commit'][:8]} {x['id']}"
+            for r in cites(x):
+                ks = rec.setdefault(r, {"helpful": [], "harmful": []})[kind]
+                if key not in ks:
+                    ks.append(key)
+                    n[kind] += 1
+    _write(STATE / "outcomes.json", json.dumps(rec, indent=1, sort_keys=True) + "\n")
+    return n
+
+
 def sample(r: dict) -> str:
     """The sample of a ledger row: #pr@commit8."""
     return f"#{r['pr']}@{r['commit'][:8]}"
@@ -278,8 +308,9 @@ def judge(split: str = "train", prs: set[int] | None = None, max_cost: float = 1
                     r.update(status="resolved", resolved_by={"book": rv, "entry": None})
                     n["resolved"] += 1
         save_ledger(rows)
-        log("judge", reviewer=rv, runs=len(judged), cost=round(cost, 2), **n)
-        st.result = ", ".join(f"{k} {v}" for k, v in n.items())
+        o = record_outcomes(rv, judged)  # what each entry's citations were worth, for distill's signals
+        log("judge", reviewer=rv, runs=len(judged), cost=round(cost, 2), **n, **{f"cited_{k}": v for k, v in o.items()})
+        st.result = ", ".join(f"{k} {v}" for k, v in n.items()) + f"; rule citations: {o['helpful']} helpful, {o['harmful']} harmful"
     return f"judged {len(judged)} runs of {rv} (${cost:.2f}): " + ", ".join(f"{k} {v}" for k, v in n.items())
 
 
@@ -440,6 +471,15 @@ def vet_step(max_cost: float | None = None, reps: int | None = None, everything:
             return report + "\n\nINCOMPLETE: candidate kept; rerun `lmreview vet` with a higher --max-cost (cached runs are free)"
         J, kept, cand = res["J"], res["kept"], load_book(c["name"])
         kept_ids = {r["id"] for r in kept if r.get("status", "active") == "active"}
+        # what a dropped replacement lost: the next attempt is told, so it can write a broader entry that
+        # still raises those points instead of falling back to adding a narrow entry beside the old ones
+        from .score import load_gold
+        _, gcm = load_gold(cfg or Config())
+        replaced_by = {r["id"]: (r.get("retired") or {}).get("replaced_by") for r in cand}
+        lost_by: dict[str, list[str]] = {}
+        for old, e in J["lost"]:
+            body = " ".join((gcm.get(cid_of(e)) or gcm.get(e) or {}).get("body", "").split())[:160]
+            lost_by.setdefault(replaced_by.get(old) or "", []).append(f"{old} lost its proven case c{e}: {body!r}")
         ents: dict[int, list[str]] = {}
         old_ev = {norm(e) for r in load_book(vname(c["parent"])) for e in r.get("evidence") or []}
         for r in cand:
@@ -466,7 +506,10 @@ def vet_step(max_cost: float | None = None, reps: int | None = None, everything:
             why = ("the two attribution calls disagreed on whether it is learnable" if not es and norm(i) in unconfirmed
                    else "distill made no entry for it" if not es else
                    "the reviewer did not apply the entry" if any(e in J["no_effect"] for e in es) else
-                   "dropped: a linked change made an existing entry worse" if not any(e in kept_ids for e in es) else
+                   "dropped: a linked change made an existing entry worse"
+                   + ("; " + "; ".join(x for e in es for x in lost_by.get(e, [])) + ". A broader entry must also"
+                      " make the reviewer raise these" if any(lost_by.get(e) for e in es) else "")
+                   if not any(e in kept_ids for e in es) else
                    "its entry was kept but not tested on this comment")
             r.setdefault("tries", []).append({"book": c["name"], "entries": es, "result": "failed", "why": why,
                                               "date": _now()[:10]})
@@ -549,6 +592,8 @@ def round_(prs: list[int | str], review_cost: float | None = None, judge_cost: f
     rv = reviewer(learn=True)
     prs = pick_samples(prs, cfg)
     out = []
+    from . import llm
+    spent0 = llm.SPENT
     with step("round", f"{len(prs)} sample spec(s) {' '.join(map(str, prs))}; book {vname(head())}; caps review "
               f"${review_cost:.0f}, judge ${judge_cost:.0f}, distill ${distill_cost:.0f}, vet ${vet_cost:.0f} "
               f"(per attempt, at most {MAX_TRIES})") as st:
@@ -586,4 +631,6 @@ def round_(prs: list[int | str], review_cost: float | None = None, judge_cost: f
                     note("vet INCOMPLETE (cost cap): candidate kept; rerun `lmreview vet` with a higher --max-cost")
                     break
         st.result = f"book {vname(head())}"
+        st.cost = llm.SPENT - spent0  # every paid call of the round: select, review, judge, distill, vet
+        out.append(f"round total: ${st.cost:.2f}")
     return "\n".join(out + ["", status()])

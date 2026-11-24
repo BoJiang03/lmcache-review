@@ -39,6 +39,10 @@ def sandbox_settings(profile: str, cwd: str) -> dict:
             "permissions": {"deny": [f"Read(/{d}/**)" for d in deny]}}
 
 
+SPENT = 0.0  # USD of every call this process made (a caller takes the difference around its work)
+_spent_lock = __import__("threading").Lock()
+
+
 def run(prompt: str, effort: str, cwd: str | None = None, tools: str = "", timeout: int = 1800,
         system: str | None = None, sandbox: str | None = None, model: str | None = None) -> dict:
     """Run one headless Claude call.
@@ -90,6 +94,9 @@ def run(prompt: str, effort: str, cwd: str | None = None, tools: str = "", timeo
         err = f"{type(e).__name__}: {e}"[:500]
         raise
     finally:
+        global SPENT
+        with _spent_lock:
+            SPENT += float((out or {}).get("cost") or 0)
         from .progress import record_call
         record_call(prompt, (out or {}).get("text", ""), {
             "caller": _caller(), "model": model or "default", "effort": effort, "tools": tools, "system": bool(system),

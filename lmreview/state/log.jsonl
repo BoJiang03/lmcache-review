@@ -75,3 +75,11 @@
 {"time": "2026-11-24T18:17:39+00:00", "step": "distill", "name": "v0017c1", "parent": 16, "comments": 1, "not_rulable": 0, "summary": "rules/v0017c1.jsonl: 43 entries ({'principle': 40, 'knowledge': 3}) from 1 comments ({'learnable': 1}), $0.77"}
 {"time": "2026-11-24T18:20:50+00:00", "step": "vet", "name": "v0017c1", "verdict": "FAIL", "cost": 1.9, "version": 16, "resolved": 0, "failed": 0, "needs_human": 1}
 {"time": "2026-11-24T18:22:46+00:00", "step": "human", "comment": "3634297415", "status": "not_rulable", "why": "a bare rename preference with no reason"}
+{"time": "2026-11-24T18:22:46+00:00", "step": "human", "comment": "3634297415", "status": "not_rulable", "why": "a bare rename preference with no reason"}
+{"time": "2026-11-24T20:44:59+00:00", "step": "judge", "reviewer": "p8ac175c5+v0016@high-rc-ms", "runs": 18, "cost": 0.0, "covered": 17, "to_distill": 15, "resolved": 0, "no_gt": 0, "cited_helpful": 29, "cited_harmful": 3}
+{"time": "2026-11-24T20:51:20+00:00", "step": "distill", "name": "v0017c2", "parent": 16, "comments": 20, "not_rulable": 7, "summary": "rules/v0017c2.jsonl: 49 entries ({'principle': 46, 'knowledge': 3}) from 20 comments ({'learnable': 13, 'rejected': 4, 'not_issue': 2, 'context': 1}), $2.14"}
+{"time": "2026-11-24T20:54:55+00:00", "step": "promote", "version": 17, "parent": 16, "by": "vet", "from": "v0017c2"}
+{"time": "2026-11-24T20:54:55+00:00", "step": "vet", "name": "v0017c2", "verdict": "FAIL", "cost": 3.6, "version": 17, "resolved": 10, "failed": 3, "needs_human": 0}
+{"time": "2026-11-24T20:57:38+00:00", "step": "distill", "name": "v0018c1", "parent": 17, "comments": 3, "not_rulable": 0, "summary": "rules/v0018c1.jsonl: 49 entries ({'principle': 46, 'knowledge': 3}) from 3 comments ({'learnable': 3}), $1.13"}
+{"time": "2026-11-24T20:59:17+00:00", "step": "promote", "version": 18, "parent": 17, "by": "vet", "from": "v0018c1"}
+{"time": "2026-11-24T20:59:17+00:00", "step": "vet", "name": "v0018c1", "verdict": "FAIL", "cost": 1.11, "version": 18, "resolved": 2, "failed": 0, "needs_human": 1}

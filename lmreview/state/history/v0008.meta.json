@@ -1,0 +1,35 @@
+{
+ "version": 8,
+ "parent": 7,
+ "date": "2026-11-23T23:54:23+00:00",
+ "settings": {
+  "review": {
+   "effort": "high",
+   "rulecheck": true,
+   "parallel": 1,
+   "shell": false
+  },
+  "judge": {
+   "effort": "high",
+   "second_opinion": true
+  },
+  "annotate": {
+   "effort": "high"
+  },
+  "distill": {
+   "effort": "high",
+   "consolidate_drafts": 3,
+   "induce": false,
+   "min_signal_prs": 2,
+   "max_tries": 2
+  },
+  "vet": {
+   "side_per_entry": 2,
+   "reps": 1
+  }
+ },
+ "by": "vet",
+ "from": "v0008c1",
+ "verdict": "PASS",
+ "report": "reports/vet_v0008c1.md"
+}

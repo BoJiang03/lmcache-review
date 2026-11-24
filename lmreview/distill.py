@@ -65,10 +65,16 @@ after it: every reply with who wrote it, and whether the thread was resolved and
   stated one). Describe this comment; do not write a rule: rules are written later, from all the
   findings and the whole rulebook together. When the team took only part of the comment (the author
   adopted one ask and argued down another, and no reviewer insisted on it), it is "learnable" and
-  "asks" covers only the part that was taken.
+  "asks" covers only the part that was taken. A comment is "learnable" only if the comment or its
+  thread makes the motivation clear: what is wrong with the code as written, what it would cause, or
+  the standard it breaks. Without that, it is "not_issue", even if the author made the change.
+  Judge the whole thread: a comment that opens with a question is "learnable" when a later reply
+  (the author's explanation, or the reviewer's follow-up) turns it into such an ask. Marking an ask
+  "nit" does not make it "not_issue".
 - "context": it needs knowledge outside the code (an offline decision, roadmap, another PR's state).
-- "not_issue": a question, praise, or nothing actionable; also a bare preference that states no reason
-  and follows from no standard the comment or its thread names.
+- "not_issue": a question, praise, or nothing actionable; also an ask whose motivation neither the
+  comment nor its thread makes clear (a bare preference, or a question the thread never answers with a
+  problem in the code).
 - "rejected": the team took no part of the suggestion: the reviewer (or another reviewer) withdrew it,
   agreed with the author's objection, or resolved the thread with the code left as it was; or the
   file never changed again and nothing in the discussion shows the change was made in other files.

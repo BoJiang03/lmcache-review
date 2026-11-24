@@ -286,7 +286,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
                 {"target": tgt(e), "control": f"{w}{suffix} on {base}" if b.get("any") is not None else "round miss",
                  "with": f"{prompt}+{book}@{effort}{suffix}", "result": "both-hit" if b.get("any") else "corrected",
                  "comments": [e], "date": today, "note": "vet effect"})
-    reverted = {i for i, _ in J["lost"]} | {i for i, _ in J["not_fixed"]}  # back to the base text: untested
+    reverted = {i for i, _ in J["lost"]} | {i for i, _ in J["not_fixed"]} | {i for i in J["no_effect"] if i in O}  # back to the base text: untested
     tests = {i: ts for i, ts in tests.items() if i not in reverted}
     fails = J["no_effect"] or J["lost"] or J["not_fixed"]
     verdict = "FAIL" if fails else ("INCOMPLETE" if J["unknown"] or J["s_unknown"] or J["f_unknown"] else "PASS")
@@ -338,9 +338,13 @@ def _passing(new_rules: list[dict], old_rules: list[dict], O: dict, J: dict, rel
     """NEW without the changes vet failed: new entries that never worked are dropped; entries that lost
     a source hit or whose revision did not fix its trigger go back to their base version, and new
     entries linked to a lost entry are dropped with it (vet cannot tell which link caused the loss).
-    A dropped replacement restores every entry it replaced."""
+    A dropped replacement restores every entry it replaced. An existing entry that did not fire on a
+    comment added to it also goes back to its base version: the comment leaves its evidence (it returns
+    to the ledger to be tried again, where it counts as new evidence), and so does any revision made
+    in the same change."""
     old_all = {r["id"]: r for r in old_rules}
     lost = {i for i, _ in J["lost"]} | {i for i, _ in J["not_fixed"]}
+    back = {i for i in J["no_effect"] if i in O}  # reverted alone: its links did not cause the miss
     drop = {i for i in J["no_effect"] if i not in O}
     drop |= {x for i in lost for x in rel.get(i, set()) if x not in old_all}
     # a dropped replacement gives back every entry it replaced, not only the one that lost a comment
@@ -349,7 +353,7 @@ def _passing(new_rules: list[dict], old_rules: list[dict], O: dict, J: dict, rel
     for r in new_rules:
         if r["id"] in drop:
             continue
-        r = dict(old_all[r["id"]]) if r["id"] in lost and r["id"] in old_all else dict(r)
+        r = dict(old_all[r["id"]]) if r["id"] in lost | back and r["id"] in old_all else dict(r)
         if r.get("principle") in drop:
             r["principle"] = old_all.get(r["id"], {}).get("principle")
         if r.get("members"):

@@ -4,6 +4,7 @@
     judge                                file the human comments: covered / to_distill
     distill                              to_distill comments -> a candidate book
     vet                                  promote what works as the next version; record what failed
+    compress                             absorb / merge entries of the book in use -> a candidate (then vet)
     round PR ...                         all four on these samples, distill + vet until settled
     status | rollback vN | discard       look at / move the state
 
@@ -76,6 +77,9 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("rollback", help="make an earlier version the book in use, as a new version").add_argument(
         "version", help="e.g. v0001")
     sub.add_parser("discard", help="drop the candidate without vetting it")
+    cp = sub.add_parser("compress", help="make the book in use smaller (absorb / merge only) as a candidate; "
+                                         "`lmreview vet` keeps what loses no proven case (paid)")
+    cp.add_argument("--max-cost", type=float, default=get("budget", "compress"), help="drafts, final texts, verify")
     i = sub.add_parser("init", help="start the state from rules/<book>.jsonl as v0001")
     i.add_argument("book")
     i.add_argument("--note", default="")
@@ -127,7 +131,7 @@ def main(argv: list[str] | None = None) -> None:
     g.add_argument("--suffix", default="", help="appended to the replay reviewer, e.g. -rc for the rule check")
 
     a = ap.parse_args(argv)
-    if a.cmd in ("judge", "round", "regress", "eval") or (a.cmd in ("review", "distill", "vet") and not (
+    if a.cmd in ("judge", "round", "regress", "eval") or (a.cmd in ("review", "distill", "vet", "compress") and not (
             a.cmd == "review" and a.pr) and getattr(a, "max_cost", 1) > 0):
         from .config import Config
         from .progress import note, tee
@@ -171,6 +175,9 @@ def main(argv: list[str] | None = None) -> None:
             print(state.discard())
         else:
             print(f"book in use: {state.vname(state.init(a.book, a.note))}")
+    elif a.cmd == "compress":
+        from .state import compress_step
+        print(compress_step(a.max_cost))
     elif a.cmd == "vet" and not a.rules:
         from .state import vet_step
         print(vet_step(a.max_cost, a.reps, a.all))

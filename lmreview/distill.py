@@ -37,6 +37,7 @@ import json
 import pathlib
 import subprocess
 import tempfile
+from collections.abc import Callable
 
 from . import llm
 from .budget import capped_map
@@ -704,16 +705,22 @@ def consolidate(rules: list[dict], base_rules: list[dict], out: str, cm: dict, e
 
 
 def _consolidate(rules: list[dict], base_ids: set[str], out: str, cm: dict, effort: str, cfg: Config,
-                 spend: list[float], max_cost: float, n: int) -> tuple[list[dict], list[dict]]:
-    """The proposing part of consolidate(): drafts, votes, final texts, applied."""
+                 spend: list[float], max_cost: float, n: int, prompt: str = "", book: str = "",
+                 absorb_ok: Callable[[str, list[str]], bool] | None = None, blocked: set[frozenset] = frozenset(),
+                 shrink: float = 1.0, final_prompt: str = "") -> tuple[list[dict], list[dict]]:
+    """The proposing part of consolidate(): drafts, votes, final texts, applied. compress() passes its own
+    `prompt` and `book` text, `final_prompt` for the final texts, `shrink` (a merge must have under that share
+    of the words it replaces), `absorb_ok(into, others)` (which absorbs may happen) and `blocked` groups
+    (merges vet undid twice: not proposed again)."""
     act = {r["id"]: r for r in rules if r.get("status", "active") == "active"}
     new_ids = {i for i in act if i not in base_ids}
     if len(act) < 2 or spend[0] >= max_cost:
         return rules, []
-    book = _book_with_quotes(rules, new_ids, cm)
+    book = book or _book_with_quotes(rules, new_ids, cm)
+    prompt = prompt or CONSOLIDATE
 
     def once(_: int) -> tuple[object, float]:
-        return _ask(CONSOLIDATE.replace("@BOOK@", book), effort, cfg)
+        return _ask(prompt.replace("@BOOK@", book), effort, cfg)
     res, cost = capped_map(once, list(range(n)), n, max(0.0, max_cost - spend[0]), label=lambda _: "consolidate draft")
     spend[0] += cost
     drafts = [[d for d in r if isinstance(d, dict)] for r in res if isinstance(r, list)]
@@ -738,11 +745,20 @@ def _consolidate(rules: list[dict], base_ids: set[str], out: str, cm: dict, effo
         con.update(ct)
     groups = _components({p for p, v in pair.items() if v >= need})
     changes: list[dict] = []
+    for g in [g for g in groups if frozenset(g) in blocked]:
+        changes.append({"op": "consolidate-blocked", "rules": g, "members": [], "concern": "",
+                        "why": "vet undid this group twice"})
+    groups = [g for g in groups if frozenset(g) not in blocked]
     absorbed = []
     for g in groups:  # absorb: most drafts say one entry already covers the group: no new text
         votes = C.Counter({t: v for (ids, t), v in into.items() if set(ids) == set(g)})
         if votes and votes.most_common(1)[0][1] >= need:
             t = votes.most_common(1)[0][0]
+            if absorb_ok and not absorb_ok(t, [x for x in g if x != t]):
+                changes.append({"op": "consolidate-refused", "rules": g, "members": [], "concern": "",
+                                "why": f"absorb into {t}: it is older than an entry it would absorb"})
+                absorbed.append(g)
+                continue
             for x in g:
                 if x != t:
                     act[x]["status"] = "retired"
@@ -774,7 +790,7 @@ def _consolidate(rules: list[dict], base_ids: set[str], out: str, cm: dict, effo
     text = "\n\n".join(f"Change {k}: {op} {', '.join(g)}\n{versions(op, g)}" for k, (op, g) in enumerate(agreed))
     if spend[0] >= max_cost:
         return rules, changes
-    final, c2 = _ask(FINAL_CONSOLIDATE.replace("@BOOK@", book).replace("@CHANGES@", text), effort, cfg)
+    final, c2 = _ask((final_prompt or FINAL_CONSOLIDATE).replace("@BOOK@", book).replace("@CHANGES@", text), effort, cfg)
     spend[0] += c2
     fin = {d["change"]: d for d in final if isinstance(d, dict) and isinstance(d.get("change"), int)} \
         if isinstance(final, list) else {}
@@ -793,9 +809,10 @@ def _consolidate(rules: list[dict], base_ids: set[str], out: str, cm: dict, effo
                             "when": d.get("when"), "expect": d.get("expect")})
             continue
         olds = [act[x] for x in g]
-        if _size(d) >= sum(map(_size, olds)):
+        if _size(d) >= sum(map(_size, olds)) * shrink:
             changes.append({"op": "consolidate-refused", "rules": g, "members": [], "concern": "",
-                            "why": f"not shorter ({_size(d)} words vs {sum(map(_size, olds))})"})
+                            "why": f"not short enough ({_size(d)} words vs {sum(map(_size, olds))}, "
+                                   f"limit {shrink:.0%})"})
             continue
         k += 1
         while f"{out}-{k:03d}" in used:
@@ -826,6 +843,196 @@ def _consolidate(rules: list[dict], base_ids: set[str], out: str, cm: dict, effo
     return [r for r in rules if r["id"] not in drop] + add, changes
 
 
+# compress: a step of its own (`lmreview compress`), then vet. Only absorb and merge: making the book
+# smaller is its whole job, so its effect can be judged on its own.
+COMPRESS = """Below is the whole LMCache review rulebook: the entries an AI reviewer is given when it reviews a
+pull request of LMCache (a KV-cache layer for LLM inference engines such as vLLM). Each entry shows its
+size in words, what the human reviewers said in the comments it was learned from, the cases where it is
+proven to make the reviewer raise a point it otherwise missed, and its record in reviews (citing
+findings judged valid vs refuted).
+
+Your job is to make the rulebook much SMALLER without losing anything it does: fewer entries and far
+fewer words, while a reviewer given the smaller book still raises every point each entry's proven cases
+and comments ask for. Every entry is loaded into every review, so overlapping entries cost on every
+review and dilute the reviewer's attention. Changes:
+- "absorb": one entry ("into") already makes a reviewer raise everything the others ask for, AS WRITTEN.
+  It stays word for word; the others are retired. "into" must be an entry written or revised AFTER the
+  others (shown as "order"): an entry older than another cannot already cover it, since that one was
+  learned from a comment the reviewer missed while the older entry was in the book.
+- "merge": two or more entries are instances of one principle. Write ONE entry that states that
+  principle: name the common kind of situation in "when" and the common request in "expect", so that
+  a reviewer recognizes each merged entry's proven cases as instances of it. Do NOT list the merged
+  entries' situations and requests one by one in the text (that is packing, not merging, and saves
+  little); their concrete triggers go in "examples" (one short line each). The merged entry must be
+  at most HALF the words of the entries it replaces together; a merge that is not is refused.
+  Generalizing means the entry also applies to situations none of the merged entries named: that is
+  intended, as long as it is the same principle. Keep it at the lowest level that covers them all.
+Do not merge entries that ask for different or opposite changes because they share a topic (e.g.
+"shorten docstrings to the contract" and "explain tricky state changes in a docstring with a worked
+example"). Do not write an entry so broad that it fits any change: a reviewer must still recognize
+each proven case from the "when". Entries whose record shows refuted citations are already too wide;
+do not widen them further. Groups listed under "Undone earlier" lost a proven case when they were
+merged: merge them again only if your entry also makes a reviewer raise that case.
+List only changes; everything else stays. Every change is checked by replaying all the proven cases of
+the entries it touches, and a change that loses any of them is undone; an entry whose citations later
+turn out refuted in reviews gets revised or retired.
+
+""" + GENERAL + """
+
+Fields of a written entry (merge): "kind" (principle | knowledge), "when", "expect", "why" (one line),
+"examples" (1-3 short concrete instances), "paths" (globs, [] = anywhere).
+
+Rulebook:
+@BOOK@
+
+Answer with one JSON block only, one object per change ([] if none):
+```json
+[{"op": "merge|absorb", "rules": ["<id>", "<id>"], "into": "<absorb only>", "reason": "one line", "kind": "...",
+  "when": "...", "expect": "...", "why": "...", "examples": ["..."], "paths": []}]
+```"""
+
+FINAL_COMPRESS = """Several independent drafts proposed how to make the LMCache review rulebook below smaller. The
+changes listed under "Agreed changes" are the ones most drafts agreed on (which entries to merge). For
+each agreed merge write the ONE final entry, using the drafts' versions:
+- It states the principle the merged entries are instances of: the common kind of situation in "when",
+  the common request in "expect". It does not list the merged entries' situations one by one; their
+  concrete triggers go in "examples", one short line each.
+- A reviewer must still recognize each merged entry's proven cases as instances of it and raise them.
+- It is at most HALF the words of the entries it replaces together (an entry that is not is refused).
+  Prefer the shortest draft that meets the line above; take the clearest wording from any draft.
+
+""" + GENERAL + """
+
+Rulebook:
+@BOOK@
+
+Agreed changes, with the drafts' versions:
+@CHANGES@
+
+Answer with one JSON block only, one object per agreed change:
+```json
+[{"change": 0, "kind": "...", "when": "...", "expect": "...", "why": "...", "examples": ["..."], "paths": []}]
+```"""
+
+SHRINK = 0.6  # a compress merge must have under this share of the words it replaces (prompt asks for half)
+
+
+def _apply_merge(rules: list[dict], g: list[str], d: dict, out: str, cm: dict, base_ids: set[str]) -> str:
+    """Replace the active entries `g` of `rules` by entry text `d` (a merge, as in _consolidate); returns the
+    new id."""
+    today = dt.date.today().isoformat()
+    by = {r["id"]: r for r in rules}
+    used, k = set(by), 0
+    while True:
+        k += 1
+        if f"{out}-{k:03d}" not in used:
+            break
+    rid = f"{out}-{k:03d}"
+    olds = [by[x] for x in g]
+    ev = _uniq([e for r in olds for e in r.get("evidence") or []])
+    kids = _uniq([m for r in olds for m in r.get("members") or [] if m not in g])
+    rep = _entry(d) | {"id": rid, "kind": d.get("kind") or "principle", "status": "active", "version": 1,
+                       "history": [], "evidence": ev, "concern": "consolidated",
+                       "replaces": [x for x in g if x in base_ids], "replaces_new": [x for x in g if x not in base_ids],
+                       "tests": [{**t, "from": r["id"]} for r in olds for t in r.get("tests") or []],
+                       "n_prs": len({cm[e]["pr"] for e in ev if e in cm}),
+                       "area": ",".join(sorted({cm[e].get("area") or "overall" for e in ev if e in cm}))}
+    if kids:
+        rep["members"] = kids
+    for r in olds:
+        r["status"] = "retired"
+        r["retired"] = {"date": today, "by": out, "replaced_by": rid, "why": "consolidated"}
+        r.pop("members", None)
+    for r in rules:
+        if r.get("principle") in g:
+            r["principle"] = rid
+    rules.append(rep)
+    return rid
+
+
+def _order(r: dict) -> int:
+    """When an entry got its current text, as a version number: the candidate that wrote or last
+    revised it (v0011c1-003 -> 11; revised by v0012c2 -> 12)."""
+    import re
+    ks = [int(m.group(1)) for x in (r["id"], (r.get("revised") or {}).get("by") or "")
+          for m in [re.match(r"v(\d+)", str(x))] if m]
+    return max(ks or [0])
+
+
+def _book_for_compress(rules: list[dict], cm: dict, record: dict, feedback: list[dict], quotes: int = 3) -> str:
+    """The active entries for COMPRESS: text, size, order, reviewers' words, proven cases, record; then
+    the merges vet undid before."""
+    out = []
+    for r in rules:
+        if r.get("status", "active") != "active":
+            continue
+        said = [f"    PR #{cm[e]['pr']} {cm[e]['author']}: {' '.join(cm[e]['body'].split())[:300]}"
+                for e in (r.get("evidence") or [])[:quotes] if e in cm]
+        more = len(r.get("evidence") or []) - len(said)
+        proven = [t for t in r.get("tests") or [] if t.get("result") == "corrected"]
+        rec = record.get(r["id"]) or {}
+        out.append(f"- {r['id']} ({r.get('kind')}; {_size(r)} words; order {_order(r)}): When {r.get('when')}: "
+                   f"{r.get('expect')}\n  examples: {'; '.join(r.get('examples') or [])} | paths {r.get('paths') or []}\n"
+                   f"  proven cases: {len(proven)} ({', '.join(sorted({t['target'] for t in proven})) or 'none'}); "
+                   f"record: {len(rec.get('helpful') or [])} valid, {len(rec.get('harmful') or [])} refuted\n"
+                   f"  reviewers said:\n" + "\n".join(said) + (f"\n    (+{more} more comments)" if more > 0 else ""))
+    undone = [f"- {', '.join(f['group'])} ({f['op']}, {f['candidate']}): lost "
+              + "; ".join(f"c{x['comment']} of {x['entry']}: {x['body']!r}" for x in f.get("lost") or [])
+              + (f"\n  The undone {f['op']} read: When {f['text'].get('when')}: {f['text'].get('expect')} "
+                 f"(examples: {'; '.join(f['text'].get('examples') or [])}).\n  A reviewer given it did not raise "
+                 f"the lost comment: its \"when\" did not make that situation recognizable. A new {f['op']} must "
+                 f"name that kind of situation in its \"when\"."
+                 if f.get("text") else "")
+              for f in feedback]
+    return "\n".join(out) + ("\n\nUndone earlier:\n" + "\n".join(undone) if undone else "")
+
+
+def compress(out: str, base: str, cfg: Config | None = None, effort: str = "high", max_cost: float = 3.0,
+             n: int = 3, record: dict | None = None, feedback: list[dict] | None = None) -> tuple[str, int]:
+    """Make rulebook `base` smaller as rulebook `out`: `n` COMPRESS drafts voted in code (as consolidate),
+    absorbs only into an entry newer than the ones it absorbs, merges that generalize to at most SHRINK
+    of the words they replace. No blind check: vet is the judge (a merge that loses a proven case is
+    undone), and a merge too wide shows up as refuted citations that distill's signals act on. Merges
+    vet undid twice (`feedback`) are not proposed again; the undone ones are shown with what they lost.
+
+    Returns:
+        (summary, number of absorbs and merges in `out`).
+    """
+    cfg = cfg or Config()
+    _, cm = load_gold(cfg)
+    base_rules = [json.loads(l) for l in book_path(base).open() if l.strip()]
+    rules = json.loads(json.dumps(base_rules))
+    feedback = feedback or []
+    times = C.Counter(frozenset(f["group"]) for f in feedback)
+    blocked = {g for g, k in times.items() if k >= 2}
+    by = {r["id"]: r for r in rules}
+    ok = lambda t, xs: all(_order(by[t]) >= _order(by[x]) for x in xs)  # noqa: E731
+    book = _book_for_compress(rules, cm, record or {}, [f for f in feedback if frozenset(f["group"]) not in blocked])
+    spend = [0.0]
+    note(f"compress {base} ({sum(r.get('status', 'active') == 'active' for r in rules)} entries, "
+         f"{sum(_size(r) for r in rules if r.get('status', 'active') == 'active')} words; {n} drafts, voted)")
+    rules, changes = _consolidate(rules, {r["id"] for r in base_rules}, out, cm, effort, cfg, spend, max_cost, n,
+                                  prompt=COMPRESS, book=book, absorb_ok=ok, blocked=blocked, shrink=SHRINK,
+                                  final_prompt=FINAL_COMPRESS)
+    note(f"      proposed: {dict(C.Counter(ch['op'] for ch in changes)) or 'nothing'}")
+    rules = [r for r in rules if r["id"] in {x["id"] for x in base_rules} or r.get("status", "active") == "active"]
+    diff = rule_diff(base_rules, rules)
+    for level, line in diff:
+        note("  " + line, level)
+    act = [r for r in rules if r.get("status", "active") == "active"]
+    work = cfg.data / "distill" / out
+    work.mkdir(parents=True, exist_ok=True)
+    (work / "changes.json").write_text(json.dumps(changes, indent=1))
+    book_path(out).parent.mkdir(parents=True, exist_ok=True)
+    book_path(out).write_text("".join(json.dumps(r) + "\n" for r in rules))
+    write_meta(out, {"base": base, "kind": "compress", "seen": []})
+    retired = sum(r.get("status") == "retired" for r in rules) - sum(r.get("status") == "retired" for r in base_rules)
+    msg = (f"{len(act)} entries, {sum(map(_size, act))} words (from "
+           f"{sum(r.get('status', 'active') == 'active' for r in base_rules)}, "
+           f"{sum(_size(r) for r in base_rules if r.get('status', 'active') == 'active')}); {retired} retired; ${spend[0]:.2f}")
+    return msg, retired
+
+
 # Last sub-step of consolidate: every change of an existing entry's text must be justified.
 VERIFY = """Below are ORIGINAL entries of an LMCache review rulebook and a NEW text proposed to replace them.
 An AI reviewer is given the entries when it reviews a pull request. Compare how a reviewer would ACT
@@ -840,7 +1047,7 @@ which base-class additions get flagged); a whole rewritten sentence can be none.
 @CASES@
 If there are several ORIGINAL entries, also say which one (if any) a reviewer would act on exactly as
 on the NEW text ("same_as").
-
+@SUPPORT@
 ORIGINAL:
 @OLD@
 
@@ -850,8 +1057,23 @@ NEW:
 Answer with one JSON block only:
 ```json
 {"differences": [{"situation": "...", "original": "raises ... | silent", "new": "raises ... | silent",
-   "case": "<key of the case it is about, or null>"}], "same_as": "<original id or null>"}
+   "case": "<key of the case it is about, or null>", "keeps": "<true | false; only where both raise: the NEW
+   text still asks for everything the ORIGINAL(s) ask for there, and only adds to it>", "supported": "<true |
+   false; where the NEW text raises or asks for more than the ORIGINAL(s)>"}], "same_as": "<original id or null>"}
 ```"""
+
+VERIFY_SUPPORT = """
+The NEW text replaces several ORIGINAL entries at once, so it may also fire where none of them did.
+For every difference where the NEW text raises a point and the ORIGINAL(s) stay silent, or asks for more
+than they do, say whether the reviewers' own words below support it ("supported"): true if, from what
+they said, they would ask for the same thing in that situation (the same concern and the same kind of
+request, in a situation they did not happen to meet); false if it is a different concern, or a request
+their words do not contain. Where both raise a point, also say whether the NEW text still asks for
+everything the ORIGINAL(s) ask for there ("keeps"): false if it drops or replaces any part of their ask.
+
+What the reviewers said, in the comments the ORIGINAL entries were learned from:
+{said}
+"""
 
 VERIFY_CASES = """
 The change was made because of the cases below. For each difference, give in "case" the key of the
@@ -879,8 +1101,15 @@ def _verdict(kind: str, olds: list[dict], v: object) -> str | None:
     same = v.get("same_as") if v.get("same_as") in {o["id"] for o in olds} else None
     if same:  # acts exactly like one original: that one already covered the rest; keep its text
         return "absorb:" + same
-    if kind == "merge":  # must act as its entries together: any difference is drift
-        return "accept" if not diffs else "drift"
+    if kind == "merge":  # may only widen, where the reviewers' words support it; a loss or a change is drift
+        def raises(x: object) -> bool:
+            return str(x or "").strip().lower().startswith("raise")
+        def ok(d: dict) -> bool:  # wider where they stayed silent, or more on top of their whole ask
+            sup = str(d.get("supported")).lower() == "true"
+            if raises(d.get("new")) and not raises(d.get("original")):
+                return sup
+            return raises(d.get("new")) and raises(d.get("original")) and sup and str(d.get("keeps")).lower() == "true"
+        return "accept" if all(ok(d) for d in diffs) else "drift"
     if not diffs:  # a rewrite that acts the same
         return "revert"
     return "accept" if any(d.get("case") not in (None, "", "null") for d in diffs) else "drift"
@@ -891,8 +1120,9 @@ def verify_changes(rules: list[dict], base_rules: list[dict], out: str, effort: 
     """Check every change this distill made to the text of existing entries; undo the unjustified ones.
 
     Justified: (1) the entry acts differently on the case that motivated it (revise: a failure signal or
-    a finding; generalize: the new findings); (2) a merge that acts exactly as the entries it replaces
-    taken together (its point is a smaller book). Refused: a rewrite that acts the same (rephrasing:
+    a finding; generalize: the new findings); (2) a merge that acts as the entries it replaces taken
+    together, or wider only where the reviewers' words they came from support it (its point is a
+    smaller book; a loss or a changed request is drift). Refused: a rewrite that acts the same (rephrasing:
     the original text comes back; a replacement that acts like one of its entries is "absorb": that
     entry stays word for word and takes the others' evidence), and a difference no case asks for
     (drift). Code decides only exact equality; behavior is judged by `n` blind VERIFY calls in parallel
@@ -926,8 +1156,12 @@ def verify_changes(rules: list[dict], base_rules: list[dict], out: str, effort: 
 
     def prompt(c: tuple) -> str:
         cases = "\n".join(f"- k{i}: {x}" for i, x in enumerate(c[3]))
+        said = "\n".join(f"- {o['id']}, PR #{cm[e]['pr']} {cm[e]['author']}: {' '.join(cm[e]['body'].split())[:300]}"
+                         for o in c[2] for e in (o.get("evidence") or [])[:3] if e in cm)
         return (VERIFY.replace("@OLD@", "\n".join(map(_show_old, c[2]))).replace("@NEW@", _show_old(c[1]))
+                .replace("@SUPPORT@", VERIFY_SUPPORT.format(said=said or "(none)") if c[0] == "merge" else "")
                 .replace("@CASES@", VERIFY_CASES.format(cases=cases) if c[3] else ""))
+    cm = load_gold(cfg)[1] if any(c[0] == "merge" for c in ask) else {}
     jobs = [c for c in ask for _ in range(n)]
     def call(c: tuple) -> tuple[tuple, float]:
         v, cost = _ask(prompt(c), effort, cfg)
@@ -935,10 +1169,16 @@ def verify_changes(rules: list[dict], base_rules: list[dict], out: str, effort: 
     res, cost = capped_map(call, jobs, max(4, n), max(0.0, max_cost - spend[0]), label=lambda c: f"verify {c[1]['id']}")
     spend[0] += cost  # results come in completion order: each carries its check
     votes: dict[str, list[str]] = C.defaultdict(list)
+    problems: dict[str, list[str]] = C.defaultdict(list)  # what a refused merge got wrong, for compress's repair
     for c, v in res:
         x = _verdict(c[0], c[2], v)
         if x:
             votes[c[1]["id"]].append(x)
+        if x == "drift" and c[0] == "merge":
+            for d in v.get("differences") or []:
+                if isinstance(d, dict) and _verdict("merge", c[2], {"differences": [d]}) == "drift":
+                    problems[c[1]["id"]].append(f"{d.get('situation')} | original: {d.get('original')} | "
+                                                f"new: {d.get('new')} | supported: {d.get('supported')}")
     for c in ask:
         vs = votes.get(c[1]["id"]) or []
         top = C.Counter(vs).most_common(1)
@@ -955,7 +1195,8 @@ def verify_changes(rules: list[dict], base_rules: list[dict], out: str, effort: 
             continue
         target = verdict.split(":", 1)[1] if verdict.startswith("absorb:") else None
         changes.append({"op": "verify-" + verdict.split(":")[0], "rules": ids, "members": [], "concern": "",
-                        "why": why, **({"into": target} if target else {})})
+                        "why": why, **({"into": target} if target else {}),
+                        **({"problems": _uniq(problems[r["id"]]), "text": _entry(r)} if problems.get(r["id"]) else {})})
         rules = _undo(rules, kind, r, olds, target, old)
     for r in rules:
         (r.get("revised") or {}).pop("cases", None)

@@ -58,6 +58,7 @@ judge = 10.0
 distill = 5.0
 vet = 30.0
 regress = 10.0
+compress = 3.0          # `lmreview compress`: drafts, final texts, blind verify (vet is separate)
 
 [budget.round]
 select = 5.0         # annotating the new samples (judge reuses the annotations)

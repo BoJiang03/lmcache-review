@@ -58,7 +58,7 @@ judge = 10.0
 distill = 5.0
 vet = 30.0
 regress = 10.0
-compress = 3.0          # `lmreview compress`: drafts, final texts, blind verify (vet is separate)
+compress = 3.0          # `lmreview compress`: drafts and final texts (vet is separate)
 
 [budget.round]
 select = 5.0         # annotating the new samples (judge reuses the annotations)
@@ -75,3 +75,7 @@ data = ""
 vllm = ""
 state = ""                                 # "" = lmreview/state/ in the package
 sandbox = "/var/tmp/lmreview-{uid}/sandbox"  # agent workspaces; outside $HOME and /tmp (see llm.py)
+
+[compress]
+words = 10000        # round compresses the book (then vets it) when its active entries total more words than this;
+                     # a trigger, not a limit: the book may stay above it when nothing can be merged

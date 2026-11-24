@@ -5,7 +5,7 @@
     distill                              to_distill comments -> a candidate book
     vet                                  promote what works as the next version; record what failed
     compress                             absorb / merge entries of the book in use -> a candidate (then vet)
-    round PR ...                         all four on these samples, distill + vet until settled
+    round PR ...                         all four on these samples, distill + vet until settled; compress + vet when the book is over [compress] words
     status | rollback vN | discard       look at / move the state
 
 A reviewer is named <prompt>[+<book>][@<effort>][x<n>][-rc|-ro][-ms]; the default is the current prompt
@@ -66,7 +66,7 @@ def main(argv: list[str] | None = None) -> None:
     j = sub.add_parser("judge", help="judge the current reviewer's runs and file the comments in the ledger (paid, cached)")
     j.add_argument("--prs", type=int, nargs="+")
     j.add_argument("--max-cost", type=float, default=get("budget", "judge"))
-    o = sub.add_parser("round", help="review + judge + distill + vet on these samples (paid)")
+    o = sub.add_parser("round", help="review + judge + distill + vet on these samples, then compress + vet when the book is over [compress] words (paid)")
     o.add_argument("prs", nargs="+", help="PR numbers or PR:commit")
     o.add_argument("--review-cost", type=float, default=get("budget", "round")["review"])
     o.add_argument("--judge-cost", type=float, default=get("budget", "round")["judge"])

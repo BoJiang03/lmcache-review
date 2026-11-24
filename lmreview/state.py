@@ -391,7 +391,8 @@ def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: 
         try:
             msg = distill(name, vname(parent), reviewer(learn=True), effort=effort, workers=workers,
                           max_cost=max_cost, cfg=cfg, comments=ids, prs=sorted({r["pr"] for r in todo}) or None,
-                          notes={r["comment"]: tries_note(r) for r in todo if r.get("tries")}, do_induce=induce)
+                          notes={r["comment"]: tries_note(r) for r in todo if r.get("tries")}, do_induce=induce,
+                          tidy=compress)
         except BaseException:
             clear_candidate()
             raise
@@ -449,6 +450,9 @@ def vet_step(max_cost: float | None = None, reps: int | None = None, everything:
         n = new_version(kept, c["parent"], by="vet", **{"from": c["name"]}, verdict=res["verdict"],
                         report=f"reports/vet_{c['name']}.md") if changed else c["parent"]
         rows, out = ledger(), {"resolved": [], "failed": [], "needs_human": []}
+        af = (cfg or Config()).data / "distill" / c["name"] / "attribution.jsonl"
+        unconfirmed = {norm(a["id"]) for a in map(json.loads, af.open()) if a.get("kind") == "unconfirmed"} \
+            if af.exists() else set()
         for i in c["comments"]:
             r = rows.get(i)
             if not r or r["status"] != "to_distill":
@@ -459,7 +463,8 @@ def vet_step(max_cost: float | None = None, reps: int | None = None, everything:
                 r.update(status="resolved", resolved_by={"book": vname(n), "entry": ok[0]})
                 out["resolved"].append(i)
                 continue
-            why = ("distill made no entry for it" if not es else
+            why = ("the two attribution calls disagreed on whether it is learnable" if not es and norm(i) in unconfirmed
+                   else "distill made no entry for it" if not es else
                    "the reviewer did not apply the entry" if any(e in J["no_effect"] for e in es) else
                    "dropped: a linked change made an existing entry worse" if not any(e in kept_ids for e in es) else
                    "its entry was kept but not tested on this comment")

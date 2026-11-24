@@ -1256,7 +1256,7 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
             limit: int | None = None, effort: str = "high", workers: int = 4, max_cost: float = 5.0,
             reuse: str | None = None, keep_unaddressed: bool = False, cfg: Config | None = None,
             n: int = 3, do_induce: bool = False, prs: list[int] | None = None,
-            comments: list[int] | None = None, notes: dict[int, str] | None = None) -> str:
+            comments: list[int] | None = None, notes: dict[int, str] | None = None, tidy: bool = False) -> str:
     """Build rules/<out>.jsonl; returns a short summary. `max_cost` 0 = plan only (prints the estimate).
 
     distill does not review. It learns from review runs that exist: `misses_of` names the reviewer
@@ -1267,7 +1267,8 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     that were refuted are its failure signals. Steps: (1) attribute the missed comments; (2) write: one step that
     sees the whole base book, its failure signals and the learnable findings and decides per finding
     (evidence, generalize, merge, add; revise/retire only on failure signals, an opposite finding or a
-    retry); (3) update the book; (4) consolidate the whole book (parallel drafts, voted);
+    retry); (3) update the book; (4) consolidate the whole book (parallel drafts, voted; skipped when
+    write changed nothing, unless `tidy`: the base book was consolidated when it was written);
     (5) induce principles over the standalone entries (`do_induce`, off by
     default); then drop every new entry without an evidence comment of its own. Whether the
     result is kept is `lmreview vet`'s call.
@@ -1365,10 +1366,13 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     rules, changes = update_rulebook(base_rules, items, evid, out, cm, effort, cfg, spend, max_cost, workers,
                                      n=n, signals=sig, retry=retry, notes=why)
     note(f"      changes: {dict(C.Counter(ch['op'] for ch in changes))}")
-    note(f"[3/4] consolidate the whole book ({CONSOLIDATE_DRAFTS} drafts, voted; ${spend[0]:.2f} so far)")
-    rules, more = consolidate(rules, base_rules, out, cm, effort, cfg, spend, max_cost, n=CONSOLIDATE_DRAFTS)
-    changes += more
-    note(f"      consolidate: {dict(C.Counter(ch['op'] for ch in more)) or 'no change'}")
+    if changes or tidy:
+        note(f"[3/4] consolidate the whole book ({CONSOLIDATE_DRAFTS} drafts, voted; ${spend[0]:.2f} so far)")
+        rules, more = consolidate(rules, base_rules, out, cm, effort, cfg, spend, max_cost, n=CONSOLIDATE_DRAFTS)
+        changes += more
+        note(f"      consolidate: {dict(C.Counter(ch['op'] for ch in more)) or 'no change'}")
+    else:  # the base book was consolidated when it was written; nothing changed since
+        note("[3/4] consolidate: skipped, write changed nothing")
     if do_induce:
         note(f"[4/4] induce principles over standalone entries (${spend[0]:.2f} so far)")
         rules, more = induce(rules, cm, effort, cfg, spend, max_cost, out)

@@ -165,7 +165,7 @@ def suffix(book: bool = True, learn: bool = False) -> str:
             + ("-ms" if learn and book and get("hybrid", "learn") else "") + ("-sh" if c["shell"] else ""))
 
 
-PARTS = ("rulecheck", "merge")  # the other agents' prompts, versioned with reviewer.md
+PARTS = ("rulecheck", "merge", "rulepick")  # the other agents' prompts, versioned with reviewer.md
 
 
 def prompt_id(save: bool = False) -> str:
@@ -173,15 +173,42 @@ def prompt_id(save: bool = False) -> str:
     them gives the reviewer a new name. With `save` (before a run uses it), their texts are kept in
     state/prompts/ (<id>.md, <id>.rulecheck.md, <id>.merge.md) so old runs stay reproducible."""
     texts = {"": (PROMPTS / "reviewer.md").read_text(), **{k: (PROMPTS / f"{k}.md").read_text() for k in PARTS}}
-    pid = "p" + hashlib.sha256("\0".join(texts.values()).encode()).hexdigest()[:8]
-    for k, text in texts.items():
-        p = STATE / "prompts" / (f"{pid}.{k}.md" if k else f"{pid}.md")
+    # the staging threshold and the rule check's effort change its verdicts, so they are part of the name too
+    stage = f"\0stage={get('review', 'rulecheck_stage_words')}\0rce={get('review', 'rulecheck_effort')}"
+    pid = "p" + hashlib.sha256(("\0".join(texts.values()) + stage).encode()).hexdigest()[:8]
+    files = {(f"{pid}.{k}.md" if k else f"{pid}.md"): text for k, text in texts.items()}
+    files[f"{pid}.params.json"] = json.dumps(_params(), sort_keys=True) + "\n"
+    for name, text in files.items():
+        p = STATE / "prompts" / name
         if save and not p.exists():
             try:
                 _write(p, text)
             except OSError:  # an installed copy may be read-only; the current files are found by hash
                 pass
     return pid
+
+
+PARAMS = ("rulecheck_effort", "rulecheck_stage_words")  # [review] settings hashed into the prompt id
+
+
+def _params() -> dict:
+    """The current values of the [review] settings in PARAMS."""
+    return {k: get("review", k) for k in PARAMS}
+
+
+def prompt_params(version: str) -> dict:
+    """The PARAMS values prompt version `version` was named with: kept in state/prompts/<id>.params.json
+    when the id was saved; the current config for the current version, a named one (v0b, ...) or an id
+    saved before params were kept.
+
+    Args:
+        version: a prompt version (p<sha8> or a named one).
+
+    Returns:
+        {setting: value} for every name in PARAMS.
+    """
+    p = STATE / "prompts" / f"{version}.params.json"
+    return {**_params(), **json.loads(p.read_text())} if p.exists() else _params()
 
 
 def part_path(version: str, part: str) -> pathlib.Path:
@@ -296,8 +323,6 @@ def judge(split: str = "train", prs: set[int] | None = None, max_cost: float = 1
                 n["no_gt"] += 1
             for h in hs:
                 c = hkey(s, h)  # a point: the comment id, or "<comment id>:<k>" in a comment of several points
-                if cm.get(c, {}).get("addressed_reason") == "file-unchanged":
-                    continue  # likely not taken by the author
                 r = rows.get(c) or rows.get(cid_of(c))  # a row filed before comments were split covers its points
                 if r is None:
                     status_ = "covered" if h["matched_ai"] else "to_distill"
@@ -725,20 +750,23 @@ def round_(prs: list[int | str], review_cost: float | None = None, judge_cost: f
     with step("round", f"{len(prs)} sample spec(s) {' '.join(map(str, prs))}; book {vname(head())}; caps review "
               f"${review_cost:.0f}, judge ${judge_cost:.0f}, distill ${distill_cost:.0f}, vet ${vet_cost:.0f} "
               f"(per attempt, at most {MAX_TRIES})") as st:
-        with step("select", "new samples worth reviewing") as s0:
-            from .selection import select
-            # annotating counts toward the review cap too: a round with no review budget annotates nothing
-            kept, s0.cost = select([p for p in prs if p not in explicit], rv,
-                                   min(float(b["select"]), review_cost), cfg or Config())
-            prs = [p for p in prs if p in explicit or p in kept]
-        st.cost += s0.cost
+        sel_cost = 0.0
+        if get("select", "on"):
+            with step("select", "new samples worth reviewing") as s0:
+                from .selection import select
+                # annotating counts toward the review cap too: a round with no review budget annotates nothing
+                kept, s0.cost = select([p for p in prs if p not in explicit], rv,
+                                       min(float(b["select"]), review_cost), cfg or Config())
+                prs = [p for p in prs if p in explicit or p in kept]
+            sel_cost = s0.cost
+            st.cost += sel_cost
         if not prs:  # an empty list would mean every train sample to replay and judge
             note("select kept no samples: nothing to review", "warn")
             st.result = f"book {vname(head())}"
             return "\n".join(out + ["nothing selected", "", status()])
         nums = {int(str(p).split(":")[0]) for p in prs}
         with step("review", rv) as s1:
-            s1.cost = replay(rv, "train", None, 4, max(0.0, review_cost - s0.cost), prs, cfg=cfg)
+            s1.cost = replay(rv, "train", None, 4, max(0.0, review_cost - sel_cost), prs, cfg=cfg)
         st.cost += s1.cost
         out.append(f"review {rv}: ${s1.cost:.2f}")
         out.append(judge("train", nums, judge_cost, rv, cfg))

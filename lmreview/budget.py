@@ -13,8 +13,12 @@ HEARTBEAT = 60.0  # seconds between "still running" lines while nothing finishes
 
 def capped_map(fn: Callable[[object], tuple[object, float]], items: Iterable, workers: int,
                max_cost: float, label: Callable[[object], str] = str,
-               show: Callable[[object], str] | None = None, est: float = 0.0) -> tuple[list, float]:
+               show: Callable[[object], str] | None = None, est: float = 0.0,
+               warm: bool = False) -> tuple[list, float]:
     """Run `fn(item) -> (result, cost)` over items, at most `workers` at a time.
+
+    With `warm` (jobs that send the same prompt), the first job runs alone: its prompt is then in the
+    LLM's prompt cache, and the others read it instead of each writing it again.
 
     No new job starts once the spent total, plus `est` (expected cost of one job) for each job still
     running, would reach `max_cost`; jobs already running finish. With `est` 0 the total can overshoot
@@ -32,7 +36,8 @@ def capped_map(fn: Callable[[object], tuple[object, float]], items: Iterable, wo
         running: dict = {}
         started: dict = {}
         while items or running:
-            while items and len(running) < workers and spent + est * (len(running) + 1) <= max(max_cost, est) \
+            cap = 1 if warm and not (done_n or failed) else workers  # warm: the first job alone
+            while items and len(running) < cap and spent + est * (len(running) + 1) <= max(max_cost, est) \
                     and spent < max_cost:
                 it = items.pop(0)
                 f = ex.submit(fn, it)

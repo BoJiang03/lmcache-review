@@ -9,6 +9,12 @@ effort = "high"      # low | medium | high | xhigh | max
 rulecheck = true     # -rc: one more agent that gives a verdict on every applicable rule
 parallel = 1         # x<n>: main review agents run at once, then one merge agent
 shell = false        # -sh: the agents also get a sandboxed shell (needs bubblewrap and socat)
+# The rule check (rulecheck.md) runs without tools on the diff and the discussion. When the rules that
+# apply to a PR total more words than this, a first call picks the ones worth checking from their
+# "when" lines (rulepick.md), and only those are checked in full.
+rulecheck_stage_words = 6000
+rulecheck_effort = "medium"  # the tool-less rule check (2026-11-24 pilot: same verdicts as high on 14 samples, all
+                             # new rules still fire on their source PRs, ~18% cheaper)
 
 [judge]
 effort = "high"      # cached scores record their effort; a different one refuses to reuse them
@@ -36,6 +42,8 @@ main_model = "claude-sonnet-5-5"
 main_effort = "medium"
 
 [select]
+on = false           # off since 2026-11-24: on the deployment scope (mostly 1-2 points per commit) scores tie and
+                     # the kept half held only 62-77% of the misses; round reviews every sample it is given
 # round only: which new training samples to review (lmreview/selection.py). Each sample scores the sum,
 # over its change-request and nit points, of how often the reviewer misses a point of that kind; the
 # top `keep` share of the new samples is reviewed.

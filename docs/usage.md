@@ -93,10 +93,11 @@ review ─> judge ─┬─> covered        (the reviewer found it)
                                                        tries = 2 ─> needs_human
 ```
 
-- `lmreview round PR[:commit] ...` runs select, review, judge, then distill + vet until the comments settle.
-  select reviews only the new samples most worth it: each scores the sum, over its change-request and nit
-  points, of how often the reviewer misses that kind of point; the top half is kept (`[select]` in config.toml;
-  samples named as PR:commit are always kept).
+- `lmreview round PR[:commit] ...` runs review, judge, then distill + vet until the comments settle.
+  An optional select step (`[select] on`, off by default: on the deployment scope its scores mostly tie)
+  reviews only the new samples most worth it: each scores the sum, over its change-request and nit
+  points, of how often the reviewer misses that kind of point; the top half is kept (samples named as
+  PR:commit are always kept).
   The steps also run one by one: `review --split train --only-pr ...`, `judge`, `distill`, `vet`.
 - `vet` promotes what works as the next version and drops or reverts the rest. A failed comment keeps
   its attempt (book, entries, why), and the next `distill` is told to write it differently.
@@ -120,8 +121,10 @@ v0t) still show the first example (`<!-- rules: examples -->`), so their cached 
 v0f are v0b and v0c without it.
 `x<n>` runs n reviews in parallel and merges them. `-rc` adds a rule-check run next to the review: one more agent
 that must give a verdict (applies, violated, why) on every applicable rule, merged with the review. It keeps a long
-rulebook from crowding out specific rules (on #3697, m3631-002 fired 0/2 with pk2 and 2/2 with pk2 `-rc`); it
-costs about $1–1.5 more per review.
+rulebook from crowding out specific rules (on #3697, m3631-002 fired 0/2 with pk2 and 2/2 with pk2 `-rc`). With
+the current prompt the rule check has no tools: it reads the PR's diff and discussion in its prompt, at
+`[review] rulecheck_effort`; past `[review] rulecheck_stage_words` one call first picks the rules worth
+checking from their "when" lines. Both settings are part of the prompt id. It costs about $0.1–0.35 per sample.
 Paid commands take `--max-cost`. They stop starting new LLM calls once they reach it, and `0` prints the plan only.
 
 | Command | What it does |

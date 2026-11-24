@@ -156,7 +156,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         return any((cfg.data / "runs").glob(f"{prompt}+{book}@{effort}{suffix}*/{t.replace('@', '-')}*.json"))
     side = []
     for i in affected:
-        cs = [e for e in sorted(old_ev[i]) if e in where and (i, e) not in eff_set]
+        cs = [e for e in sorted(old_ev[i], key=str) if e in where and (i, e) not in eff_set]
         cs.sort(key=lambda e: (tgt(e) not in have, not has_new(tgt(e))))
         # a retired (replaced) entry: the comments it was proven to correct (its "corrected" tests), since
         # the replacement must keep what it did; with no such record, every source comment

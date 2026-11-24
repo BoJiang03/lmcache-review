@@ -28,7 +28,8 @@ class Ensemble(Generic[R]):
 
 
 def ensemble(once: Callable[[], R], n: int, merge: Callable[[list[R]], R],
-             ok: Callable[[R], bool] = lambda r: True, extra: Sequence[Callable[[], R]] = ()) -> Ensemble[R]:
+             ok: Callable[[R], bool] = lambda r: True, extra: Sequence[Callable[[], R]] = (),
+             warm: bool = False) -> Ensemble[R]:
     """Call `once` n times in parallel and merge the usable results.
 
     A run that raises or is not `ok` is left out; a merge that raises or is not `ok` falls back to the
@@ -41,6 +42,8 @@ def ensemble(once: Callable[[], R], n: int, merge: Callable[[list[R]], R],
         ok: whether a result is usable (e.g. its output parsed).
         extra: other steps run alongside the n runs and merged with them (e.g. a rule check next to
             the reviews); their results come after the n runs' in `runs`.
+        warm: the first run goes alone, the rest after it, so they read its prompt from the LLM's
+            prompt cache instead of each writing it (for runs that send the same prompt).
 
     Returns:
         An Ensemble. With fewer than 2 usable runs nothing is merged: the result is the usable run, or
@@ -60,8 +63,9 @@ def ensemble(once: Callable[[], R], n: int, merge: Callable[[list[R]], R],
         except Exception as e:  # one failed call must not sink the others
             return e
 
+    first = [safe(calls[0])] if warm else []
     with ThreadPoolExecutor(len(calls)) as ex:
-        out = list(ex.map(safe, calls))
+        out = first + list(ex.map(safe, calls[len(first):]))
     runs = [r for r in out if not isinstance(r, Exception)]
     if not runs:
         raise out[0]

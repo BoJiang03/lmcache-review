@@ -99,8 +99,6 @@ def main(argv: list[str] | None = None) -> None:
     d.add_argument("--area", help="only comments on PRs that touch this area; usually omit it, so team-wide standards voiced in other areas count too")
     d.add_argument("--limit", type=int, help="at most this many comments")
     d.add_argument("--reuse", help="reuse the attribution of this earlier distill run (same inputs); only re-merge")
-    d.add_argument("--keep-unaddressed", action="store_true",
-                   help="keep comments whose file never changed again (likely not taken)")
     d.add_argument("--effort", default=get("distill", "effort"), choices=EFFORTS)
     d.add_argument("--workers", type=int, default=4)
     d.add_argument("--max-cost", type=float, default=get("budget", "distill"), help="0 = print the plan and estimate only")
@@ -195,7 +193,7 @@ def main(argv: list[str] | None = None) -> None:
     else:
         from .distill import distill
         print(distill(a.out, a.base, a.misses_of, a.area, a.limit, a.effort, a.workers, a.max_cost, a.reuse,
-                      a.keep_unaddressed, n=a.n, do_induce=a.induce, prs=a.prs))
+                      n=a.n, do_induce=a.induce, prs=a.prs))
 
 
 if __name__ == "__main__":

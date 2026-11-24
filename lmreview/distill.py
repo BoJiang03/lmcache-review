@@ -140,6 +140,9 @@ a docstring with a worked example" are two entries, though both are about docstr
   line) what the new text covers or asks for differently. A rewrite that only rephrases is not a revise.
 - "retire": the existing entry is wrong and no rewrite fixes it, or another entry already covers it
   completely ("replaced_by": that id). Same evidence requirement as "revise".
+- A failure signal shows the entry's record (citing findings judged valid vs refuted). An entry whose
+  citations were mostly valid is revised to stop the wrong findings, not retired; retire one whose
+  citations were mostly refuted.
 - "contradict": findings ask for the opposite of an existing entry, but it is unclear who is right. Do
   not rewrite it; say why.
 - "skip": a finding carries no principle or knowledge a reviewer could apply to other PRs; say why.
@@ -161,6 +164,10 @@ How to write an entry (generalize, merge, add, revise):
 - A finding marked RETRY already has an entry that did not work: write it so that a reviewer reading
   that diff would recognize the situation (usually the "when" names the situation too abstractly or
   too narrowly), not a paraphrase of the same text.
+- A finding whose earlier attempt says a broader entry was dropped because a replaced entry lost a proven
+  case: generalize again, and make the new entry cover that case too (name the situation in "when", put
+  it among the "examples"). Adding a narrow entry beside the old one is the fallback only when no single
+  entry can ask for both.
 
 """ + GENERAL + """
 
@@ -1136,6 +1143,8 @@ def failure_signals(rules: list[dict], cfg: Config, per_rule: int = 3, reviewer:
     # runs from before an entry's last revision judged its old text: they are not signals any more
     since = {r["id"]: dt.datetime.fromisoformat(r["revised"]["date"]).timestamp() for r in rules if r.get("revised")}
     done = {(r["id"], *x) for r in rules for x in r.get("signals_seen") or []}  # already decided on
+    from .state import outcomes
+    record = outcomes()
     text, rec, n, seen = {}, {}, C.Counter(), set()
     for d in sorted((cfg.data / "runs").iterdir()):
         if reviewer and d.name != reviewer:
@@ -1166,7 +1175,10 @@ def failure_signals(rules: list[dict], cfg: Config, per_rule: int = 3, reviewer:
                               "finding": x["id"], "why": bad[x["id"]]}
                     text[k] = (f"failure signal of {r}: a finding citing it on PR #{run['pr']} was judged invalid. "
                                f"Finding: {x.get('title')}: {' '.join((x.get('body') or '').split())[:300]} "
-                               f"| judge: {bad[x['id']]}" + _code_at(cfg, run["commit"], x.get("locations") or []))
+                               f"| judge: {bad[x['id']]}"
+                               + (f" | record of {r} in learning reviews: {len(record[r]['helpful'])} citing findings "
+                                  f"judged valid, {len(record[r]['harmful'])} refuted" if r in record else "")
+                               + _code_at(cfg, run["commit"], x.get("locations") or []))
     return text, rec
 
 

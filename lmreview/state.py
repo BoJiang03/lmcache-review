@@ -361,7 +361,8 @@ def candidate() -> dict | None:
 def candidate_name() -> str:
     """Name of the next candidate: `v<next>c<k>`, k counting the attempts on this book."""
     n, p = head(), STATE / "log.jsonl"
-    k = sum(1 for x in map(json.loads, p.open()) if x["step"] == "distill" and x.get("parent") == n) if p.exists() else 0
+    k = sum(1 for x in map(json.loads, p.open()) if x["step"] in ("distill", "compress") and x.get("parent") == n) \
+        if p.exists() else 0
     return f"{vname(n + 1)}c{k + 1}"
 
 
@@ -446,6 +447,86 @@ def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: 
         return f"candidate {name}: {msg}; {n_out} comments not rulable. Next: `lmreview vet`"
 
 
+def compress_feedback() -> list[dict]:
+    """Merges and absorbs of compress that vet undid: {group, op, candidate, lost: [{entry, comment, body}], date}."""
+    p = STATE / "compress.jsonl"
+    return [json.loads(l) for l in p.open() if l.strip()] if p.exists() else []
+
+
+def compress_step(max_cost: float | None = None, cfg: Config | None = None) -> str:
+    """Make the book in use smaller as a candidate (distill.compress: absorb and merge only); `lmreview vet`
+    then keeps the changes that lose none of their entries' proven cases."""
+    from . import llm
+    from .distill import compress
+    max_cost = get("budget", "compress") if max_cost is None else max_cost
+    with lock(), step("compress", f"book {vname(head())}; cap ${max_cost:.0f}") as st:
+        if not head():
+            raise RuntimeError("no book in use: `lmreview init <rules name>` first")
+        if candidate():
+            raise RuntimeError(f"candidate {candidate()['name']} is waiting: `lmreview vet` it or `lmreview discard`")
+        name, parent, spent0 = candidate_name(), head(), llm.SPENT
+        _write(STATE / "candidate" / "meta.json", json.dumps(
+            {"name": name, "parent": parent, "comments": [], "kind": "compress", "created": _now()}, indent=1) + "\n")
+        try:
+            msg, k = compress(name, vname(parent), cfg, effort=str(get("distill", "effort")), max_cost=max_cost,
+                              record=outcomes(), feedback=compress_feedback())
+        except BaseException:
+            clear_candidate()
+            raise
+        st.cost = llm.SPENT - spent0
+        log("compress", name=name, parent=parent, retired=k, cost=round(st.cost, 2), summary=msg)
+        st.result = msg
+        if not k:
+            clear_candidate()
+            return f"nothing to compress: {msg}"
+        return f"candidate {name}: {msg}. Next: `lmreview vet`"
+
+
+def _record_compress(c: dict, cand: list[dict], J: dict, cfg: Config) -> str:
+    """After vet of a compress candidate: file the groups vet undid (with the proven cases they lost) for
+    the next compress, and count refuted findings citing the new entries in vet's runs (precision: recorded,
+    not a gate). Returns a one-line summary."""
+    from .annotate import cid_of
+    from .schema import cites
+    from .score import load_gold, refuted
+    _, gcm = load_gold(cfg)
+    by = {r["id"]: r for r in cand}
+    parent_ids = {r["id"] for r in load_book(vname(c["parent"]))}
+    groups: dict[str, list[str]] = {}
+    for r in cand:
+        t = (r.get("retired") or {}).get("replaced_by")
+        if r.get("status") == "retired" and t and (r.get("retired") or {}).get("by") == c["name"]:
+            groups.setdefault(t, []).append(r["id"])
+    lost: dict[str, list[dict]] = {}
+    for old, e in J["lost"]:
+        t = (by.get(old, {}).get("retired") or {}).get("replaced_by")
+        if t in groups:
+            body = " ".join((gcm.get(cid_of(e)) or {}).get("body", "").split())[:160]
+            lost.setdefault(t, []).append({"entry": old, "comment": e, "body": body})
+    rows = [{"group": sorted(groups[t] + ([t] if t in parent_ids else [])), "op": "absorb" if t in parent_ids else "merge",
+             "into": t, "candidate": c["name"], "lost": v, "date": _now()[:10],
+             **({"text": {k: by[t].get(k) for k in ("when", "expect", "examples")}} if t in by else {})}
+            for t, v in lost.items()]
+    if rows:
+        with (STATE / "compress.jsonl").open("a") as f:
+            f.writelines(json.dumps(x) + "\n" for x in rows)
+    new = set(groups)
+    valid = bad = 0
+    for d in (cfg.data / "runs").glob(f"*+{c['name']}@*"):
+        for f in d.glob("*.json"):
+            sp = cfg.data / "scores" / d.name / f.name
+            if not sp.exists():
+                continue
+            verdict = {a["id"]: a for a in json.loads(sp.read_text()).get("ai") or []}
+            for x in json.loads(f.read_text()).get("findings") or []:
+                a = verdict.get(x["id"])
+                if a and cites(x) & new:
+                    bad += refuted(a)
+                    valid += a.get("valid") is True
+    return (f"compress: {len(groups) - len(rows)} of {len(groups)} groups kept; findings citing the new entries in "
+            f"vet's runs: {valid} valid, {bad} refuted")
+
+
 def vet_step(max_cost: float | None = None, reps: int | None = None, everything: bool = False, cfg: Config | None = None) -> str:
     """Vet the candidate against the book in use. What works becomes the next version (the rest is
     dropped or reverted, see vet._passing); each comment of the candidate is then resolved, or gets a
@@ -486,6 +567,9 @@ def vet_step(max_cost: float | None = None, reps: int | None = None, everything:
             for e in r.get("evidence") or []:
                 if norm(e) not in old_ev:
                     ents.setdefault(norm(e), []).append(r["id"])
+        comp = _record_compress(c, cand, J, cfg or Config()) if c.get("kind") == "compress" else ""
+        if comp:
+            note(comp)
         changed = _jsonl(kept) != _jsonl(load_book(vname(c["parent"])))
         n = new_version(kept, c["parent"], by="vet", **{"from": c["name"]}, verdict=res["verdict"],
                         report=f"reports/vet_{c['name']}.md") if changed else c["parent"]
@@ -531,7 +615,7 @@ def vet_step(max_cost: float | None = None, reps: int | None = None, everything:
             t = rows[i]["tries"][-1]
             note(f"  {'needs_human' if i in out['needs_human'] else 'retry later'} #{rows[i]['pr']}@{rows[i]['commit'][:8]} "
                  f"c{i}: {t['why']}", "drop" if i in out["needs_human"] else "change")
-        return (report + f"\n\n{'promoted ' + vname(n) if changed else 'no change kept; book stays ' + vname(n)}: "
+        return (report + (f"\n\n{comp}" if comp else "") + f"\n\n{'promoted ' + vname(n) if changed else 'no change kept; book stays ' + vname(n)}: "
                 + ", ".join(f"{k} {len(v)}" for k, v in out.items())
                 + ("; failed comments stay to_distill: `lmreview distill` tries again" if out["failed"] else ""))
 

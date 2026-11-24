@@ -50,7 +50,7 @@ LEDGER = """ledger.jsonl rows: {"comment" (a point key: the comment id, or "<com
 of a comment that makes several, see annotate.py), "pr", "commit", "status", "reviewer" (whose run judged it),
 "tries": [{"book", "entries", "result", "why", "date"}], "resolved_by": {"book", "entry"}, "note"}.
 status: covered (the reviewer found it without help) | to_distill | resolved (a book entry makes the
-reviewer find it, checked by vet) | not_rulable (distill, confirmed by a second call: context / not an
+reviewer find it, checked by vet) | not_rulable (distill, two calls agreed: context / not an
 issue / declined by the team) | needs_human (MAX_TRIES distill attempts failed, or only the PR author
 objected to it: contested)."""
 STATUSES = ("covered", "to_distill", "resolved", "not_rulable", "needs_human")

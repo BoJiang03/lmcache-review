@@ -61,3 +61,6 @@
 {"time": "2026-11-24T01:32:03+00:00", "step": "compress", "name": "v0013c2", "parent": 12, "retired": 4, "cost": 0.97, "summary": "25 entries, 3279 words (from 27, 3659); 4 retired; $0.97"}
 {"time": "2026-11-24T01:37:03+00:00", "step": "promote", "version": 13, "parent": 12, "by": "vet", "from": "v0013c2"}
 {"time": "2026-11-24T01:37:03+00:00", "step": "vet", "name": "v0013c2", "verdict": "FAIL", "cost": 5.41, "version": 13, "resolved": 0, "failed": 0, "needs_human": 0}
+{"time": "2026-11-24T01:48:12+00:00", "step": "compress", "name": "v0014c1", "parent": 13, "retired": 2, "cost": 0.79, "summary": "25 entries, 3324 words (from 26, 3445); 2 retired; $0.79"}
+{"time": "2026-11-24T01:49:02+00:00", "step": "promote", "version": 14, "parent": 13, "by": "vet", "from": "v0014c1"}
+{"time": "2026-11-24T01:49:02+00:00", "step": "vet", "name": "v0014c1", "verdict": "PASS", "cost": 0.59, "version": 14, "resolved": 0, "failed": 0, "needs_human": 0}

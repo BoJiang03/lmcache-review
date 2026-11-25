@@ -86,11 +86,11 @@ state = ""                                 # "" = lmreview/state/ in the package
 sandbox = "/var/tmp/lmreview-{uid}/sandbox"  # agent workspaces; outside $HOME and /tmp (see llm.py)
 
 [compress]
-stages = ["trim", "merge", "trim2"]  # passes of a round's compress, in order (each: full pass + vet, then repairs)
+stages = ["trim", "merge"]  # passes of a round's compress, in order (each: full pass + vet, then repairs); "trim2" also exists
 tries = 2            # compress + vet runs per stage: later ones repair only what vet undid, with the rule check's reasons
 drafts = 5           # merge: independent drafts proposing groups
 trim_words = 100     # trim: entries whose when + expect is longer are rewritten
-trim_budget = [70, 15]   # trim: words for when + expect: first proven sample, each further one
+trim_budget = [50, 10]   # trim: words for when + expect: first proven sample, each further one (2026-11-25: one pass at the tight budget; was 70,15 then a trim2 pass)
 trim2_budget = [50, 10]  # trim2: the tighter second pass (every entry over its budget)
 words = 10000        # round compresses the book (then vets it) when its active entries total more words than this;
                      # a trigger, not a limit: the book may stay above it when nothing can be merged

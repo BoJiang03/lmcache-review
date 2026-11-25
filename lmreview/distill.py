@@ -985,8 +985,9 @@ Answer with one JSON block only, one object per change ([] if none):
 ```"""
 
 FINAL_COMPRESS = """Several independent drafts proposed which entries of the LMCache review rulebook (LMCache is a
-KV-cache layer for LLM inference engines such as vLLM) to merge. An AI reviewer is given the "when", "expect"
-and "why" of EVERY entry in EVERY review; it never sees "examples". For each agreed change below, write the
+KV-cache layer for LLM inference engines such as vLLM) to merge. An AI reviewer is given the "when" and "expect"
+of EVERY entry in EVERY review; it never sees "why" (kept as a one-line record of where the entry comes
+from) or "examples". For each agreed change below, write the
 final entry or entries that replace the group, so that a reviewer given them still raises every proven
 comment of every entry in the group.
 
@@ -1030,8 +1031,8 @@ SHRINK = 0.75  # a compress merge must have under this share of the words it rep
 # remedies, exception clauses, sub-case lists), not between them. Each entry is rewritten shorter in place
 # (same id, version + 1); vet replays all its proven cases and puts back the original where one is lost.
 TRIM = """Below are entries of the LMCache review rulebook (LMCache is a KV-cache layer for LLM inference
-engines such as vLLM). An AI reviewer is given the "when", "expect" and "why" of EVERY entry in EVERY review;
-it never sees "examples". The book has grown one missed comment at a time and is far too long, which costs on
+engines such as vLLM). An AI reviewer is given the "when" and "expect" of EVERY entry in EVERY review; it
+never sees "why" or "examples". The book has grown one missed comment at a time and is far too long, which costs on
 every review and dilutes the reviewer's attention. Rewrite each entry below much SHORTER, so that a reviewer
 given it still raises every one of its proven cases.
 
@@ -1059,8 +1060,7 @@ Entries:
 Answer with one JSON block only, one object per entry you shortened (leave out an entry that cannot get
 shorter without losing a "keeps" line):
 ```json
-[{"id": "<entry id>", "keeps": [{"comment": "<comment id>", "clause": "..."}], "when": "...", "expect": "...",
-  "why": "..."}]
+[{"id": "<entry id>", "keeps": [{"comment": "<comment id>", "clause": "..."}], "when": "...", "expect": "..."}]
 ```"""
 
 TRIM_FEEDBACK = """
@@ -1072,7 +1072,7 @@ applied but found nothing violated, the "expect" lost the condition that comment
 
 
 TRIM_BASE, TRIM_PER = 70, 15  # trim_budget: words for one proven sample, and for each further one
-TRIM_WHY = True  # False: trimmed entries keep no "why" (the reviewer is shown when + expect only)
+TRIM_WHY = True  # unused since 2026-11-25: trim never touches "why" (a record; the reviewer is not shown it)
 
 
 def trim_budget(r: dict) -> int:
@@ -1136,7 +1136,7 @@ def trim(out: str, base: str, cfg: Config | None = None, effort: str = "high", m
 
     def once(b: list[dict]) -> tuple[object, float]:
         ents = "\n\n".join(_trim_entry_text(r, cm, (feedback or {}).get(r["id"])) for r in b)
-        why = '("why" at most 10 words)' if TRIM_WHY else '(leave "why" empty)'
+        why = '(write no "why": it is kept as it is)'
         return _ask(TRIM.replace("@WHY@", why).replace("@FEEDBACK@", fb_text).replace("@ENTRIES@", ents), effort, cfg)
     res, cost = capped_map(once, batches, workers, max_cost, label=lambda b: f"trim {len(b)}")
     today, n, changes = dt.date.today().isoformat(), 0, []
@@ -1145,7 +1145,7 @@ def trim(out: str, base: str, cfg: Config | None = None, effort: str = "high", m
             r = act.get(d.get("id")) if isinstance(d, dict) else None
             if not r or not d.get("expect") or not d.get("when"):
                 continue
-            new = {"when": d["when"], "expect": d["expect"], "why": (d.get("why") or "") if TRIM_WHY else ""}
+            new = {"when": d["when"], "expect": d["expect"]}  # "why" stays as written: a record, not shown
             if _size(new) >= _size(r):
                 changes.append({"op": "trim-refused", "rules": [r["id"]], "why": f"not shorter ({_size(new)} vs {_size(r)})"})
                 continue
@@ -1686,8 +1686,9 @@ def induce(rules: list[dict], cm: dict, effort: str, cfg: Config, spend: list[fl
 
 
 def _size(r: dict) -> int:
-    """Length of an entry in words (when, expect, why): the cost side of compression."""
-    return sum(len(str(r.get(k) or "").split()) for k in ("when", "expect", "why"))
+    """Length of an entry in words as the reviewer sees it (when, expect): the cost side of compression. The
+    "why" is kept as a record but not shown (prompt `<!-- rules: nowhy -->`), so it is not counted."""
+    return sum(len(str(r.get(k) or "").split()) for k in ("when", "expect"))
 
 
 def drop_unearned(rules: list[dict], base_ids: set[str]) -> tuple[list[dict], list[dict]]:

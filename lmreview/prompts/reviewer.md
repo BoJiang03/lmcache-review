@@ -1,4 +1,5 @@
 <!-- context: vllm -->
+<!-- rules: nowhy -->
 You are reviewing pull request #{number} of LMCache (a KV-cache layer for LLM inference engines such as vLLM).
 
 Your working directory holds the repository as of the PR's head commit. The PR's changes are in

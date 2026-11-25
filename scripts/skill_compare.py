@@ -384,6 +384,9 @@ def metrics(run: dict, sc: dict, arm: str) -> dict:
         ruled = lambda x: bool((orig.get(str(mp.get(x))) or {}).get("rule"))  # noqa: E731
         m["found_via_rulecheck_only"] = sum(all(map(ruled, h["matched_ai"])) for h in found)
         m["n_rulecheck_findings"] = sum(1 for f in orig.values() if f.get("rule"))
+        m["found_by_main"] = len(found) - m["found_via_rulecheck_only"]
+        runs = run.get("runs") or []
+        m["cost_main"] = round((runs[0].get("cost") or 0) if len(runs) > 1 else (run.get("cost") or 0), 3)
     return m
 
 
@@ -461,6 +464,8 @@ def summary() -> None:
                     + f", {sum(m['secs_review'] or 0 for m in ms) / len(ms):.0f} s/sample")
             if arm == "lmreview":
                 line += f" | via rule check only {sum(m['found_via_rulecheck_only'] for m in ms)}"
+                line += (f"\n          main review alone: recall {sum(m.get('found_by_main', 0) for m in ms)}/{t}"
+                         f", ${sum(m.get('cost_main', 0) for m in ms):.2f}")
             print(line)
         ov = [r["overlap"] for r in xs if "overlap" in r]
         if ov:

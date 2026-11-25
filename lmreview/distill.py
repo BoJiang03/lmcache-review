@@ -1008,10 +1008,11 @@ For each change:
    diff, and the ask of "expect" it must make. Use the reviewers' own words to find the condition that
    decides it (e.g. "new types that only wrap or re-derive what the shared component holds", where
    "duplicate types" lets a reviewer decide that a wrapper is not a duplicate).
-   The clause is the CONCRETE pattern that case needs, quoted from the new text (e.g. "periodic repeat
-   logs during a condition whose entry and exit are already logged"), not the principle restated ("logs
-   that repeat existing information"): a reviewer given only the principle finds a reason the case is
-   different ("this log adds the duration") and raises nothing.
+   The clause is the CONCRETE pattern that case needs, quoted in double quotes word for word from the new
+   text (e.g. "periodic repeat logs during a condition whose entry and exit are already logged"), not the
+   principle restated ("logs that repeat existing information"): a reviewer given only the principle finds
+   a reason the case is different ("this log adds the duration") and raises nothing. A quote not found
+   word for word in the new entry refuses the change.
 2. Then write the shortest text that satisfies every "keeps" line. State the principle the entries are
    instances of: the common kind of situation in "when", the common request in "expect", then the
    concrete patterns the proven comments need as short "e.g." clauses in "when" (the reviewer never sees
@@ -1122,6 +1123,11 @@ def _proven_of(r: dict) -> list:
     return _uniq([c for t in r.get("tests") or [] if t.get("result") == "corrected" for c in t.get("comments") or []])
 
 
+def _quotes(t: str) -> list[str]:
+    """Quoted spans of a contract clause: "..." or '...' (an apostrophe inside a word is not a quote)."""
+    return re.findall(r'"([^"]{3,})"', t) + re.findall(r"(?<!\w)'([^']{3,}?)'(?!\w)", t)
+
+
 def _contract_gap(r: dict, new: dict, keeps: list) -> list[str]:
     """Proven comments of `r` whose "keeps" line quotes nothing found word for word in the `new` text."""
     flat = lambda t: " ".join(str(t).lower().split())  # noqa: E731
@@ -1129,7 +1135,7 @@ def _contract_gap(r: dict, new: dict, keeps: list) -> list[str]:
     quoted: dict[str, list[str]] = {}
     for k in keeps or []:
         if isinstance(k, dict):
-            quoted.setdefault(str(k.get("comment")).split(":")[0], []).extend(re.findall(r'"([^"]{3,})"', str(k.get("clause"))))
+            quoted.setdefault(str(k.get("comment")).split(":")[0], []).extend(_quotes(str(k.get("clause"))))
     return [str(c) for c in _proven_of(r)
             if not any(flat(q) in text for q in quoted.get(str(c).split(":")[0], []))]
 
@@ -1345,6 +1351,10 @@ def _regroup_refusal(g: list[str], ents: list[dict], act: dict, shrink: float) -
     old, new = sum(_size(act[x]) for x in g), sum(map(_size, ents))
     if new >= old * shrink:
         return f"not short enough ({new} words vs {old}, limit {shrink:.0%})"
+    gap = [c for x in g for e in ents if x in (e.get("from") or [])
+           for c in _contract_gap(act[x], e, e.get("keeps") or [])]
+    if gap:
+        return f"contract quotes nothing of the new text for proven comment(s) {sorted(set(gap))}"
     return ""
 
 

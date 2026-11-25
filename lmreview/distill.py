@@ -966,7 +966,11 @@ each proven case from the "when". Entries whose record shows refuted citations a
 do not widen them further. Groups listed under "Undone earlier" lost a proven case when they were
 merged, with what the rule check said about the merged entry on that case: merge them again with a text
 that fixes exactly that (it did not apply: the "when" must name that situation; it applied but found
-nothing violated: the "expect" lost the condition that case needs).
+nothing violated: the "expect" lost the condition that case needs). A repair restores the CONCRETE signal the source comment gave (e.g. "logic with a single, CUDA-only
+implementation"), quoted from the original entry or the comment. Never add a clause that overrides the
+reviewer's judgment ("even if it removes duplication", "even without visible callers", "flag it anyway"): if
+the rule check's reason would be right on other pull requests, it is a real exception; keep it and leave
+that case lost rather than bend the entry to one pull request.
 List only changes; everything else stays. Every change is checked by replaying all the proven cases of
 the entries it touches, and a change that loses any of them is undone; an entry whose citations later
 turn out refuted in reviews gets revised or retired.
@@ -1066,12 +1070,23 @@ shorter without losing a "keeps" line):
 [{"id": "<entry id>", "keeps": [{"comment": "<comment id>", "clause": "..."}], "when": "...", "expect": "..."}]
 ```"""
 
+REPAIR_RULE = """A repair restores the CONCRETE signal the source comment gave (e.g. "logic with a single, CUDA-only
+implementation"), quoted from the original entry or the comment. Never add a clause that overrides the
+reviewer's judgment ("even if it removes duplication", "even without visible callers", "flag it anyway"): if
+the rule check's reason would be right on other pull requests, it is a real exception; keep it and leave
+that case lost rather than bend the entry to one pull request."""  # how a repair may fix what vet undid (2026-11-25: v0019c1-010)
+
 TRIM_FEEDBACK = """
 Some entries below were shortened before, and vet put the original back because a reviewer given the short
 text missed a proven comment, or raised findings citing it that were judged wrong ("TOO WIDE": narrow the
 "when" so those situations are left out). For each, the failed text and what the rule check said on that comment are
 shown under "EARLIER TRY". Fix exactly that: if it did not apply, the "when" lost the situation; if it
 applied but found nothing violated, the "expect" lost the condition that comment needs. Keep the rest short.
+A repair restores the CONCRETE signal the source comment gave (e.g. "logic with a single, CUDA-only
+implementation"), quoted from the original entry or the comment. Never add a clause that overrides the
+reviewer's judgment ("even if it removes duplication", "even without visible callers", "flag it anyway"): if
+the rule check's reason would be right on other pull requests, it is a real exception; keep it and leave
+that case lost rather than bend the entry to one pull request.
 """
 
 
@@ -1365,7 +1380,8 @@ def compress(out: str, base: str, cfg: Config | None = None, effort: str = "high
         fbg = {frozenset(f["group"]): f for f in feedback
                if f.get("candidate") == last and frozenset(f["group"]) not in blocked}
         forced = [sorted(g) for g in fbg if g <= set(act)]
-        detail = lambda g: (base_detail(g) + "\nEARLIER TRY (undone by vet; fix exactly what it lost):\n"  # noqa: E731
+        detail = lambda g: (base_detail(g) + "\nEARLIER TRY (undone by vet; fix exactly what it lost). "  # noqa: E731
+                            + REPAIR_RULE.replace("\n", " ") + "\n"
                             + _book_for_compress([], cm, {}, [fbg[frozenset(g)]]).split("Undone earlier:\n", 1)[-1])
         if not forced:
             return "nothing to repair", 0

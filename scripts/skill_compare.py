@@ -22,6 +22,10 @@ Usage:
   python scripts/skill_compare.py select                 # print the 20 chosen samples
   python scripts/skill_compare.py pilot [--cap 12]       # first sample of each half, both arms, judged
   python scripts/skill_compare.py report [--n 2]         # metrics of the first n chosen samples per half
+  python scripts/skill_compare.py run [--half covered|resolved] [--prs 4729 ...] [--workers 3] [--cap 70]
+                                                          # chosen samples (filtered), in parallel; one result
+                                                          # file per sample in results/
+  python scripts/skill_compare.py summary                # recall etc. per half from results/
 """
 
 from __future__ import annotations
@@ -404,9 +408,68 @@ def first_per_half(sel: list[dict], n: int) -> list[dict]:
     return out
 
 
+def run_many(cfg: Config, xs: list[dict], budget: Budget, workers: int) -> None:
+    """Compare both arms on samples `xs`, `workers` at a time; each result goes to results/<key>.json."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(x: dict) -> str:
+        s = x["sample"]
+        rp = OUT / "results" / f"{key_of(s)}.json"
+        if rp.exists():
+            return f"#{s['pr']}: cached"
+        try:
+            r = compare(cfg, s, budget)
+        except BudgetStop as e:
+            return f"#{s['pr']}: {e}"
+        except Exception as e:  # noqa: BLE001  one sample failing must not stop the others
+            return f"#{s['pr']}: error {e!r}"
+        save(rp, r | {"half": x["half"]})
+        return f"#{s['pr']}: done (spent ${budget.spent:.2f})"
+    with ThreadPoolExecutor(workers) as ex:
+        for msg in ex.map(one, xs):
+            print(msg, flush=True)
+    print(f"spent this process: ${budget.spent:.2f}")
+
+
+def summary() -> None:
+    """Recall of human points (by half and severity), findings, valid share, cost and time per arm."""
+    rs = [json.loads(p.read_text()) for p in sorted((OUT / "results").glob("*.json"))]
+    for half in ("covered", "resolved", "all"):
+        xs = [r for r in rs if half == "all" or r["half"] == half]
+        if not xs:
+            continue
+        print(f"\n## {half} ({len(xs)} samples)")
+        for arm in ("skill", "lmreview"):
+            ms = [r[arm] for r in xs if "found" in r.get(arm, {})]
+            if not ms:
+                continue
+            f, t = sum(m["found"] for m in ms), sum(m["total"] for m in ms)
+            sev = C.defaultdict(lambda: [0, 0])
+            for m in ms:
+                for k, v in m["by_severity"].items():
+                    a, b = map(int, v.split("/"))
+                    sev[k][0] += a
+                    sev[k][1] += b
+            n = sum(m["n_findings"] for m in ms)
+            line = (f"{arm:9s} recall {f}/{t} = {f / t:.0%} | " + ", ".join(f"{k} {a}/{b}" for k, (a, b) in sorted(sev.items()))
+                    + f" | findings {n}"
+                    + f" | review ${sum(m['cost_review'] for m in ms):.2f}"
+                    + (f" (+extract ${sum(m.get('cost_extract', 0) for m in ms):.2f})" if arm == "skill" else "")
+                    + f", {sum(m['secs_review'] or 0 for m in ms) / len(ms):.0f} s/sample")
+            if arm == "lmreview":
+                line += f" | via rule check only {sum(m['found_via_rulecheck_only'] for m in ms)}"
+            print(line)
+        ov = [r["overlap"] for r in xs if "overlap" in r]
+        if ov:
+            print("overlap: " + ", ".join(f"{k} {sum(o[k] for o in ov)}" for k in ("skill_only", "lmreview_only", "both")))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["select", "pilot", "report"])
+    ap.add_argument("cmd", choices=["select", "pilot", "report", "run", "summary"])
+    ap.add_argument("--half", choices=["covered", "resolved"])
+    ap.add_argument("--prs", type=int, nargs="*")
+    ap.add_argument("--workers", type=int, default=3)
     ap.add_argument("--cap", type=float, default=12.0)
     ap.add_argument("--n", type=int, default=1, help="samples per half")
     a = ap.parse_args()
@@ -418,6 +481,11 @@ def main() -> None:
     # git inside the sandbox cannot read ~/.gitconfig (reads under $HOME are denied): give it none
     os.environ.update(GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
     budget = Budget(a.cap)
+    if a.cmd == "summary":
+        return summary()
+    if a.cmd == "run":
+        return run_many(cfg, [x for x in sel if (not a.half or x["half"] == a.half) and (not a.prs or x["sample"]["pr"] in a.prs)],
+                        budget, a.workers)
     out = []
     for x in first_per_half(sel, a.n if a.cmd == "report" else 1):
         s = x["sample"]

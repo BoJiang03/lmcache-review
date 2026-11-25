@@ -1065,7 +1065,8 @@ shorter without losing a "keeps" line):
 
 TRIM_FEEDBACK = """
 Some entries below were shortened before, and vet put the original back because a reviewer given the short
-text missed a proven comment. For each, the failed text and what the rule check said on that comment are
+text missed a proven comment, or raised findings citing it that were judged wrong ("TOO WIDE": narrow the
+"when" so those situations are left out). For each, the failed text and what the rule check said on that comment are
 shown under "EARLIER TRY". Fix exactly that: if it did not apply, the "when" lost the situation; if it
 applied but found nothing violated, the "expect" lost the condition that comment needs. Keep the rest short.
 """
@@ -1102,6 +1103,10 @@ def _trim_entry_text(r: dict, cm: dict, fb: dict | None) -> str:
         lines += [f"  lost [{x['comment']}]: {x.get('body', '')[:200]!r}; rule check: " + (
             f"applies={x['check'].get('applies')}, violated={x['check'].get('violated')}: {x['check'].get('why')}"
             if x.get("check") else "no verdict") for x in fb.get("lost") or []]
+        if fb.get("wide"):
+            lines.append(f"  TOO WIDE: findings citing the short text were judged wrong {fb['wide'].get('new')} times "
+                         f"(the original: {fb['wide'].get('old')}) on the same samples, e.g.:")
+            lines += [f"    - {f.get('title')!r}: judged wrong because {f.get('why')}" for f in fb["wide"].get("findings") or []]
     return "\n".join(lines)
 
 
@@ -1315,6 +1320,10 @@ def _book_for_compress(rules: list[dict], cm: dict, record: dict, feedback: list
                  f"situation; if it applied but found nothing violated, the \"expect\" dropped the condition that "
                  f"case needs (restore it from the original entry)."
                  if f.get("text") and not f.get("texts") else "")
+              + "".join(f"\n  TOO WIDE: findings citing {x.get('entry')} were judged wrong {x.get('new')} times (the "
+                        f"entries it replaced: {x.get('old')}) on the same samples; narrow the \"when\" so these are "
+                        f"left out: " + "; ".join(f"{y.get('title')!r} ({y.get('why')})" for y in x.get("findings") or [])
+                        for x in f.get("wide") or [])
               for f in feedback]
     return "\n".join(out) + ("\n\nUndone earlier:\n" + "\n".join(undone) if undone else "")
 

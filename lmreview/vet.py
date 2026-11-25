@@ -17,14 +17,22 @@ distill only writes rules; vet decides whether they are kept. Three checks, then
    retired entry, NEW must still match the comment with some finding.
 2b. revisions: a revised entry is re-reviewed on the samples whose invalid findings triggered the
    revision; a finding citing it that is judged invalid again means the revision did not fix it.
+4. precision: a changed entry must not draw more refuted findings than the text it replaces: on every
+   sample where findings citing its new text were judged wrong, BASE runs too, and the entry is reverted
+   (a new one dropped) when NEW has more than WIDE_MARGIN more refuted findings citing it than BASE has
+   citing the entries it replaces. Recall alone would let a merge or trim widen an entry unchecked.
+
+A replaced or trimmed entry replays every source comment, the unproven ones after the proven ones (lost
+only if BASE hits it, so an unproven comment costs a run but cannot fail a change wrongly). A case both
+books missed gets one more run with BASE as well as NEW: a single BASE miss by noise would leave it
+unprotected.
 
 2, 2b and 3 share the runs: one review per sample with NEW, and with BASE only where needed. By default a
 "review" here is the rule check alone (reviewer suffix -ro, see reviewer.ruleonly_of) with a judge that sees
 only the comments the cases ask about: a rule change shows in the rule check, so the full review is not
 replayed (about $0.8 per sample instead of $3.5). Runs are cached under data/runs/<reviewer>/,
-so an earlier A/B with the same reviewer names costs nothing here. Single runs are noisy, so (`retry`) a
-proven case missed by both books gets one more run with BASE (a chance miss there would leave it
-unprotected), and each failing case one more run with NEW before it counts.
+so an earlier A/B with the same reviewer names costs nothing here. Single runs are noisy, so each
+failing case gets one more run with NEW before it counts (`retry`).
 
 Verdict, by what the next book takes: ALL KEPT if every entry with new evidence works on at least one
 of its comments, nothing regressed and every revision fixed its trigger; PARTLY KEPT if some changes
@@ -46,11 +54,13 @@ from .settings import get
 from .state import book_path
 from .progress import note
 from .regress import EST_RO, EST_RUN, FIELDS, replay, run_tag
+from .schema import cites as finding_rules
 
 SIDE_PER_ENTRY = int(get("vet", "side_per_entry"))  # side effects: source comments replayed per affected entry (`--all`: every one)
+WIDE_MARGIN = int(get("vet", "wide_margin"))  # precision: refuted findings a changed entry may add over its base text
 from .distill import book_meta, write_meta
 from .reviewer import load_rules, parse_reviewer
-from .score import REPORTS, load_gold
+from .score import REPORTS, load_gold, refuted
 
 LINKS = ("principle", "members")
 
@@ -172,8 +182,8 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         # the replacement must keep what it did; with no such record, every source comment
         # (a test may be on another PR than the entry's sources: take every proven comment in the gold set)
         pr = [e for e in sorted(_proven(O[i]), key=str) if e in where and (i, e) not in eff_set] if i in full else []
-        if pr and not everything:
-            side += [(i, e) for e in pr]
+        if pr and not everything:  # proven ones first, then the other source comments: lost only if BASE hits
+            side += [(i, e) for e in pr] + [(i, e) for e in cs if e not in set(pr)]
         else:
             side += [(i, e) for e in (cs if everything or i in full else cs[:SIDE_PER_ENTRY])]
         have |= {tgt(e) for e in cs[:SIDE_PER_ENTRY]}
@@ -186,8 +196,8 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     # entries the cases test, and everything linked to those in either book (principle / members / replaces)
     only = None
     ruleonly = suffix.startswith("-ro")  # -ro or -ro-sh
+    rel_old = _related_ids(old_rules)
     if ruleonly:
-        rel_old = _related_ids(old_rules)
         only = set(touched) | set(retired) | {i for i, _ in cases}
         only |= {x for i in list(only) for x in rel.get(i, {i}) | rel_old.get(i, {i})}
 
@@ -264,25 +274,56 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     J, c_r = judge(), 0.0
     note(f"      first pass: works {sorted(J['works'])}, not working {J['no_effect']}, lost {len(J['lost'])}, "
          f"revisions not fixed {len(J['not_fixed'])}")
-    if retry:  # single runs are noisy: a proven case missed by both books gets one more run with OLD (else a
-        # chance miss of the old book leaves it unprotected), then a failing case one more run with NEW
-        both = [(i, {"target": tgt(e), "with": w, "comments": [e]}) for i, e in side
-                if B.get(ck(i, e), {}).get("passed") is False
+    if retry:  # single runs are noisy: a failing case gets one more run with NEW before it counts
+        # a case both books missed gets one more run with BASE too: a BASE miss by noise would leave it unprotected
+        both = [(i, e) for i, e in side if B.get(ck(i, e), {}).get("passed") is False
                 and (Nw.get(ck(i, e), {}).get("any" if i in retired else "passed") is False)]
-        if both:
-            note(f"[2b/3] {len(both)} case(s) missed by both get one more run with {base} (${c_b + c_n:.2f} so far)")
-            rows_o, c_o = replay(base, both, reps + 1, max(0.0, max_cost - c_b - c_n), cfg, suffix=suffix, only=only)
-            B |= {key(r): r for r in rows_o if r["passed"] is not None}
-            c_b += c_o
-            J = judge()
         again = ([(i, {"target": tgt(e), "with": w, "comments": [e]}) for i, e in effect if i in J["no_effect"]]
-                 + [(i, {"target": tgt(e), "with": w, "comments": [e]}) for i, e in J["lost"]]
+                 + [(i, {"target": tgt(e), "with": w, "comments": [e]}) for i, e in J["lost"] + both]
                  + [(i, {"target": t, "with": w, "comments": []}) for i, t in J["not_fixed"]])
+        if both:
+            note(f"[3/3] {len(both)} case(s) missed by both get one more run with {base}")
+            rows_rb, c_rb = replay(base, [(i, {"target": tgt(e), "with": w, "comments": [e]}) for i, e in both],
+                                   reps + 1, max(0.0, max_cost - c_b - c_n), cfg, suffix=suffix, only=only)
+            B |= {key(r): r for r in rows_rb if r["passed"] is not None}
+            c_b += c_rb
         if again:
             note(f"[3/3] {len(again)} failing case(s) get one more run with {book} (${c_b + c_n:.2f} so far)")
             rows_r, c_r = replay(book, again, reps + 1, max(0.0, max_cost - c_b - c_n), cfg, suffix=suffix, only=only)
             Nw |= {key(r): r for r in rows_r if r["passed"] is not None}
             J = judge()
+
+    # 4. precision: a changed entry must not draw more refuted findings than the text it replaces did, on
+    # the samples where its new text drew any (BASE runs only there)
+    c_p, wide, p_rows = 0.0, {}, []
+    chg = sorted(i for i in touched if i in N)
+    pred = {i: ({i} if i in O else set(N[i].get("replaces") or []) | set(N[i].get("replaces_new") or [])) & set(O)
+            for i in chg}
+    new_bad = {i: {t: _citing(run_dir(book, 1), t, rel.get(i, {i}), cfg) or (0, 0) for t in sorted(samples)}
+               for i in chg}  # a sample with no NEW run is already INCOMPLETE (J["unknown"] / "s_unknown")
+    flagged = {i: [t for t, (_, b) in new_bad[i].items() if b] for i in chg}
+    need_p = sorted({(p, t) for i in chg for t in flagged[i] for p in (pred[i] or {i}) if p in O})
+    if need_p:
+        note(f"[4/4] precision: {len({t for _, t in need_p})} samples with the old book {base} "
+             f"(refuted findings citing changed entries)")
+        _, c_p = replay(base, [(p, {"target": t, "with": w, "comments": []}) for p, t in need_p], 1,
+                        max(0.0, max_cost - c_b - c_n - c_r), cfg, suffix=suffix, only=only)
+    p_unknown = []
+    for i in chg:
+        if not flagged[i]:
+            continue
+        nb = sum(new_bad[i][t][1] for t in flagged[i])
+        ids = set().union(*(rel_old.get(p, {p}) for p in pred[i])) if pred[i] else set()
+        old = [_citing(run_dir(base, 1), t, ids, cfg) if ids else (0, 0) for t in flagged[i]]
+        if ids and any(o is None for o in old):
+            p_unknown.append(i)
+            continue
+        ob = sum(o[1] for o in old)
+        p_rows.append((i, nb, ob, len(flagged[i])))
+        if nb > ob + WIDE_MARGIN:
+            wide[i] = {"new": nb, "old": ob, "samples": flagged[i],
+                       "findings": _refuted_findings(run_dir(book, 1), flagged[i], rel.get(i, {i}), cfg)}
+    J["too_wide"], J["p_unknown"] = sorted(wide), p_unknown
 
     def mark(x: bool | None) -> str:
         return {True: "hit", False: "miss", None: "not run"}[x]
@@ -306,15 +347,16 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
                 {"target": tgt(e), "control": f"{w}{suffix} on {base}" if b.get("any") is not None else "round miss",
                  "with": f"{prompt}+{book}@{effort}{suffix}", "result": "both-hit" if b.get("any") else "corrected",
                  "comments": [e], "date": today, "note": "vet effect"})
-    reverted = {i for i, _ in J["lost"]} | {i for i, _ in J["not_fixed"]} | {i for i in J["no_effect"] if i in O}  # back to the base text: untested
+    reverted = ({i for i, _ in J["lost"]} | {i for i, _ in J["not_fixed"]} | {i for i in J["no_effect"] if i in O}
+                | set(J["too_wide"]))  # back to the base text: untested
     tests = {i: ts for i, ts in tests.items() if i not in reverted}
-    fails = J["no_effect"] or J["lost"] or J["not_fixed"]
+    fails = J["no_effect"] or J["lost"] or J["not_fixed"] or J["too_wide"]
     # anything left untested (cost cap, a failed run) makes the whole vet INCOMPLETE, even when some entries
     # already failed: promoting then would keep untested entries and skip their side-effect replays
     # otherwise the verdict says what the next book takes: every change, some (the failing ones are dropped
     # or reverted, the rest promoted), or none. A partial result is the normal outcome, not a failure.
-    bad = sorted(set(J["no_effect"]) | {i for i, _ in J["lost"]} | {i for i, _ in J["not_fixed"]})
-    verdict = ("INCOMPLETE" if J["unknown"] or J["s_unknown"] or J["f_unknown"] else
+    bad = sorted(set(J["no_effect"]) | {i for i, _ in J["lost"]} | {i for i, _ in J["not_fixed"]} | set(J["too_wide"]))
+    verdict = ("INCOMPLETE" if J["unknown"] or J["s_unknown"] or J["f_unknown"] or J["p_unknown"] else
                "ALL KEPT" if not fails else "PARTLY KEPT" if J["works"] else "NONE KEPT")
     n_eff = len({i for i, _ in effect})
     L += ["## 2. Effect (leaky: rules on their own source comments)", "",
@@ -328,21 +370,53 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
           f"not run {J['s_unknown']}"]
     L += [f"- LOST {i}{' (retired)' if i in retired else ''} #{tgt(e)} c{e} ({cm[e]['author']}: "
           f"{cm[e]['body'][:100]!r})" for i, e in J["lost"]]
+    L += ["", "## 4. Precision (refuted findings citing a changed entry: new text vs the text it replaces)",
+          f"margin {WIDE_MARGIN}; too wide: {J['too_wide'] or 'none'}"
+          + (f"; not run: {J['p_unknown']}" if J["p_unknown"] else "")]
+    L += [f"- {i}: {nb} refuted (new) vs {ob} (base) on {k} sample(s)" + (" TOO WIDE" if i in wide else "")
+          for i, nb, ob, k in p_rows]
     if out is not None:
-        out.update(verdict=verdict, J=J, effect=effect, rows=list(Nw.values()), kept=_with_tests(_passing(new_rules, old_rules, O, J, rel), tests),
-                   cost=c_b + c_n + c_r, retired=retired)
+        out.update(wide=wide, verdict=verdict, J=J, effect=effect, rows=list(Nw.values()), kept=_with_tests(_passing(new_rules, old_rules, O, J, rel), tests),
+                   cost=c_b + c_n + c_r + c_p, retired=retired)
     if write:
         kept_book = _with_tests(_passing(new_rules, old_rules, O, J, rel), tests)
         book_path(write).write_text("".join(json.dumps(r) + "\n" for r in kept_book))
         write_meta(write, {**meta, "base": base, "vetted_from": book})  # keeps "seen" for the next distill
         L += ["", f"wrote rules/{write}.jsonl: {len(kept_book)} entries (failing changes dropped or reverted)"]
-    L = L[:2] + [f"**{verdict}** · cost ${c_b + c_n + c_r:.2f}", ""] + L[2:]
+    L = L[:2] + [f"**{verdict}** · cost ${c_b + c_n + c_r + c_p:.2f}", ""] + L[2:]
     note(f"{verdict}: entries working {len(J['works'])}/{n_eff}, lost {len(J['lost'])}, "
          f"revisions not fixed {len(J['not_fixed'])}" + (f"; dropped or reverted: {', '.join(bad)}" if bad else "")
-         + f"; ${c_b + c_n + c_r:.2f}; report reports/vet_{book}.md",
+         + f"; ${c_b + c_n + c_r + c_p:.2f}; report reports/vet_{book}.md",
          {"ALL KEPT": "ok", "PARTLY KEPT": "ok", "NONE KEPT": "err"}.get(verdict, "warn"))
     (REPORTS / f"vet_{book}.md").write_text("\n".join(L) + "\n")
     return "\n".join(L)
+
+
+def _citing(d: pathlib.Path, t: str, ids: set, cfg: Config) -> tuple[int, int] | None:
+    """(findings citing any of `ids`, those judged refuted) in run dir `d` on sample `t` (#pr@commit8);
+    None if the sample has no run there. A run with no score (no findings) counts (0, 0)."""
+    f = next(iter(d.glob(f"{t.replace('@', '-')}*.json")), None) if d.exists() else None
+    if f is None:
+        return None
+    cite = {x["id"] for x in json.loads(f.read_text()).get("findings") or [] if finding_rules(x) & ids}
+    sp = cfg.data / "scores" / d.name / f.name
+    if not cite or not sp.exists():
+        return len(cite), 0
+    return len(cite), sum(1 for a in json.loads(sp.read_text()).get("ai") or [] if a["id"] in cite and refuted(a))
+
+
+def _refuted_findings(d: pathlib.Path, ts: list[str], ids: set, cfg: Config, n: int = 4) -> list[dict]:
+    """Up to `n` refuted findings citing `ids` in run dir `d` on samples `ts`: {target, title, why}."""
+    out = []
+    for t in ts:
+        f = next(iter(d.glob(f"{t.replace('@', '-')}*.json")), None)
+        sp = cfg.data / "scores" / d.name / f.name if f else None
+        if not f or not sp.exists():
+            continue
+        fs = {x["id"]: x for x in json.loads(f.read_text()).get("findings") or [] if finding_rules(x) & ids}
+        out += [{"target": t, "title": fs[a["id"]].get("title"), "why": a.get("why")}
+                for a in json.loads(sp.read_text()).get("ai") or [] if a["id"] in fs and refuted(a)]
+    return out[:n]
 
 
 def _proven(r: dict) -> set:
@@ -373,6 +447,8 @@ def _passing(new_rules: list[dict], old_rules: list[dict], O: dict, J: dict, rel
     lost = {i for i, _ in J["lost"]} | {i for i, _ in J["not_fixed"]}
     back = {i for i in J["no_effect"] if i in O}  # reverted alone: its links did not cause the miss
     drop = {i for i in J["no_effect"] if i not in O}
+    lost |= {i for i in J.get("too_wide") or [] if i in old_all}  # too wide: back to the base text
+    drop |= {i for i in J.get("too_wide") or [] if i not in old_all}  # a new too-wide entry: dropped
     drop |= {x for i in lost for x in rel.get(i, set()) if x not in old_all}
     # a regroup (n -> m) is kept or undone whole: one dropped entry drops the others of its group
     gids = {r["regroup"] for r in new_rules if r["id"] in drop and r.get("regroup")}

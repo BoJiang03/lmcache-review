@@ -48,7 +48,9 @@ MAX_TRIES = int(get("distill", "max_tries"))  # distill attempts per comment bef
 
 LEDGER = """ledger.jsonl rows: {"comment" (a point key: the comment id, or "<comment id>:<k>" for point k
 of a comment that makes several, see annotate.py), "pr", "commit", "status", "reviewer" (whose run judged it),
-"tries": [{"book", "entries", "result", "why", "date"}], "resolved_by": {"book", "entry"}, "note"}.
+"tries": [{"book", "entries", "result", "why", "date"}], "resolved_by": {"book", "entry"}, "note"}; a miss
+confirmed by a second run (confirm_misses) also has "hits" ("0/2": missed twice; "1/2": found in the second
+run) and "flaky": true when found in some run, or "unconfirmed": true when the second run could not be made.
 status: covered (the reviewer found it without help) | to_distill | resolved (a book entry makes the
 reviewer find it, checked by vet) | not_rulable (distill, two calls agreed: context / not an
 issue / declined by the team) | needs_human (MAX_TRIES distill attempts failed, or only the PR author
@@ -319,6 +321,12 @@ def to_distill(rows: dict[int, dict] | None = None, prs: set[int] | None = None)
     return [r for r in rows.values() if r["status"] == "to_distill" and (not prs or r["pr"] in prs)]
 
 
+def distill_order(r: dict) -> tuple:
+    """Sort key of to_distill rows: flaky misses (found in some run, see confirm_misses) after the ones
+    missed in every run, then by sample and comment."""
+    return bool(r.get("flaky")), r["pr"], r["commit"], str(r["comment"])
+
+
 def tries_note(r: dict) -> str:
     """What earlier distill attempts made of this comment, for the next attempt."""
     def rc(t: dict) -> str:  # the rule check's own verdict on the tried entry, on this comment's sample
@@ -551,7 +559,7 @@ def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: 
         if candidate():
             raise RuntimeError(f"candidate {candidate()['name']} is waiting: `lmreview vet` it or `lmreview discard`")
         rows = ledger()
-        todo = sorted(to_distill(rows, prs), key=lambda r: (r["pr"], r["commit"], str(r["comment"])))[:limit]
+        todo = sorted(to_distill(rows, prs), key=distill_order)[:limit]
         if not todo and not compress:
             return "nothing to distill: no to_distill comments" + (f" on {sorted(prs)}" if prs else "")
         name, parent = candidate_name(), head()
@@ -956,6 +964,64 @@ def vet_step(max_cost: float | None = None, reps: int | None = None, everything:
                 + ("; failed comments stay to_distill: `lmreview distill` tries again" if out["failed"] else ""))
 
 
+def confirm_misses(rv: str, new: list[int | str], max_cost: float, cfg: Config | None = None) -> tuple[str, float]:
+    """Run reviewer `rv` a second time (repeat #r2) on the samples of the misses `new` (ledger keys a judge
+    just filed as to_distill) and judge it, so a miss the reviewer finds in some runs is told from one it
+    never finds. Every miss stays to_distill (a rule can make a sometimes-found comment found every time);
+    a found one gets "flaky" and goes to distill after the others. Counts come from runs.hits, over every
+    repeat on disk. A miss whose second run did not happen (cost cap) is marked "unconfirmed".
+
+    Args:
+        rv: the reviewer whose runs were judged (round: the learning reviewer).
+        new: the ledger keys newly filed as to_distill.
+        max_cost: cap for the second runs and their judge; 0 prints the plan (cached runs are still used).
+        cfg: configuration.
+
+    Returns:
+        ("confirm: N misses, K flaky, $X" [+ ", U unconfirmed"], cost).
+    """
+    from .replay import est_cost, replay, run_path
+    from .runs import cached, hits
+    from .score import EST_COST, judge_runs, load_gold
+    cfg = cfg or Config()
+    rows = ledger()
+    miss = [rows[k] for k in new if k in rows and rows[k]["status"] == "to_distill"]
+    if not miss:
+        return "confirm: 0 misses, 0 flaky, $0.00", 0.0
+    specs = sorted({f"{r['pr']}:{r['commit'][:8]}" for r in miss})
+    ss, _ = load_gold(cfg)
+    by = {f"{p}:{c[:8]}": s for (p, c), s in ss.items()}
+    todo = [x for x in specs if x in by and not cached(cfg, rv, run_path(cfg, rv, by[x], 2))]
+    est = len(todo) * (est_cost(rv) + EST_COST)
+    note(f"confirm {len(miss)} misses on {len(specs)} samples: second run of {rv} on {len(todo)} "
+         f"(est ${est:.1f}, cap ${max_cost:.0f})")
+    cost = replay(rv, "train", None, 4, max(0.0, max_cost - len(todo) * EST_COST), specs, cfg=cfg, rep=2)
+    _, jc = judge_runs(cfg, rv, {r["pr"] for r in miss}, "train", max(0.0, max_cost - cost), rep=2)
+    cost += jc
+    with lock():
+        rows = ledger()
+        flaky = unconf = 0
+        for k in [r["comment"] for r in miss]:
+            r = rows.get(k)
+            if r is None or r["status"] != "to_distill":
+                continue
+            h, n = hits(rv, sample(r), k, cfg)
+            if n >= 2:
+                r.update(hits=f"{h}/{n}")
+                r.pop("unconfirmed", None)
+                if h:
+                    r["flaky"] = True
+                    flaky += 1
+            else:
+                r["unconfirmed"] = True
+                unconf += 1
+        save_ledger(rows)
+        log("confirm", reviewer=rv, misses=len(miss), flaky=flaky, unconfirmed=unconf, cost=round(cost, 2))
+    line = f"confirm: {len(miss)} misses, {flaky} flaky, ${cost:.2f}" + (f", {unconf} unconfirmed" if unconf else "")
+    note(line, "warn" if unconf else None)
+    return line, cost
+
+
 def pick_samples(prs: list[int | str], cfg: Config | None = None) -> list[str]:
     """Expand a round's sample specs: "PR:commit" stays as it is; a bare PR number becomes the commits of
     that PR where some judged run on disk (any reviewer) missed a change request / nit that is not in the
@@ -999,16 +1065,18 @@ def pick_samples(prs: list[int | str], cfg: Config | None = None) -> list[str]:
 
 def round_(prs: list[int | str], review_cost: float | None = None, judge_cost: float | None = None,
            distill_cost: float | None = None, vet_cost: float | None = None, cfg: Config | None = None,
-           induce: bool | None = None) -> str:
+           induce: bool | None = None, confirm_cost: float | None = None) -> str:
     """One round on samples `prs` (PR:commit, or PR numbers: see pick_samples): select the new samples worth
-    reviewing (selection.py; samples named PR:commit are kept as given), review with the book in use, judge, then
-    distill + vet until their comments are all resolved / not rulable / needs_human (at most MAX_TRIES); last,
-    compress + vet when the book is over [compress] words (compress_if_big)."""
+    reviewing (selection.py; samples named PR:commit are kept as given), review with the book in use, judge,
+    confirm the new misses with a second run (confirm_misses), then distill + vet until their comments are all
+    resolved / not rulable / needs_human (at most MAX_TRIES); last, compress + vet when the book is over
+    [compress] words (compress_if_big)."""
     b = settings()["budget"]["round"]
     explicit = {str(p) for p in prs if ":" in str(p)}  # samples named by hand are not filtered
-    review_cost, judge_cost, distill_cost, vet_cost = (
+    review_cost, judge_cost, distill_cost, vet_cost, confirm_cost = (
         b[k] if v is None else v for k, v in (("review", review_cost), ("judge", judge_cost),
-                                             ("distill", distill_cost), ("vet", vet_cost)))
+                                             ("distill", distill_cost), ("vet", vet_cost),
+                                             ("confirm", confirm_cost)))
     from .replay import replay
     rv = reviewer(learn=True)
     prs = pick_samples(prs, cfg)
@@ -1016,7 +1084,7 @@ def round_(prs: list[int | str], review_cost: float | None = None, judge_cost: f
     from . import llm
     spent0 = llm.SPENT
     with step("round", f"{len(prs)} sample spec(s) {' '.join(map(str, prs))}; book {vname(head())}; caps review "
-              f"${review_cost:.0f}, judge ${judge_cost:.0f}, distill ${distill_cost:.0f}, vet ${vet_cost:.0f} "
+              f"${review_cost:.0f}, judge ${judge_cost:.0f}, confirm ${confirm_cost:.0f}, distill ${distill_cost:.0f}, vet ${vet_cost:.0f} "
               f"(per attempt, at most {MAX_TRIES})") as st:
         sel_cost = 0.0
         if get("select", "on"):
@@ -1037,7 +1105,13 @@ def round_(prs: list[int | str], review_cost: float | None = None, judge_cost: f
             s1.cost = replay(rv, "train", None, 4, max(0.0, review_cost - sel_cost), prs, cfg=cfg)
         st.cost += s1.cost
         out.append(f"review {rv}: ${s1.cost:.2f}")
+        before = {k for k, r in ledger().items() if r["status"] == "to_distill"}
         out.append(judge("train", nums, judge_cost, rv, cfg))
+        new = [k for k, r in ledger().items() if r["status"] == "to_distill" and k not in before]
+        with step("confirm", f"{len(new)} new misses; cap ${confirm_cost:.0f}") as s2:
+            line, s2.cost = confirm_misses(rv, new, confirm_cost, cfg)
+            s2.result = line
+        out.append(line)
         nums = set(nums) | requeue_parked(cfg=cfg)  # parked comments the changed workflow may now learn
         for k in range(MAX_TRIES):
             left = to_distill(prs=nums)

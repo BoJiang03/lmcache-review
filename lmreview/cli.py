@@ -73,6 +73,8 @@ def main(argv: list[str] | None = None) -> None:
     o.add_argument("prs", nargs="+", help="PR numbers or PR:commit")
     o.add_argument("--review-cost", type=float, default=get("budget", "round")["review"])
     o.add_argument("--judge-cost", type=float, default=get("budget", "round")["judge"])
+    o.add_argument("--confirm-cost", type=float, default=get("budget", "round")["confirm"],
+                   help="second run of the samples with new misses, before distill (0 = plan; cached runs still count)")
     o.add_argument("--distill-cost", type=float, default=get("budget", "round")["distill"])
     o.add_argument("--vet-cost", type=float, default=get("budget", "round")["vet"])
     o.add_argument("--induce", action=argparse.BooleanOptionalAction, default=get("distill", "induce"), help="distill step 5 (principles over standalone entries); "
@@ -178,7 +180,8 @@ def main(argv: list[str] | None = None) -> None:
         elif a.cmd == "judge":
             print(state.judge("train", set(a.prs or []) or None, a.max_cost))
         elif a.cmd == "round":
-            print(state.round_(a.prs, a.review_cost, a.judge_cost, a.distill_cost, a.vet_cost, induce=a.induce))
+            print(state.round_(a.prs, a.review_cost, a.judge_cost, a.distill_cost, a.vet_cost, induce=a.induce,
+                               confirm_cost=a.confirm_cost))
         elif a.cmd == "rollback":
             print(f"book in use: {state.vname(state.rollback(int(a.version.lstrip('v'))))}")
         elif a.cmd == "discard":

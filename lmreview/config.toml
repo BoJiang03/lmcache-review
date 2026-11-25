@@ -77,6 +77,7 @@ compress = 3.0          # `lmreview compress`: drafts and final texts (vet is se
 select = 5.0         # annotating the new samples (judge reuses the annotations)
 review = 30.0
 judge = 10.0
+confirm = 10.0       # a second review (and judge) of the samples with new misses, before distill (state.confirm_misses)
 distill = 5.0
 vet = 30.0
 

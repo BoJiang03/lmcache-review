@@ -56,7 +56,10 @@ from lmreview.workspace import cached_pr, sample_workspace  # noqa: E402
 
 REVIEWER = os.environ.get("SC_REVIEWER", "p29f48666+v0032@high-rc")  # default: the formal review, all Opus
 TAG = REVIEWER.replace("+", "_").replace("@", "_")  # lmreview runs, scores and results are kept per reviewer
-EFFORT = "high"
+RC_FROM = os.environ.get("SC_RC_FROM")  # an -rc reviewer whose cached rule check (same prompt, book) is reused
+EFFORT = os.environ.get("SC_SKILL_EFFORT", "high")  # the skill arm's effort
+SKILL_SUB = "" if EFFORT == "high" else f"effort_{EFFORT}"  # other efforts are cached apart
+RES = TAG + (f"__skill_{EFFORT}" if SKILL_SUB else "")  # results: this reviewer against the skill at EFFORT
 SKILL_TOOLS = "Read,Grep,Glob,Bash,Agent"
 EXCLUDE_PRS = {6212}
 MAX_SIZE = 2500  # additions + deletions
@@ -250,7 +253,7 @@ def transcript_summary(wt: pathlib.Path) -> dict:
 
 def run_skill(cfg: Config, s: dict, budget: Budget) -> dict:
     """Arm A on sample `s`; cached in skill/runs/."""
-    p = OUT / "skill" / "runs" / f"{key_of(s)}.json"
+    p = OUT / "skill" / SKILL_SUB / "runs" / f"{key_of(s)}.json"
     if p.exists():
         return json.loads(p.read_text())
     raw = cached_pr(cfg, s["pr"], s["time"])
@@ -308,8 +311,20 @@ def run_lmreview(cfg: Config, s: dict, budget: Budget) -> dict:
         return json.loads(p.read_text())
     budget.check("lmreview")
     t0 = time.time()
-    with sample_workspace(cfg, s, "review", reviewer_context(REVIEWER)) as (wt, base):
-        r = run_reviewer(wt, cached_pr(cfg, s["pr"], s["time"]), REVIEWER)
+    donor = RC_FROM and OUT / "lmreview" / "runs" / RC_FROM.replace("+", "_").replace("@", "_") / f"{key_of(s)}.json"
+    if donor and donor.exists():  # the rule check does not depend on the main review: reuse it, run the main only
+        d = json.loads(donor.read_text())
+        rc = next(x for x in d["runs"] if x.get("kind") == "rulecheck")
+        with sample_workspace(cfg, s, "review", reviewer_context(REVIEWER)) as (wt, base):
+            m = run_reviewer(wt, cached_pr(cfg, s["pr"], s["time"]), REVIEWER.removesuffix("-rc"))
+        fs = None if m["findings"] is None else (
+            [{**f, "id": f"1.{f.get('id') or k}", "support": 1} for k, f in enumerate(m["findings"], 1)]
+            + [{**f, "id": f"2.{f.get('id') or k}", "support": 1} for k, f in enumerate(rc["findings"] or [], 1)])
+        r = {**m, "findings": fs, "cost": m["cost"] + rc["cost"], "reviewer": REVIEWER, "rc_from": RC_FROM,
+             "runs": [{k: m[k] for k in ("findings", "error", "raw", "cost", "turns", "usage") if k in m}, rc]}
+    else:
+        with sample_workspace(cfg, s, "review", reviewer_context(REVIEWER)) as (wt, base):
+            r = run_reviewer(wt, cached_pr(cfg, s["pr"], s["time"]), REVIEWER)
     run = {"pr": s["pr"], "commit": s["commit"], "base": base, **r, "model": run_models(r),
            "arm": "lmreview", "secs": round(time.time() - t0, 1)}
     save(p, run)
@@ -342,7 +357,7 @@ def blind(run: dict, seed: int = 0) -> tuple[dict, dict]:
 def judge(cfg: Config, s: dict, arm: str, run: dict, budget: Budget) -> dict:
     """Blind `run` and grade it with score.score_one; cached in <arm>/scores/."""
     judged, mp = blind(run)
-    d = OUT / arm / (TAG if arm == "lmreview" else "")
+    d = OUT / arm / (TAG if arm == "lmreview" else SKILL_SUB)
     save(d / "blind" / f"{key_of(s)}.json", {"judged": judged, "map": mp})
     sp = d / "scores" / f"{key_of(s)}.json"
     if not sp.exists():
@@ -423,7 +438,7 @@ def run_many(cfg: Config, xs: list[dict], budget: Budget, workers: int) -> None:
 
     def one(x: dict) -> str:
         s = x["sample"]
-        rp = OUT / "results" / TAG / f"{key_of(s)}.json"
+        rp = OUT / "results" / RES / f"{key_of(s)}.json"
         if rp.exists():
             return f"#{s['pr']}: cached"
         try:
@@ -442,7 +457,7 @@ def run_many(cfg: Config, xs: list[dict], budget: Budget, workers: int) -> None:
 
 def summary() -> None:
     """Recall of human points (by half and severity), findings, valid share, cost and time per arm."""
-    rs = [json.loads(p.read_text()) for p in sorted((OUT / "results" / TAG).glob("*.json"))]
+    rs = [json.loads(p.read_text()) for p in sorted((OUT / "results" / RES).glob("*.json"))]
     for half in ("learned", "unlearned", "all"):
         xs = [r for r in rs if half == "all" or r["half"] == half]
         if not xs:

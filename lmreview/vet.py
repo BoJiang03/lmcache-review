@@ -59,7 +59,7 @@ from .schema import cites as finding_rules
 SIDE_PER_ENTRY = int(get("vet", "side_per_entry"))  # side effects: source comments replayed per affected entry (`--all`: every one)
 PRECISION = bool(get("vet", "precision"))  # precision gate on (off: left to human feedback after launch)
 WIDE_MARGIN = int(get("vet", "wide_margin"))  # precision: refuted findings a changed entry may add over its base text
-from .distill import book_meta, write_meta
+from .distill import book_meta, design_flags, write_meta
 from .reviewer import load_rules, parse_reviewer
 from .score import REPORTS, load_gold, refuted
 
@@ -79,7 +79,7 @@ def _related_ids(rules: list[dict]) -> dict[str, set[str]]:
 
 def lint(r: dict) -> list[str]:
     """Generality flags for one entry (knowledge entries may name code; only their paths are checked)."""
-    out = []
+    out = list(design_flags(r))  # OVERRIDE / PACKED: against how entries are written
     files = [p for p in r.get("paths") or [] if "*" not in p]
     if files:
         out.append(f"paths name single files: {files}")

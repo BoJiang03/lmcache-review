@@ -54,7 +54,7 @@ from lmreview.score import WANT, load_gold, score_one  # noqa: E402
 from lmreview.settings import get  # noqa: E402
 from lmreview.workspace import cached_pr, sample_workspace  # noqa: E402
 
-REVIEWER = "p9f689d0a+v0032@high-rc-ms"
+REVIEWER = "p29f48666+v0032@high-rc"  # the formal review: all Opus, design-doc prompt
 EFFORT = "high"
 SKILL_TOOLS = "Read,Grep,Glob,Bash,Agent"
 EXCLUDE_PRS = {6212}
@@ -301,7 +301,7 @@ def parse_issues(text: str) -> list[dict] | None:
 
 def run_lmreview(cfg: Config, s: dict, budget: Budget) -> dict:
     """Arm B on sample `s` as replay.replay_one runs it; cached in lmreview/runs/."""
-    p = OUT / "lmreview" / "runs" / f"{key_of(s)}.json"
+    p = OUT / "lmreview" / "runs" / REVIEWER.replace("+", "_").replace("@", "_") / f"{key_of(s)}.json"
     if p.exists():
         return json.loads(p.read_text())
     budget.check("lmreview")
@@ -376,11 +376,11 @@ def metrics(run: dict, sc: dict, arm: str) -> dict:
         m["cost_extract"] = round((run.get("extraction") or {}).get("cost") or 0, 3)
         m["n_subagents"] = run.get("n_subagents")
         m["models"] = sorted((run.get("usage") or {}))
-    if arm == "lmreview":  # points found only through rule-check-stage findings (ids "2.*" with -ms)
-        mp = sc["map"]
-        rc_only = [h for h in found if all(mp.get(x, "").startswith("2.") for x in h["matched_ai"])]
-        m["found_via_rulecheck_only"] = len(rc_only)
-        m["n_rulecheck_findings"] = sum(1 for f in run.get("findings") or [] if str(f.get("id", "")).startswith("2."))
+    if arm == "lmreview":  # points found only through findings that came from a rule (their "rule" field)
+        mp, orig = sc["map"], {str(f.get("id")): f for f in run.get("findings") or []}
+        ruled = lambda x: bool((orig.get(str(mp.get(x))) or {}).get("rule"))  # noqa: E731
+        m["found_via_rulecheck_only"] = sum(all(map(ruled, h["matched_ai"])) for h in found)
+        m["n_rulecheck_findings"] = sum(1 for f in orig.values() if f.get("rule"))
     return m
 
 

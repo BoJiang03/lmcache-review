@@ -670,7 +670,7 @@ def compress_step(max_cost: float | None = None, cfg: Config | None = None, stag
                 two = stage == "trim2"
                 D.TRIM_BASE, D.TRIM_PER = (int(x) for x in get("compress", "trim2_budget" if two else "trim_budget"))
                 D.TRIM_WHY = not two
-                fb = {x["entry"]: {"text": x["text"], "lost": x["lost"]} for x in fb_last} if repair else None
+                fb = {x["entry"]: {"text": x["text"], "lost": x["lost"], "wide": x.get("wide")} for x in fb_last} if repair else None
                 msg, k = D.trim(name, vname(parent), cfg, effort=effort, max_cost=max_cost,
                                 min_words=int(get("compress", "trim_words")), only=set(fb) if fb else None,
                                 feedback=fb, over_budget=0 if two and not fb else None)
@@ -739,9 +739,16 @@ def compress_undone(name: str, parent_ids: set[str], cand: list[dict], J: dict,
             ck = check(ret.get("replaced_by") or t, e)
             lost.setdefault(t, []).append({"entry": old, "comment": e, "body": body, "by": ret.get("replaced_by"),
                                            **({"check": ck} if ck else {})})
+    wide: dict[str, list[dict]] = {}  # new entries vet undid as too wide (refuted findings citing them)
+    for x in J.get("too_wide") or []:
+        t = by.get(x, {}).get("regroup") or x
+        if t in groups:
+            wide.setdefault(t, []).append({"entry": x, **(J.get("wide") or {}).get(x, {})})
+            lost.setdefault(t, [])
     rows = [{"group": sorted(groups[t] + ([t] if t in parent_ids else [])),
              "op": "absorb" if t in parent_ids else "regroup" if by.get(t, {}).get("regroup") else "merge",
              "into": t, "candidate": name, "lost": v, "date": _now()[:10],
+             **({"wide": wide[t]} if t in wide else {}),
              **({"text": {k: by[t].get(k) for k in ("when", "expect", "examples")}} if t in by else {}),
              **({"texts": [{"id": i, "from": by[i].get("replaces", []) + by[i].get("replaces_new", []),
                             **{k: by[i].get(k) for k in ("when", "expect", "examples")}} for i in members[t]]}
@@ -765,8 +772,13 @@ def trim_undone(name: str, cand: list[dict], J: dict, cfg: Config) -> tuple[dict
             lost.setdefault(i, []).append({"comment": str(e), "check": vet_verdict(name, i, e, cfg, where),
                                            "body": " ".join(str((gcm.get(cid_of(e)) or gcm.get(e) or {})
                                                                 .get("body", "")).split())[:200]})
+    for i in J.get("too_wide") or []:
+        if i in trimmed:
+            lost.setdefault(i, [])
     rows = [{"entry": i, "op": "trim", "candidate": name, "date": _now()[:10], "lost": v,
-             "text": {k: trimmed[i].get(k) for k in ("when", "expect", "why")}} for i, v in lost.items()]
+             "text": {k: trimmed[i].get(k) for k in ("when", "expect", "why")},
+             **({"wide": (J.get("wide") or {}).get(i)} if i in (J.get("too_wide") or []) else {})}
+            for i, v in lost.items()]
     return {i: [i] for i in trimmed}, rows
 
 

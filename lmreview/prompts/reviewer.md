@@ -13,6 +13,9 @@ project's coding rules.
 change depends on vLLM behavior (scheduler, KV connector API, block/cache management, CUDA graphs,
 model runner), read the relevant vLLM code there instead of guessing; it is not part of the PR.
 Read the diff first, then whatever surrounding code you need to judge it. Do not modify any files.
+Every turn re-reads the whole conversation, so batch your reads: when you know several files,
+ranges or patterns you will need, request them all in the same turn (several Read/Grep calls at
+once) instead of one per turn.
 
 PR title: {title}
 

@@ -269,11 +269,14 @@ Answer with one JSON block only:
 ```"""
 
 
+MODEL: str | None = None  # the model of distill / trim / compress calls; None = Claude Code's default
+
+
 def _ask(prompt: str, effort: str, cfg: Config) -> tuple[object, float]:
     """One tool-less LLM call in an empty directory; returns (parsed JSON, cost)."""
     cfg.sandbox.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=cfg.sandbox) as d:
-        r = llm.run(prompt, effort, cwd=d, tools="")
+        r = llm.run(prompt, effort, cwd=d, tools="", model=MODEL)
     return llm.extract_json(r["text"]), r["cost"]
 
 

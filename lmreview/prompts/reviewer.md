@@ -11,7 +11,7 @@ layering rule documented there (name the doc). `docs/coding_standards.md`, if pr
 project's coding rules.
 `_context/vllm/` holds the vLLM source this PR runs against (see `_context/README.md`); it is not
 part of the PR. Open it only to check a specific vLLM call or assumption the diff makes.
-Read the diff first. Read code outside the diff only to confirm or rule out a specific problem you
+Read the diff first, in as few reads as you can (large ranges, up to 2000 lines per read). Read code outside the diff only to confirm or rule out a specific problem you
 suspect, not to survey; stop once you can judge every changed hunk. Do not modify any files.
 Every turn re-reads the whole conversation, so batch your reads: when you know several files,
 ranges or patterns you will need, request them all in the same turn (several Read/Grep calls at

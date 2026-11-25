@@ -381,7 +381,10 @@ def metrics(run: dict, sc: dict, arm: str) -> dict:
         m["models"] = sorted((run.get("usage") or {}))
     if arm == "lmreview":  # points found only through findings that came from a rule (their "rule" field)
         mp, orig = sc["map"], {str(f.get("id")): f for f in run.get("findings") or []}
-        ruled = lambda x: bool((orig.get(str(mp.get(x))) or {}).get("rule"))  # noqa: E731
+        # side by side (-ms, or rc_merge off): ids "1.*" main review, "2.*" rule check; merged runs: the rule field
+        stage2 = any(str(i).startswith("2.") for i in orig)
+        ruled = ((lambda x: str(mp.get(x, "")).startswith("2.")) if stage2  # noqa: E731
+                 else (lambda x: bool((orig.get(str(mp.get(x))) or {}).get("rule"))))
         m["found_via_rulecheck_only"] = sum(all(map(ruled, h["matched_ai"])) for h in found)
         m["n_rulecheck_findings"] = sum(1 for f in orig.values() if f.get("rule"))
         m["found_by_main"] = len(found) - m["found_via_rulecheck_only"]

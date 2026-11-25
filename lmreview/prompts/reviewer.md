@@ -13,9 +13,9 @@ project's coding rules.
 change depends on vLLM behavior (scheduler, KV connector API, block/cache management, CUDA graphs,
 model runner), read the relevant vLLM code there instead of guessing; it is not part of the PR.
 Read the diff first, then whatever surrounding code you need to judge it. Do not modify any files.
-Every turn re-reads the whole conversation, so batch your reads: when you know several files,
-ranges or patterns you will need, request them all in the same turn (several Read/Grep calls at
-once) instead of one per turn.
+Every turn re-reads the whole conversation, so batch your reads: request several files, ranges or
+searches in the same turn, and if you have a shell, combine them into one command (e.g.
+`sed -n 40,90p a.py; rg -n "foo\(" lmcache tests`).
 
 PR title: {title}
 
@@ -31,6 +31,19 @@ praise. If earlier review comments exist, also report any that are still not pro
 addressed in this version; do not repeat ones that are resolved. When a finding is a bug (wrong
 behavior on some input, state or failure), its "what to change" also names the regression test that
 would have caught it, unless the PR already has one.
+
+Besides reading the diff, do these checks:
+1. Callers of changed code. List the public symbols (functions, methods, classes, fields) whose
+   signature, defaults, accepted values, return meaning, raised exceptions, side effects, ordering
+   or thread-safety the PR changes, including methods of base classes and protocols. Search the
+   whole repo for their callers and subclasses (lmcache/, tests/, benchmarks/, examples/, docs/), and
+   check every caller the PR does not update: is it still correct, also in meaning (e.g. a new
+   default)? Report a broken caller at the caller's location.
+2. Concurrency: shared state the change touches is protected, with the existing locks, also on
+   error paths.
+3. Tests: new behavior has tests and a bug fix has a regression test; tests go through the public
+   interface.
+4. Scope: if the PR mixes unrelated changes, say how to split it.
 
 Describe each finding at its true scope; do not force it onto a line:
 - "line": about specific code; give the line range(s). Use this even when the problem spans

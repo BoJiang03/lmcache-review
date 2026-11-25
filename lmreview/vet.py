@@ -22,8 +22,9 @@ distill only writes rules; vet decides whether they are kept. Three checks, then
 "review" here is the rule check alone (reviewer suffix -ro, see reviewer.ruleonly_of) with a judge that sees
 only the comments the cases ask about: a rule change shows in the rule check, so the full review is not
 replayed (about $0.8 per sample instead of $3.5). Runs are cached under data/runs/<reviewer>/,
-so an earlier A/B with the same reviewer names costs nothing here. Single runs are noisy, so each
-failing case gets one more run with NEW before it counts (`retry`).
+so an earlier A/B with the same reviewer names costs nothing here. Single runs are noisy, so (`retry`) a
+proven case missed by both books gets one more run with BASE (a chance miss there would leave it
+unprotected), and each failing case one more run with NEW before it counts.
 
 Verdict, by what the next book takes: ALL KEPT if every entry with new evidence works on at least one
 of its comments, nothing regressed and every revision fixed its trigger; PARTLY KEPT if some changes
@@ -263,7 +264,17 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     J, c_r = judge(), 0.0
     note(f"      first pass: works {sorted(J['works'])}, not working {J['no_effect']}, lost {len(J['lost'])}, "
          f"revisions not fixed {len(J['not_fixed'])}")
-    if retry:  # single runs are noisy: a failing case gets one more run with NEW before it counts
+    if retry:  # single runs are noisy: a proven case missed by both books gets one more run with OLD (else a
+        # chance miss of the old book leaves it unprotected), then a failing case one more run with NEW
+        both = [(i, {"target": tgt(e), "with": w, "comments": [e]}) for i, e in side
+                if B.get(ck(i, e), {}).get("passed") is False
+                and (Nw.get(ck(i, e), {}).get("any" if i in retired else "passed") is False)]
+        if both:
+            note(f"[2b/3] {len(both)} case(s) missed by both get one more run with {base} (${c_b + c_n:.2f} so far)")
+            rows_o, c_o = replay(base, both, reps + 1, max(0.0, max_cost - c_b - c_n), cfg, suffix=suffix, only=only)
+            B |= {key(r): r for r in rows_o if r["passed"] is not None}
+            c_b += c_o
+            J = judge()
         again = ([(i, {"target": tgt(e), "with": w, "comments": [e]}) for i, e in effect if i in J["no_effect"]]
                  + [(i, {"target": tgt(e), "with": w, "comments": [e]}) for i, e in J["lost"]]
                  + [(i, {"target": t, "with": w, "comments": []}) for i, t in J["not_fixed"]])

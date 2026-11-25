@@ -34,6 +34,7 @@ import datetime as dt
 import fnmatch
 import functools
 import json
+import re
 import pathlib
 import subprocess
 import tempfile
@@ -959,6 +960,10 @@ Changes:
   entry (which component holds what, where it lives) stay word for word.
   Generalizing means the entry also applies to situations none of the merged entries named: that is
   intended, as long as it is the same principle. Keep it at the lowest level that covers them all.
+A merged entry makes ONE core request in "expect". Entries that ask for different changes are not one
+principle, however close their topics: leave them apart. An entry marked PACKED that bundles different
+requests may be split: op "regroup" with that one entry in "rules" and an "entries" list of two or more
+entries, each with "from": [its id], each making one request (together no longer than the original).
 Do not merge entries that ask for different or opposite changes because they share a topic (e.g.
 "shorten docstrings to the contract" and "explain tricky state changes in a docstring with a worked
 example"). Do not write an entry so broad that it fits any change: a reviewer must still recognize
@@ -987,7 +992,7 @@ Rulebook:
 
 Answer with one JSON block only, one object per change ([] if none):
 ```json
-[{"op": "merge|absorb", "rules": ["<id>", "<id>"], "into": "<absorb only>", "reason": "one line", "kind": "...",
+[{"op": "merge|absorb|regroup", "rules": ["<id>", "<id>"], "into": "<absorb only>", "reason": "one line", "kind": "...",
   "when": "...", "expect": "...", "why": "...", "examples": ["..."], "paths": []}]
 ```"""
 
@@ -1014,8 +1019,10 @@ For each change:
    "examples"). Do not list the entries' requests one by one. Aim at
    or under the change's budget for "when" + "expect" ("why" at most 10 words); a group whose total is not
    under 75% of the words it replaces is refused.
-3. One entry is the goal. If the group's proven comments ask for different things, the group may be
-   redrawn as two (each names in "from" the ids it takes over): still fewer words than the group.
+3. One entry is the goal, making ONE core request. If the group's proven comments ask for different
+   things, the group is redrawn as two (each names in "from" the ids it takes over): still fewer words
+   than the group. Never pack several requests into one "expect". A one-entry change is a split of a
+   PACKED entry: two or more entries, each one request, together no longer than the original.
 4. Keep the project facts of a knowledge entry (which component holds what, where it lives) word for word.
 5. Never move a deciding condition into "examples": the reviewer does not see them.
 
@@ -1060,6 +1067,11 @@ For each entry:
    entry also catches the next instance nobody listed.
 5. Keep the project facts of a knowledge entry (which component holds what, where it lives) word for word.
 6. Never move a deciding condition into "examples": the reviewer does not see them.
+7. An entry with DESIGN FLAGS (a heuristic) must lose them unless the flag is wrong for it (an ordered
+   layout is one request; a project fact may say to flag every occurrence). OVERRIDE: replace the clause that overrides the reviewer's
+   judgment ("even if ...", "flag each", "check every ...") by the concrete signal the proven comment gives.
+   PACKED: state the one kind of situation the listed sub-cases share, keeping each proven comment's
+   concrete pattern as a short "e.g." clause; one request in "expect", not a list of asks.
 @FEEDBACK@
 Entries:
 @ENTRIES@
@@ -1109,6 +1121,7 @@ def _trim_entry_text(r: dict, cm: dict, fb: dict | None) -> str:
     lines = [f"### {r['id']} ({r.get('kind')}; when+expect {len((str(r.get('when')) + ' ' + str(r.get('expect'))).split())}"
              f" words, budget {trim_budget(r)})",
              f"when: {r.get('when')}", f"expect: {r.get('expect')}", f"why: {r.get('why') or ''}",
+             *([f"DESIGN FLAGS (fix these): {'; '.join(design_flags(r))}"] if design_flags(r) else []),
              f"examples (NOT shown to the reviewer): {'; '.join(r.get('examples') or [])}",
              "proven comments (the reviewer must still raise each):"]
     lines += [f"- [{c}] PR #{who(c).get('pr')} {who(c).get('author')}: {body(c, 1500)}" for c in proven] or ["- (none)"]
@@ -1151,7 +1164,7 @@ def trim(out: str, base: str, cfg: Config | None = None, effort: str = "high", m
     wc = lambda r: len((str(r.get("when")) + " " + str(r.get("expect"))).split())  # noqa: E731
     sel = [r for r in act.values() if (r["id"] in only if only is not None else
                                        wc(r) > trim_budget(r) + over_budget if over_budget is not None else
-                                       wc(r) > min_words)]
+                                       wc(r) > min_words or bool(design_flags(r)))]
     sel.sort(key=lambda r: (r.get("kind") or "", ",".join(r.get("paths") or []), r["id"]))
     batches = [sel[i:i + batch] for i in range(0, len(sel), batch)]
     fb_text = TRIM_FEEDBACK if feedback else ""
@@ -1169,7 +1182,7 @@ def trim(out: str, base: str, cfg: Config | None = None, effort: str = "high", m
             if not r or not d.get("expect") or not d.get("when"):
                 continue
             new = {"when": d["when"], "expect": d["expect"]}  # "why" stays as written: a record, not shown
-            if _size(new) >= _size(r):
+            if _size(new) >= _size(r) and not (design_flags(r) and not design_flags(new)):
                 changes.append({"op": "trim-refused", "rules": [r["id"]], "why": f"not shorter ({_size(new)} vs {_size(r)})"})
                 continue
             r["history"] = list(r.get("history") or []) + [{"version": r.get("version", 1), "until": today, "by": out,
@@ -1192,6 +1205,26 @@ def trim(out: str, base: str, cfg: Config | None = None, effort: str = "high", m
     msg = (f"{n} of {len(sel)} entries trimmed; {len(a2)} entries, {sum(map(_size, a2))} words "
            f"(from {sum(map(_size, act.values()))}); ${cost:.2f}")
     return msg, n
+
+
+OVERRIDE = re.compile(r"\b(even if (?:it|this|that|they)|even without|regardless of whether|anyway|flag each|raise each|"
+                      r"check every|always flag)\b", re.I)  # "even if release raises" (a technical condition) is not one
+
+
+def design_flags(r: dict) -> list[str]:
+    """Where an entry's text goes against how entries are written (2026-11-25 read of v0029):
+    OVERRIDE: a clause that overrides the reviewer's judgment ("even if ...", "flag each", "check every")
+    instead of naming the concrete signal; PACKED: sub-cases listed one by one ("(a) ... (b) ...", five or
+    more ";"-separated clauses) instead of one principle with short "e.g." clauses. A heuristic: the
+    trim prompt may keep a flagged text when the flag is wrong (an ordered layout, a knowledge fact)."""
+    out, text = [], f"{r.get('when', '')} {r.get('expect', '')}"
+    if m := sorted({x.lower() for x in OVERRIDE.findall(text)}):
+        out.append(f"OVERRIDE: {m}")
+    for k in ("when", "expect"):
+        t = str(r.get(k) or "")
+        if re.search(r"\(a\).*\(b\)", t) or t.count(";") >= 4:
+            out.append(f"PACKED {k}: {t.count(';') + 1} clauses")
+    return out
 
 
 def merge_budget(rs: list[dict]) -> int:
@@ -1217,6 +1250,9 @@ def _regroup_refusal(g: list[str], ents: list[dict], act: dict, shrink: float) -
     if set(g) - taken:
         return f"not taken over by any new entry: {sorted(set(g) - taken)}"
     old, new = sum(_size(act[x]) for x in g), sum(map(_size, ents))
+    if len(g) == 1 and len(ents) >= 2:  # a split of a packed entry: no longer than it, each entry unpacked
+        return (f"split not shorter ({new} words vs {old})" if new > old else
+                "split still packed" if any(design_flags(e) for e in ents) else "")
     if new >= old * shrink:
         return f"not short enough ({new} words vs {old}, limit {shrink:.0%})"
     return ""
@@ -1320,7 +1356,8 @@ def _book_for_compress(rules: list[dict], cm: dict, record: dict, feedback: list
         rec = record.get(r["id"]) or {}
         out.append(f"- {r['id']} ({r.get('kind')}; {_size(r)} words; order {_order(r)}): When {r.get('when')}: "
                    f"{r.get('expect')}\n  examples: {'; '.join(r.get('examples') or [])} | paths {r.get('paths') or []}\n"
-                   f"  proven cases: {len(proven)} ({', '.join(sorted({t['target'] for t in proven})) or 'none'}); "
+                   + (f"  DESIGN FLAGS: {'; '.join(design_flags(r))}\n" if design_flags(r) else "")
+                   + f"  proven cases: {len(proven)} ({', '.join(sorted({t['target'] for t in proven})) or 'none'}); "
                    f"record: {len(rec.get('helpful') or [])} valid, {len(rec.get('harmful') or [])} refuted\n"
                    f"  reviewers said:\n" + "\n".join(said) + (f"\n    (+{more} more comments)" if more > 0 else ""))
     undone = [f"- {', '.join(f['group'])} ({f['op']}, {f['candidate']}): lost "

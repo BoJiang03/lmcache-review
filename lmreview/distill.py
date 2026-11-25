@@ -1071,7 +1071,7 @@ applied but found nothing violated, the "expect" lost the condition that comment
 """
 
 
-TRIM_BASE, TRIM_PER = 70, 15  # trim_budget: words for one proven sample, and for each further one
+TRIM_BASE, TRIM_PER = 50, 10  # trim_budget: words for one proven sample, and for each further one
 TRIM_WHY = True  # unused since 2026-11-25: trim never touches "why" (a record; the reviewer is not shown it)
 
 

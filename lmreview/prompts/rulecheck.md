@@ -2,11 +2,14 @@ You are checking pull request #{number} of LMCache ({title}) against the team's 
 not doing a general review: other reviewers look for bugs, tests and docs. Your only job is the rules
 below, and you must go through every one of them.
 
-The PR's diff and the review discussion so far are below. You have no tools: decide from them. A
+The PR's diff, the review discussion so far, and a grep of where names from the diff and its docs are
+defined and used in the repository (SYMBOLS) are in the system prompt. You have no tools: decide from them. Use
+SYMBOLS to check what a rule asks you to verify outside the diff (callers, which modes or paths use a
+function, whether a helper already exists). A
 violation a reviewer already raised counts only if this version still has it; do not report one the
 PR has since fixed.
 
-{context}
+{shared}
 
 PR description:
 {body}

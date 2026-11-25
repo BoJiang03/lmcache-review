@@ -70,16 +70,23 @@ after it: every reply with who wrote it, and whether the thread was resolved and
   the standard it breaks. Without that, it is "not_issue", even if the author made the change.
   Judge the whole thread: a comment that opens with a question is "learnable" when a later reply
   (the author's explanation, or the reviewer's follow-up) turns it into such an ask. Marking an ask
-  "nit" does not make it "not_issue".
-- "context": it needs knowledge outside the code (an offline decision, roadmap, another PR's state).
+  "nit" does not make it "not_issue". An author who agrees with the point but defers the change (adds a
+  TODO, promises a follow-up, says "not now") accepts the standard: that is "learnable", not
+  "rejected" or "contested".
+- "context": it needs knowledge outside the code (an offline decision, roadmap, where code should live
+  across projects, another PR's state). Decide this before "contested": an author's reply does not make
+  a roadmap question a code standard.
 - "not_issue": a question, praise, or nothing actionable; also an ask whose motivation neither the
   comment nor its thread makes clear (a bare preference, or a question the thread never answers with a
   problem in the code).
 - "rejected": the team took no part of the suggestion: the reviewer (or another reviewer) withdrew it,
   agreed with the author's objection, or resolved the thread with the code left as it was; or the
   file never changed again and nothing in the discussion shows the change was made in other files.
-- "contested": only the PR author objected (or resolved the thread without the change), and no
-  reviewer agreed. Whether the team stands by the suggestion is unknown; do not decide it.
+  Also "rejected": the author showed the ask is wrong with a checkable fact (a tool, formatter, spec or
+  CI requirement the change would break), and no reviewer disputed it.
+- "contested": only the PR author objected on the merits (a design or preference argument, not a
+  checkable fact), or resolved the thread without the change, and no reviewer agreed. Whether the team
+  stands by the suggestion is unknown; do not decide it.
 
 Comments:
 {comments}
@@ -109,6 +116,9 @@ GENERAL = """How general "when" and "expect" must be:
   specialization inside the generic layer"), write "when" and "expect" at the level of that stated
   principle, even if the summary of the ask is narrower. The mechanism the PR happened to use (an inline type
   check, an event stream, a snapshot getter) goes to "examples", never into "when" as a condition.
+- Length: "when" and "expect" together in at most about 80 words. Sub-cases, mechanisms and instances
+  go to "examples" (at most 2). Go longer only when an entry marked RETRY shows the shorter text did
+  not make the reviewer raise the point.
 - Self-check before answering: for each noun, number or mechanism in "when" and "expect", ask whether
   it still holds for another PR of the same kind. If not, replace it with the general term and move
   the particular to "examples".
@@ -142,7 +152,10 @@ a docstring with a worked example" are two entries, though both are about docstr
   "expect" is too narrow to make a reviewer raise their point. Write the broader entry at the lowest
   level that covers the existing entry AND the findings. It REPLACES the existing entry (which is
   retired), so it must still make a reviewer raise everything the existing entry asked for.
-- "add": the findings ask for a different change than every existing entry; write a new entry.
+- "add": the findings ask for a different change than every existing entry; write a new entry. Before
+  choosing it, find the existing entry closest to the findings ("closest": its id) and say in
+  "why_new" (one line) why neither "evidence" nor "generalize" of that entry can make a reviewer raise
+  their point. An add without that reason is wrong: generalize instead.
 - "revise": an existing entry's text is WRONG as shown by failure signals or by findings that ask for
   the opposite, or it is the entry a finding marked RETRY was written from and it still did not make
   the reviewer raise the point. Rewrite it so it would not have produced those findings (or agrees with
@@ -159,8 +172,9 @@ a docstring with a worked example" are two entries, though both are about docstr
 - "skip": a finding carries no principle or knowledge a reviewer could apply to other PRs; say why.
 - "keep": a failure signal that came from the reviewer misapplying a correct entry (the signal is
   recorded as considered).
-A smaller rulebook that explains the same comments generalizes better: prefer "evidence", then
-"generalize", over "add". Tidying the rulebook as a whole (merging existing entries) is a later step. Every replacement is checked later against all the comments the
+This step places each finding in the rulebook; a smaller rulebook that explains the same comments
+generalizes better: prefer "evidence", then "generalize", over "add". Do not merge existing entries
+with each other: that is a later step. Every replacement is checked later against all the comments the
 replaced entries came from; one that loses any of them is undone. "revise" and "retire" need failure
 signals from at least @MINPRS@ different PRs, or a finding in "members" (opposite, or RETRY of that entry).
 
@@ -174,7 +188,11 @@ How to write an entry (generalize, merge, add, revise):
   with a worked example of values before/after", not just "docstrings should be clear").
 - A finding marked RETRY already has an entry that did not work: write it so that a reviewer reading
   that diff would recognize the situation (usually the "when" names the situation too abstractly or
-  too narrowly), not a paraphrase of the same text.
+  too narrowly), not a paraphrase of the same text. When its earlier attempts quote what the rule
+  check said of the entry on that diff, fix exactly that reason: if it judged the entry not to apply,
+  the "when" missed the situation; if it applied but judged nothing violated, the "expect" lacks the
+  distinction the reviewer drew. Attaching it again as "evidence" of the same unchanged text will fail
+  the same way.
 - A finding whose earlier attempt says a broader entry was dropped because a replaced entry lost a proven
   case: generalize again, and make the new entry cover that case too (name the situation in "when", put
   it among the "examples"). Adding a narrow entry beside the old one is the fallback only when no single
@@ -199,7 +217,8 @@ Answer with one JSON block only, one object per decision:
 ```json
 [{"op": "evidence|generalize|add|revise|retire|contradict|skip|keep", "rules": ["<existing id>"],
   "members": ["c123", "s1"], "concern": "short name", "kind": "...", "when": "...", "expect": "...",
-  "why": "...", "examples": ["..."], "paths": [], "changed": "<revise only>", "replaced_by": "<id, retire only>"}]
+  "why": "...", "examples": ["..."], "paths": [], "changed": "<revise only>", "replaced_by": "<id, retire only>",
+  "closest": "<id, add only>", "why_new": "<add only>"}]
 ```"""
 
 # Merge step of an ensemble of WRITE runs: the level of abstraction varies from run to run.
@@ -207,7 +226,8 @@ MERGE_WRITE = """Several independent drafts were written of how the LMCache revi
 below. They differ by chance, mostly in how general the written entries are and in which findings
 they put together. Write the ONE final set of decisions:
 - For each finding take the decision most drafts agree on (which existing entry it belongs to, or
-  that it needs a new one); put findings together only where most drafts did.
+  that it needs a new one); put findings together only where most drafts did. Keep an "add" only if
+  its "why_new" holds against the "closest" entry; otherwise generalize that entry.
 - For a written entry, its level is the one the reviewer's own words support: read the quotes. Prefer
   the draft whose "when" covers every mechanism by which a PR could break that stated principle; take
   the most precise "expect" and the best examples from any draft. Do not go above what the reviewer said.
@@ -545,6 +565,7 @@ def update_rulebook(base_rules: list[dict], items: dict, evid: dict, out: str, c
                     r["revised"] = {"date": today, "by": out, **why}  # vet re-checks these cases
                     ch |= {"version": r["version"], "when": r["when"], "expect": r["expect"], "changed": d["changed"]}
         elif op == "add" and d.get("expect") and mem:
+            ch |= {k: d[k] for k in ("closest", "why_new") if d.get(k)}  # why no existing entry fits
             added.append((_entry(d) | {"kind": d.get("kind") or "principle"}, ev, g["concern"]))
         elif op == "skip" and mem:
             ch["why"] = d.get("why")
@@ -595,8 +616,10 @@ is given when it reviews a pull request of LMCache (a KV-cache layer for LLM inf
 as vLLM). Entries marked NEW were written this round. Each entry shows what the human reviewers said
 in the comments it was learned from.
 
-Tidy the rulebook at the level of entries. A rulebook with overlapping, uneven or redundant entries
-costs on every review and every later check, and its entries fire less reliably. Changes:
+Tidy the rulebook where this round touched it: the NEW entries against the whole book. A rulebook with
+overlapping, uneven or redundant entries costs on every review and every later check, and its
+entries fire less reliably. Every merge or absorb includes at least one NEW entry; merging existing
+entries with each other is left to the periodic whole-book compress. Changes:
 - "merge": two or more entries ask for the same kind of change in the same kind of situation, though
   their wording, area or level differ. Write ONE entry that replaces them all: it must make a reviewer
   raise everything each of them asked for (read their reviewers' words), at the lowest level that
@@ -691,7 +714,7 @@ def _components(edges: set[tuple[str, str]]) -> list[list[str]]:
 
 def consolidate(rules: list[dict], base_rules: list[dict], out: str, cm: dict, effort: str, cfg: Config,
                 spend: list[float], max_cost: float, n: int = 3) -> tuple[list[dict], list[dict]]:
-    """Tidy the whole rulebook at the level of entries: merge entries that ask for the same change,
+    """Tidy the rulebook where this round touched it: merge NEW entries with entries that ask for the same change,
     rewrite NEW entries at the wrong level, flag contradictions; then verify_changes() checks every
     change made to the text of existing entries in this distill (this step's and the write step's).
 
@@ -709,7 +732,8 @@ def consolidate(rules: list[dict], base_rules: list[dict], out: str, cm: dict, e
     Returns:
         (the rulebook, change records "consolidate-*" and "verify-*").
     """
-    rules, changes = _consolidate(rules, {r["id"] for r in base_rules}, out, cm, effort, cfg, spend, max_cost, n)
+    rules, changes = _consolidate(rules, {r["id"] for r in base_rules}, out, cm, effort, cfg, spend, max_cost, n,
+                                  incremental=True)
     rules, more = verify_changes(rules, base_rules, out, effort, cfg, spend, max_cost, n)
     base_ids = {r["id"] for r in base_rules}
     return [r for r in rules if r["id"] in base_ids or r.get("status", "active") == "active"], changes + more
@@ -718,11 +742,12 @@ def consolidate(rules: list[dict], base_rules: list[dict], out: str, cm: dict, e
 def _consolidate(rules: list[dict], base_ids: set[str], out: str, cm: dict, effort: str, cfg: Config,
                  spend: list[float], max_cost: float, n: int, prompt: str = "", book: str = "",
                  absorb_ok: Callable[[str, list[str]], bool] | None = None, blocked: set[frozenset] = frozenset(),
-                 shrink: float = 1.0, final_prompt: str = "") -> tuple[list[dict], list[dict]]:
+                 shrink: float = 1.0, final_prompt: str = "", incremental: bool = False) -> tuple[list[dict], list[dict]]:
     """The proposing part of consolidate(): drafts, votes, final texts, applied. compress() passes its own
     `prompt` and `book` text, `final_prompt` for the final texts, `shrink` (a merge must have under that share
     of the words it replaces), `absorb_ok(into, others)` (which absorbs may happen) and `blocked` groups
-    (merges vet undid twice: not proposed again)."""
+    (merges vet undid twice: not proposed again). `incremental` (consolidate in distill): a merge or absorb
+    must include a NEW entry; pairs of existing entries are left to compress."""
     act = {r["id"]: r for r in rules if r.get("status", "active") == "active"}
     new_ids = {i for i in act if i not in base_ids}
     if len(act) < 2 or spend[0] >= max_cost:
@@ -745,7 +770,8 @@ def _consolidate(rules: list[dict], base_ids: set[str], out: str, cm: dict, effo
         for d in dr:
             ids = sorted({x for x in d.get("rules") or [] if x in act})
             if d.get("op") in ("merge", "absorb") and len(ids) >= 2:
-                mp |= {(a, b) for i, a in enumerate(ids) for b in ids[i + 1:]}
+                mp |= {(a, b) for i, a in enumerate(ids) for b in ids[i + 1:]
+                       if not incremental or a in new_ids or b in new_ids}
                 if d.get("op") == "absorb" and d.get("into") in ids:
                     into[(tuple(ids), d["into"])] += 1
             elif d.get("op") == "rewrite" and len(ids) == 1 and ids[0] in new_ids:

@@ -68,10 +68,16 @@ def run(prompt: str, effort: str, cwd: str | None = None, tools: str = "", timeo
     # no shell/web/subagents/MCP, and user settings (e.g. defaultMode=auto) are ignored.
     # --allowedTools alone is NOT enough: user settings auto-approve everything.
     shell = "Bash" in tools.split(",")
+    sys_file = None
+    if system and len(system.encode()) > 100_000:  # one argv string is capped at 128 KiB: use a file
+        fd, sys_file = tempfile.mkstemp(prefix="lmreview-sys-", suffix=".md")
+        with os.fdopen(fd, "w") as f:
+            f.write(system)
+    sys_args = ["--system-prompt-file", sys_file] if sys_file else ["--system-prompt", system] if system else []
     if not shell:
         cmd = ["claude", "-p", prompt, "--output-format", "json", "--restricted",
                "--tools", tools, "--strict-mcp-config", "--permission-mode", "dontAsk",
-               "--effort", effort] + (["--system-prompt", system] if system else [])
+               "--effort", effort] + sys_args
     else:  # --restricted would remove Bash: the sandbox and the deny rules confine it instead
         missing = [b for b in ("bwrap", "socat") if not shutil.which(b)]
         if missing or not cwd or not sandbox:
@@ -79,7 +85,7 @@ def run(prompt: str, effort: str, cwd: str | None = None, tools: str = "", timeo
         cmd = ["claude", "-p", prompt, "--output-format", "json", "--tools", tools,
                "--allowedTools", *tools.split(","), "--strict-mcp-config", "--permission-mode", "dontAsk",
                "--settings", json.dumps(sandbox_settings(sandbox, str(pathlib.Path(cwd).resolve()))),
-               "--effort", effort] + (["--system-prompt", system] if system else [])
+               "--effort", effort] + sys_args
     if model:
         cmd += ["--model", model]
     stdin = None
@@ -94,6 +100,8 @@ def run(prompt: str, effort: str, cwd: str | None = None, tools: str = "", timeo
         err = f"{type(e).__name__}: {e}"[:500]
         raise
     finally:
+        if sys_file:
+            os.unlink(sys_file)
         global SPENT
         with _spent_lock:
             SPENT += float((out or {}).get("cost") or 0)

@@ -58,6 +58,36 @@ prompt 被拆成很多小组件（规则条目），像软件拆成模块：规�
 
 以后要验证时，可以定期做一次全量回放（`vet --all`），统计没改的规则因为别的规则改动而丢掉已证明 case 的比例。比例低，说明局部回放可靠；比例高，就要把回放范围扩到会互相影响的规则。
 
+## 泛化的分工：distill 和 compress
+
+改规则库的有两处，按各自看得到的信息分工（2026-11-24 定，下一批起测）：
+
+| | distill（每轮） | compress |
+| --- | --- | --- |
+| 看得到 | 新评论原文、thread、diff + 整本规则库 | 只有规则库（条目文字、例子、证据 id） |
+| 负责 | **评论 ↔ 条目**：把新评论放到对的位置 | **条目 ↔ 条目**：已有条目之间合并、提升、压短 |
+| 上限 | reviewer 说出的原则 | 被合并条目的证据合起来撑得住的程度 |
+
+- **write**：优先并入（evidence）或泛化（generalize）已有条目；新建（add）要写出最接近的已有条目（`closest`）和为什么不能并入（`why_new`），写不出就泛化。不合并已有条目。
+- **consolidate**（distill 内，每轮）：增量 compress，每个合并或吸收都至少包含一条本轮新条目；已有条目之间的合并留给 compress。
+- **compress**（全书）：定期整理，处理增量版看不到的远距离合并和过长条目。目前仍在规则库超过 10k 词时触发。
+- **长度**：when + expect 合计约 80 词以内，子情况、机制和实例放进 examples（最多 2 条）；只有 RETRY 证明短的写法不触发时才写长。
+- 两边都过 vet，合并的证据是来源证据的并集。
+
+衡量：distill 看本轮新条目里只有 1 条证据的比例（应该低）；compress 和整体看"每条评论摊多少词"（应该逐轮下降）。v0014–v0020 这个数一直在 85–94 词，45 条里 22 条只有 1 条证据。
+
+## 让 workflow 自己做对（2026-11-24，从 8 条 needs_human 复盘）
+
+needs_human 不该靠人逐条改，而是暴露 workflow 的缺陷。复盘后的修复：
+
+| 现象 | 缺陷 | 修复 |
+| --- | --- | --- |
+| 作者同意但推迟（加 TODO）被判 contested | attribute 把"没改"等同于"反对" | 同意但推迟 = learnable；用可核查事实（formatter、规范、CI）证明要求错 = rejected；规划类问题先判 context |
+| 重试时把评论再挂到同一条规则上，原样失败 | write 不知道规则为什么没触发 | vet 把 rule check 对该规则的判定（applies / violated / why）写进 tries，write 重试时按这个原因改 |
+| 早期失败的评论永远停在 needs_human | needs_human 是终点 | `requeue_parked`：distill 提示词变了，或规则库出现新的/改过的相关条目（COVERAGE 判断），就放回 to_distill；每条最多 2 次；人写的决定不重开 |
+| 文档说法要和调用点核对，rule check 只能判"适用" | 不带工具的 rule check 看不到 diff 以外的代码 | rule check 输入加 SYMBOLS：diff 定义的名字和文档里提到的名字，在整个仓库里的定义和使用位置（grep，确定性预处理） |
+| "报 bug 时要求补回归测试"写成规则永远不触发 | 规则只作用于 diff，看不到 reviewer 自己的 finding | 这类关于 finding 写法的要求放进 reviewer.md；以后攒多了再考虑"作用于 finding 的规则" |
+
 ## 上线前（AI review 不展示）
 
 人的 review 是独立的，就是标准答案。**目标：减少可学的 human 独有。**

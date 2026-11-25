@@ -20,7 +20,9 @@ Review it the way a senior LMCache maintainer would before approving. Report eve
 you find: correctness bugs, concurrency/resource issues, API or design problems, missing or wrong
 tests, performance regressions, and maintainability issues worth a reviewer's comment. Skip pure
 praise. If earlier review comments exist, also report any that are still not properly
-addressed in this version; do not repeat ones that are resolved.
+addressed in this version; do not repeat ones that are resolved. When a finding is a bug (wrong
+behavior on some input, state or failure), its "what to change" also names the regression test that
+would have caught it, unless the PR already has one.
 
 Describe each finding at its true scope; do not force it onto a line:
 - "line": about specific code; give the line range(s). Use this even when the problem spans

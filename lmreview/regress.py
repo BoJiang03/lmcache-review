@@ -121,7 +121,8 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
         s, name = ss[key], f"{pr}-{key[1][:8]}.json"
         d = cfg.data / "runs" / (rv + tag + ("" if k == 1 else f"#r{k}"))
         d.mkdir(parents=True, exist_ok=True)
-        cached = (d / name).exists()
+        cached = (d / name).exists() and not (  # a failed run (unparsable output) is run again, not reused
+            (old := json.loads((d / name).read_text())).get("findings") is None and old.get("error"))
         if not cached:
             with lock:  # cached runs are always read; a new one waits until it fits with those running
                 while spent[0] < max_cost and reserved[0] and spent[0] + reserved[0] + est > max_cost:

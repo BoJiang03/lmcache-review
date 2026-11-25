@@ -252,7 +252,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
                 unknown.add(i)
             if n.get("passed"):
                 works.add(i)
-        lost, kept, both_miss, s_unknown = [], 0, 0, 0
+        lost, kept, both_miss, s_unknown, s_which = [], 0, 0, 0, []
         for i, e in side:
             b, n = B.get(ck(i, e), {}), Nw.get(ck(i, e), {})
             nb = n.get("any") if i in retired else n.get("passed")  # a retired entry: caught by anything
@@ -260,6 +260,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
                 kept += 1
             elif b.get("passed") is None or nb is None:
                 s_unknown += 1
+                s_which.append((i, e, "new" if nb is None else "base"))
             elif b["passed"] and not nb:
                 lost.append((i, e))
             elif b["passed"]:
@@ -270,7 +271,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         f_unknown = [(i, t) for i, t in fixes if Nw.get(fk(i, t), {}).get("invalid") is None]
         no_effect = sorted({i for i, _ in effect} - works - unknown)
         return {"works": works, "unknown": unknown, "no_effect": no_effect, "lost": lost, "kept": kept,
-                "both_miss": both_miss, "s_unknown": s_unknown, "not_fixed": not_fixed, "f_unknown": f_unknown}
+                "both_miss": both_miss, "s_unknown": s_unknown, "s_which": s_which, "not_fixed": not_fixed, "f_unknown": f_unknown}
 
     J, c_r = judge(), 0.0
     note(f"      first pass: works {sorted(J['works'])}, not working {J['no_effect']}, lost {len(J['lost'])}, "
@@ -371,6 +372,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
           f"not run {J['s_unknown']}"]
     L += [f"- LOST {i}{' (retired)' if i in retired else ''} #{tgt(e)} c{e} ({cm[e]['author']}: "
           f"{cm[e]['body'][:100]!r})" for i, e in J["lost"]]
+    L += [f"- NOT RUN ({side}) {i} #{tgt(e)} c{e}" for i, e, side in J.get("s_which") or []]
     L += ["", "## 4. Precision (refuted findings citing a changed entry: new text vs the text it replaces)",
           f"margin {WIDE_MARGIN}; too wide: {J['too_wide'] or 'none'}"
           + (f"; not run: {J['p_unknown']}" if J["p_unknown"] else "")]

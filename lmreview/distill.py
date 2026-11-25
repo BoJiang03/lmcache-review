@@ -43,7 +43,7 @@ from . import llm
 from .budget import capped_map
 from .config import RULES, Config
 from .schema import cites as finding_rules
-from .annotate import norm
+from .annotate import cid_of, norm
 from .settings import get
 from .state import book_path
 from .ensemble import ensemble
@@ -786,10 +786,12 @@ def _consolidate(rules: list[dict], base_ids: set[str], out: str, cm: dict, effo
         con.update(ct)
     if union:
         proposed = C.Counter(frozenset(x for x in d.get("rules") or [] if x in act) for dr in drafts for d in dr
-                             if d.get("op") in ("merge", "absorb"))
+                             if d.get("op") in ("merge", "absorb", "regroup"))
+        single = {frozenset(x for x in d.get("rules") or [] if x in act) for dr in drafts for d in dr
+                  if d.get("op") == "regroup"}  # a regroup may rewrite one entry (1 -> 1, shorter)
         groups, used = [], set()
         for g, _ in sorted(proposed.items(), key=lambda kv: (-kv[1], -len(kv[0]), sorted(kv[0]))):
-            if len(g) >= 2 and not g & used:
+            if (len(g) >= 2 or g in single) and g and not g & used:
                 groups.append(sorted(g))
                 used |= g
     else:
@@ -822,7 +824,7 @@ def _consolidate(rules: list[dict], base_ids: set[str], out: str, cm: dict, effo
             absorbed.append(g)
     groups = [g for g in groups if g not in absorbed]
     in_group = {i for g in groups for i in g} | {i for g in absorbed for i in g}
-    agreed = [("merge", g) for g in groups] + [("rewrite", [i]) for i, v in sorted(rew.items())
+    agreed = [("regroup" if union else "merge", g) for g in groups] + [("rewrite", [i]) for i, v in sorted(rew.items())
                                                 if v >= need and i not in in_group]
     for (a, b), v in sorted(con.items()):
         if v >= need:
@@ -835,8 +837,10 @@ def _consolidate(rules: list[dict], base_ids: set[str], out: str, cm: dict, effo
         return rules, changes
 
     def versions(op: str, g: list[str]) -> str:
-        vs = [d for dr in drafts for d in dr if d.get("op") == op and set(d.get("rules") or []) & set(g)]
-        return "\n".join(json.dumps(_entry(d) | {"rules": d.get("rules")}) for d in vs)
+        ops = ("merge", "regroup") if op == "regroup" else (op,)
+        vs = [d for dr in drafts for d in dr if d.get("op") in ops and set(d.get("rules") or []) & set(g)]
+        return "\n".join(json.dumps({"rules": d.get("rules"), "entries": d["entries"]} if d.get("entries")
+                                    else _entry(d) | {"rules": d.get("rules")}) for d in vs)
     text = "\n\n".join(f"Change {k}: {op} {', '.join(g)}\n{versions(op, g)}" for k, (op, g) in enumerate(agreed))
     if spend[0] >= max_cost:
         return rules, changes
@@ -851,7 +855,20 @@ def _consolidate(rules: list[dict], base_ids: set[str], out: str, cm: dict, effo
     add: list[dict] = []
     for i, (op, g) in enumerate(agreed):
         d = fin.get(i)
-        if not d or not d.get("expect"):
+        if not d:
+            continue
+        if op == "regroup":
+            ents = [e for e in d.get("entries") or [] if isinstance(e, dict) and e.get("expect")] \
+                or ([d | {"from": g}] if d.get("expect") else [])
+            why = _regroup_refusal(g, ents, act, shrink)
+            if why:
+                changes.append({"op": "consolidate-refused", "rules": g, "members": [], "concern": "", "why": why})
+                continue
+            new = _apply_regroup(rules, act, g, ents, out, used, base_ids, cm, today)
+            changes.append({"op": "consolidate-regroup", "rules": g, "new": new, "members": [], "concern": "",
+                            "words": [sum(_size(act[x]) for x in g), sum(map(_size, ents))]})
+            continue
+        if not d.get("expect"):
             continue
         if op == "rewrite":
             act[g[0]].update({kk: v for kk, v in _entry(d).items() if v is not None})
@@ -978,12 +995,204 @@ Rulebook:
 Agreed changes, with the drafts' versions:
 @CHANGES@
 
-Answer with one JSON block only, one object per agreed change:
+Answer with one JSON block only, one object per agreed change. A change may yield one entry or several
+(a regroup: the entries of the group redrawn as fewer or shorter ones); each new entry names in "from"
+the ids of the group it takes over, and every id of the group must be taken over by at least one:
 ```json
-[{"change": 0, "kind": "...", "when": "...", "expect": "...", "why": "...", "examples": ["..."], "paths": []}]
+[{"change": 0, "entries": [{"from": ["<id>", "<id>"], "kind": "...", "when": "...", "expect": "...", "why": "...",
+  "examples": ["..."], "paths": []}]}]
 ```"""
 
 SHRINK = 0.75  # a compress merge must have under this share of the words it replaces (prompt asks for 70%)
+
+
+# compress, entry by entry: the words of an over-grown book sit inside its entries (RETRY additions, menus of
+# remedies, exception clauses, sub-case lists), not between them. Each entry is rewritten shorter in place
+# (same id, version + 1); vet replays all its proven cases and puts back the original where one is lost.
+TRIM = """Below are entries of the LMCache review rulebook (LMCache is a KV-cache layer for LLM inference
+engines such as vLLM). An AI reviewer is given the "when", "expect" and "why" of EVERY entry in EVERY review;
+it never sees "examples". The book has grown one missed comment at a time and is far too long, which costs on
+every review and dilutes the reviewer's attention. Rewrite each entry below much SHORTER, so that a reviewer
+given it still raises every one of its proven cases.
+
+For each entry:
+1. Contract first. For each proven comment listed under the entry, write one line in "keeps": the clause of
+   "when" by which a reviewer recognizes that situation in a diff, and the ask of "expect" it must make. Use
+   the reviewers' own words to find the condition that decides it (e.g. "new types that only wrap or
+   re-derive what the shared component holds", where "duplicate types" lets a reviewer decide that a
+   wrapper is not a duplicate).
+2. Then write the shortest "when", "expect" and "why" that satisfy every "keeps" line. Each entry shows its
+   budget: aim at or under it ("why" at most 10 words).
+3. Cut, in this order: detail in "why"; alternative remedies (keep the one the reviewers asked for);
+   exception clauses; lists of synonyms or near-equal cases; repeated "flag ..." sentences; instructions on
+   how to review ("scan every added line", "do not wait to know the callers"), unless a "keeps" line needs
+   one; sub-cases no proven comment needs.
+4. Generalize where it shortens: a list of sub-cases may become the one kind of situation they share, as
+   long as each proven comment is still recognizable from it. That is the point: a shorter, more general
+   entry also catches the next instance nobody listed.
+5. Keep the project facts of a knowledge entry (which component holds what, where it lives) word for word.
+6. Never move a deciding condition into "examples": the reviewer does not see them.
+@FEEDBACK@
+Entries:
+@ENTRIES@
+
+Answer with one JSON block only, one object per entry you shortened (leave out an entry that cannot get
+shorter without losing a "keeps" line):
+```json
+[{"id": "<entry id>", "keeps": [{"comment": "<comment id>", "clause": "..."}], "when": "...", "expect": "...",
+  "why": "..."}]
+```"""
+
+TRIM_FEEDBACK = """
+Some entries below were shortened before, and vet put the original back because a reviewer given the short
+text missed a proven comment. For each, the failed text and what the rule check said on that comment are
+shown under "EARLIER TRY". Fix exactly that: if it did not apply, the "when" lost the situation; if it
+applied but found nothing violated, the "expect" lost the condition that comment needs. Keep the rest short.
+"""
+
+
+def trim_budget(r: dict) -> int:
+    """Words for when + expect of a trimmed entry: 70, plus 15 for each proven sample beyond the first."""
+    return 70 + 15 * max(0, len({t["target"] for t in r.get("tests") or [] if t.get("result") == "corrected"}) - 1)
+
+
+def _trim_entry_text(r: dict, cm: dict, fb: dict | None) -> str:
+    """One entry for TRIM: its text, budget, the proven comments in full and other sources briefly."""
+    proven = _uniq([c for t in r.get("tests") or [] if t.get("result") == "corrected" for c in t.get("comments") or []])
+    body = lambda c, n: " ".join(str((cm.get(c) or cm.get(cid_of(c)) or {}).get("body", "")).split())[:n]  # noqa: E731
+    who = lambda c: (cm.get(c) or cm.get(cid_of(c)) or {})  # noqa: E731
+    lines = [f"### {r['id']} ({r.get('kind')}; when+expect {len((str(r.get('when')) + ' ' + str(r.get('expect'))).split())}"
+             f" words, budget {trim_budget(r)})",
+             f"when: {r.get('when')}", f"expect: {r.get('expect')}", f"why: {r.get('why') or ''}",
+             f"examples (NOT shown to the reviewer): {'; '.join(r.get('examples') or [])}",
+             "proven comments (the reviewer must still raise each):"]
+    lines += [f"- [{c}] PR #{who(c).get('pr')} {who(c).get('author')}: {body(c, 1500)}" for c in proven] or ["- (none)"]
+    other = [e for e in r.get("evidence") or [] if norm(e) not in {norm(c) for c in proven}][:3]
+    if other:
+        lines.append("other source comments (not proven):")
+        lines += [f"- [{e}] PR #{who(e).get('pr')}: {body(e, 300)}" for e in other]
+    if fb:
+        lines.append(f"EARLIER TRY (put back by vet): when: {fb['text'].get('when')} | expect: {fb['text'].get('expect')}")
+        lines += [f"  lost [{x['comment']}]: {x.get('body', '')[:200]!r}; rule check: " + (
+            f"applies={x['check'].get('applies')}, violated={x['check'].get('violated')}: {x['check'].get('why')}"
+            if x.get("check") else "no verdict") for x in fb.get("lost") or []]
+    return "\n".join(lines)
+
+
+def trim(out: str, base: str, cfg: Config | None = None, effort: str = "high", max_cost: float = 3.0,
+         min_words: int = 100, batch: int = 9, only: set[str] | None = None, feedback: dict | None = None,
+         workers: int = 3) -> tuple[str, int]:
+    """Rewrite the long entries of rulebook `base` shorter, in place, as rulebook `out` (TRIM).
+
+    Args:
+        min_words: entries whose when + expect has more words are trimmed (unless `only` is given).
+        batch: entries per call; entries are batched by kind and paths, so related ones share a call.
+        only: trim exactly these ids (the repair step: those vet put back).
+        feedback: id -> {"text": the failed short text, "lost": [{comment, body, check}]} for `only`.
+
+    Returns:
+        (summary, number of entries trimmed).
+    """
+    cfg = cfg or Config()
+    _, cm = load_gold(cfg)
+    rules = [json.loads(l) for l in book_path(base).open() if l.strip()]
+    act = {r["id"]: r for r in rules if r.get("status", "active") == "active"}
+    wc = lambda r: len((str(r.get("when")) + " " + str(r.get("expect"))).split())  # noqa: E731
+    sel = [r for r in act.values() if (r["id"] in only if only is not None else wc(r) > min_words)]
+    sel.sort(key=lambda r: (r.get("kind") or "", ",".join(r.get("paths") or []), r["id"]))
+    batches = [sel[i:i + batch] for i in range(0, len(sel), batch)]
+    fb_text = TRIM_FEEDBACK if feedback else ""
+    note(f"trim {base}: {len(sel)} entries in {len(batches)} calls ({len(act)} active, {sum(map(_size, act.values()))} words)")
+
+    def once(b: list[dict]) -> tuple[object, float]:
+        ents = "\n\n".join(_trim_entry_text(r, cm, (feedback or {}).get(r["id"])) for r in b)
+        return _ask(TRIM.replace("@FEEDBACK@", fb_text).replace("@ENTRIES@", ents), effort, cfg)
+    res, cost = capped_map(once, batches, workers, max_cost, label=lambda b: f"trim {len(b)}")
+    today, n, changes = dt.date.today().isoformat(), 0, []
+    for part in res:
+        for d in part if isinstance(part, list) else []:
+            r = act.get(d.get("id")) if isinstance(d, dict) else None
+            if not r or not d.get("expect") or not d.get("when"):
+                continue
+            new = {"when": d["when"], "expect": d["expect"], "why": d.get("why") or ""}
+            if _size(new) >= _size(r):
+                changes.append({"op": "trim-refused", "rules": [r["id"]], "why": f"not shorter ({_size(new)} vs {_size(r)})"})
+                continue
+            r["history"] = list(r.get("history") or []) + [{"version": r.get("version", 1), "until": today, "by": out,
+                                                             "reason": "trim", **{k: r.get(k) for k in ("when", "expect", "why")}}]
+            words = [_size(r), _size(new)]
+            r.update(new)
+            r["version"] = r.get("version", 1) + 1
+            r["revised"] = {"date": today, "by": out, "reason": "trim"}
+            r["keeps"] = d.get("keeps") or []
+            n += 1
+            changes.append({"op": "trim", "rules": [r["id"]], "words": words,
+                            "budget": trim_budget(r), "keeps": len(r["keeps"])})
+    work = cfg.data / "distill" / out
+    work.mkdir(parents=True, exist_ok=True)
+    (work / "changes.json").write_text(json.dumps(changes, indent=1))
+    book_path(out).parent.mkdir(parents=True, exist_ok=True)
+    book_path(out).write_text("".join(json.dumps(r) + "\n" for r in rules))
+    write_meta(out, {"base": base, "kind": "compress", "seen": []})
+    a2 = [r for r in rules if r.get("status", "active") == "active"]
+    msg = (f"{n} of {len(sel)} entries trimmed; {len(a2)} entries, {sum(map(_size, a2))} words "
+           f"(from {sum(map(_size, act.values()))}); ${cost:.2f}")
+    return msg, n
+
+
+def _regroup_refusal(g: list[str], ents: list[dict], act: dict, shrink: float) -> str:
+    """Why a regroup of entries `g` into `ents` (each with "from": the ids of `g` it takes over) is refused,
+    or "" if it may be applied: every entry of `g` taken over, fewer words than `shrink` of `g`'s."""
+    if not ents:
+        return "no entry written"
+    taken = {x for e in ents for x in e.get("from") or []}
+    if set(g) - taken:
+        return f"not taken over by any new entry: {sorted(set(g) - taken)}"
+    old, new = sum(_size(act[x]) for x in g), sum(map(_size, ents))
+    if new >= old * shrink:
+        return f"not short enough ({new} words vs {old}, limit {shrink:.0%})"
+    return ""
+
+
+def _apply_regroup(rules: list[dict], act: dict, g: list[str], ents: list[dict], out: str, used: set[str],
+                   base_ids: set[str], cm: dict, today: str) -> list[str]:
+    """Replace entries `g` by the new entries `ents` (n -> m). Each new entry takes over the evidence and
+    proven cases of the entries in its "from" and links to them ("replaces"); all share "regroup" (the first
+    new id), so vet keeps or undoes the group as a whole. Each old entry is retired, replaced_by the first new
+    entry that took it over. Returns the new ids."""
+    ids, k = [], 0
+    for _ in ents:
+        k += 1
+        while f"{out}-{k:03d}" in used:
+            k += 1
+        ids.append(f"{out}-{k:03d}")
+        used.add(ids[-1])
+    gid = ids[0]
+    for rid, e in zip(ids, ents):
+        frm = [x for x in e.get("from") or [] if x in g]
+        olds = [act[x] for x in frm]
+        ev = _uniq([v for r in olds for v in r.get("evidence") or []])
+        kids = _uniq([m for r in olds for m in r.get("members") or [] if m not in g])
+        rep = _entry(e) | {"id": rid, "kind": e.get("kind") or "principle", "status": "active", "version": 1,
+                           "history": [], "evidence": ev, "concern": "regrouped", "regroup": gid,
+                           "replaces": [x for x in frm if x in base_ids],
+                           "replaces_new": [x for x in frm if x not in base_ids],
+                           "tests": [{**t, "from": r["id"]} for r in olds for t in r.get("tests") or []],
+                           "n_prs": len({cm[v]["pr"] for v in ev if v in cm}),
+                           "area": ",".join(sorted({cm[v].get("area") or "overall" for v in ev if v in cm}))}
+        if kids:
+            rep["members"] = kids
+        rules.append(rep)
+    for x in g:
+        r = act[x]
+        r["status"] = "retired"
+        r["retired"] = {"date": today, "by": out, "why": "regrouped", "regroup": gid,
+                        "replaced_by": next(i for i, e in zip(ids, ents) if x in (e.get("from") or []))}
+        r.pop("members", None)
+    for r in rules:
+        if r.get("principle") in g:
+            r["principle"] = next(i for i, e in zip(ids, ents) if r["principle"] in (e.get("from") or []))
+    return ids
 
 
 def _apply_merge(rules: list[dict], g: list[str], d: dict, out: str, cm: dict, base_ids: set[str]) -> str:
@@ -1050,12 +1259,16 @@ def _book_for_compress(rules: list[dict], cm: dict, record: dict, feedback: list
                           + (f" (the rule check said of the merged entry: applies={x['check'].get('applies')}, "
                              f"violated={x['check'].get('violated')}: {x['check'].get('why')})" if x.get("check") else "")
                           for x in f.get("lost") or [])
+              + ("".join(f"\n  The undone {f['op']} wrote {t['id']} (from {', '.join(t.get('from') or [])}): When "
+                         f"{t.get('when')}: {t.get('expect')}" for t in f.get("texts") or [])
+                 + "\n  A reviewer given it did not raise the lost comment (see the rule check's reason above)."
+                 if f.get("texts") else "")
               + (f"\n  The undone {f['op']} read: When {f['text'].get('when')}: {f['text'].get('expect')} "
                  f"(examples: {'; '.join(f['text'].get('examples') or [])}).\n  A reviewer given it did not raise "
                  f"the lost comment. If the rule check said it did not apply, the \"when\" must name that kind of "
                  f"situation; if it applied but found nothing violated, the \"expect\" dropped the condition that "
                  f"case needs (restore it from the original entry)."
-                 if f.get("text") else "")
+                 if f.get("text") and not f.get("texts") else "")
               for f in feedback]
     return "\n".join(out) + ("\n\nUndone earlier:\n" + "\n".join(undone) if undone else "")
 

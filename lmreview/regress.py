@@ -33,7 +33,7 @@ from .workspace import cached_pr, sample_workspace
 
 FIELDS = ("when", "expect", "examples", "paths", "status")
 EST_RUN = 1.6  # one review plus its judge, in dollars
-EST_RO = 0.3   # one rule-only run (-ro) plus its targeted judge (tool-less medium rule check: $0.1-0.25 in batch 4)
+EST_RO = 0.6   # one rule-only run (-ro) plus its rule check: ~$0.6 per sample with the full book (cx02, 2026-11-25)
 
 
 def run_tag(only: set[str] | None) -> str:

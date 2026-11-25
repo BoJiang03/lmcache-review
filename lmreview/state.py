@@ -653,6 +653,25 @@ def compress_step(max_cost: float | None = None, cfg: Config | None = None) -> s
         return f"candidate {name}: {msg}. Next: `lmreview vet`"
 
 
+def vet_verdict(name: str, rule: str, comment, cfg: Config, where: dict | None = None) -> dict | None:
+    """The rule check's verdict on entry `rule` in vet's runs of book `name` on `comment`'s sample: the run
+    that shows why it was missed (not applied, or applied with nothing violated) if any, else the last one."""
+    from .annotate import cid_of
+    if where is None:
+        from .score import load_gold
+        gss, _ = load_gold(cfg)
+        where = {int(x): k for k, sm in gss.items() for x in sm["gold_ids"]}
+    k = where.get(cid_of(comment) if not isinstance(comment, int) else comment)
+    if not k:
+        return None
+    vs = [v for d in sorted((cfg.data / "runs").glob(f"*+{name}@*"), key=lambda p: ("#r" in p.name, p.name))
+          if (f := d / f"{k[0]}-{k[1][:8]}.json").exists()
+          for v in json.loads(f.read_text()).get("verdicts") or [] if v.get("rule") == rule]
+    seen = next((v for v in vs if not (v.get("applies") and v.get("violated"))), vs[-1] if vs else None)
+    return {x: (str(seen.get(x))[:300] if x == "why" else seen.get(x)) for x in ("applies", "violated", "why")} \
+        if seen else None
+
+
 def compress_undone(name: str, parent_ids: set[str], cand: list[dict], J: dict,
                     cfg: Config) -> tuple[dict[str, list[str]], list[dict]]:
     """The groups of compress candidate `name` (a book whose parent has `parent_ids`) and the rows for those
@@ -665,32 +684,31 @@ def compress_undone(name: str, parent_ids: set[str], cand: list[dict], J: dict,
     where = {int(x): k for k, sm in gss.items() for x in sm["gold_ids"]}
 
     def check(t: str, e) -> dict | None:
-        """The rule check's verdict on merged entry `t` in vet's last run on comment `e`'s sample."""
-        k = where.get(cid_of(e) if not isinstance(e, int) else e)
-        if not k:
-            return None
-        vs = [v for d in sorted((cfg.data / "runs").glob(f"*+{name}@*"), key=lambda p: ("#r" in p.name, p.name))
-              if (f := d / f"{k[0]}-{k[1][:8]}.json").exists()
-              for v in json.loads(f.read_text()).get("verdicts") or [] if v.get("rule") == t]
-        # the run that shows why it was missed: not applied, or applied with nothing violated
-        seen = next((v for v in vs if not (v.get("applies") and v.get("violated"))), vs[-1] if vs else None)
-        return {x: (str(seen.get(x))[:300] if x == "why" else seen.get(x)) for x in ("applies", "violated", "why")} \
-            if seen else None
-    groups: dict[str, list[str]] = {}
+        return vet_verdict(name, t, e, cfg, where)
+
+    groups: dict[str, list[str]] = {}  # group key (a regroup's id, else the replacing entry) -> retired ids
     for r in cand:
-        t = (r.get("retired") or {}).get("replaced_by")
-        if r.get("status") == "retired" and t and (r.get("retired") or {}).get("by") == name:
+        ret = r.get("retired") or {}
+        t = ret.get("regroup") or ret.get("replaced_by")
+        if r.get("status") == "retired" and t and ret.get("by") == name:
             groups.setdefault(t, []).append(r["id"])
+    members = {t: [r["id"] for r in cand if r.get("regroup") == t] or [t] for t in groups}  # the new entries
     lost: dict[str, list[dict]] = {}
     for old, e in J["lost"]:
-        t = (by.get(old, {}).get("retired") or {}).get("replaced_by")
+        ret = by.get(old, {}).get("retired") or {}
+        t = ret.get("regroup") or ret.get("replaced_by")
         if t in groups:
             body = " ".join((gcm.get(cid_of(e)) or {}).get("body", "").split())[:160]
-            lost.setdefault(t, []).append({"entry": old, "comment": e, "body": body,
-                                           **({"check": ck} if (ck := check(t, e)) else {})})
-    rows = [{"group": sorted(groups[t] + ([t] if t in parent_ids else [])), "op": "absorb" if t in parent_ids else "merge",
+            ck = check(ret.get("replaced_by") or t, e)
+            lost.setdefault(t, []).append({"entry": old, "comment": e, "body": body, "by": ret.get("replaced_by"),
+                                           **({"check": ck} if ck else {})})
+    rows = [{"group": sorted(groups[t] + ([t] if t in parent_ids else [])),
+             "op": "absorb" if t in parent_ids else "regroup" if by.get(t, {}).get("regroup") else "merge",
              "into": t, "candidate": name, "lost": v, "date": _now()[:10],
-             **({"text": {k: by[t].get(k) for k in ("when", "expect", "examples")}} if t in by else {})}
+             **({"text": {k: by[t].get(k) for k in ("when", "expect", "examples")}} if t in by else {}),
+             **({"texts": [{"id": i, "from": by[i].get("replaces", []) + by[i].get("replaces_new", []),
+                            **{k: by[i].get(k) for k in ("when", "expect", "examples")}} for i in members[t]]}
+                if len(members[t]) > 1 else {})}
             for t, v in lost.items()]
     return groups, rows
 

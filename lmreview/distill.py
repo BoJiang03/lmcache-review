@@ -811,12 +811,15 @@ def _consolidate(rules: list[dict], base_ids: set[str], out: str, cm: dict, effo
     absorbed = []
     for g in groups:  # absorb: most drafts say one entry already covers the group: no new text
         votes = C.Counter({t: v for (ids, t), v in into.items() if set(ids) == set(g)})
-        if votes and votes.most_common(1)[0][1] >= need:
+        # union: an absorb needs most of the drafts that proposed this group, else it is merged (regroup)
+        need_a = (proposed[frozenset(g)] // 2 + 1) if union else need
+        if votes and votes.most_common(1)[0][1] >= need_a:
             t = votes.most_common(1)[0][0]
             if absorb_ok and not absorb_ok(t, [x for x in g if x != t]):
                 changes.append({"op": "consolidate-refused", "rules": g, "members": [], "concern": "",
                                 "why": f"absorb into {t}: it is older than an entry it would absorb"})
-                absorbed.append(g)
+                if not union:  # union: the group is still merged with a new text
+                    absorbed.append(g)
                 continue
             for x in g:
                 if x != t:
@@ -1358,7 +1361,9 @@ def compress(out: str, base: str, cfg: Config | None = None, effort: str = "high
     base_detail = _merge_detail(act, cm)
     forced, detail = None, base_detail
     if repair:
-        fbg = {frozenset(f["group"]): f for f in feedback if frozenset(f["group"]) not in blocked}
+        last = feedback[-1]["candidate"] if feedback else None  # repair the last candidate's undone groups
+        fbg = {frozenset(f["group"]): f for f in feedback
+               if f.get("candidate") == last and frozenset(f["group"]) not in blocked}
         forced = [sorted(g) for g in fbg if g <= set(act)]
         detail = lambda g: (base_detail(g) + "\nEARLIER TRY (undone by vet; fix exactly what it lost):\n"  # noqa: E731
                             + _book_for_compress([], cm, {}, [fbg[frozenset(g)]]).split("Undone earlier:\n", 1)[-1])

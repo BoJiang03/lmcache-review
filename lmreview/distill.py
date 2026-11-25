@@ -961,9 +961,9 @@ Changes:
   Generalizing means the entry also applies to situations none of the merged entries named: that is
   intended, as long as it is the same principle. Keep it at the lowest level that covers them all.
 A merged entry makes ONE core request in "expect". Entries that ask for different changes are not one
-principle, however close their topics: leave them apart. An entry marked PACKED that bundles different
-requests may be split: op "regroup" with that one entry in "rules" and an "entries" list of two or more
-entries, each with "from": [its id], each making one request (together no longer than the original).
+principle, however close their topics: leave them apart. An entry marked PACKED or TWO REQUESTS that bundles
+different requests may be split: op "regroup" with that one entry in "rules" and an "entries" list of two or more
+entries, each with "from": [its id], each making one request (together at most 30% longer than the original).
 Do not merge entries that ask for different or opposite changes because they share a topic (e.g.
 "shorten docstrings to the contract" and "explain tricky state changes in a docstring with a worked
 example"). Do not write an entry so broad that it fits any change: a reviewer must still recognize
@@ -1022,7 +1022,8 @@ For each change:
 3. One entry is the goal, making ONE core request. If the group's proven comments ask for different
    things, the group is redrawn as two (each names in "from" the ids it takes over): still fewer words
    than the group. Never pack several requests into one "expect". A one-entry change is a split of a
-   PACKED entry: two or more entries, each one request, together no longer than the original.
+   PACKED or TWO REQUESTS entry: two or more entries, each one request, together at most 30% longer than
+   the original. Each new entry must read clearly to an engineer who never saw the source PR.
 4. Keep the project facts of a knowledge entry (which component holds what, where it lives) word for word.
 5. Never move a deciding condition into "examples": the reviewer does not see them.
 
@@ -1072,6 +1073,9 @@ For each entry:
    judgment ("even if ...", "flag each", "check every ...") by the concrete signal the proven comment gives.
    PACKED: state the one kind of situation the listed sub-cases share, keeping each proven comment's
    concrete pattern as a short "e.g." clause; one request in "expect", not a list of asks.
+   UNCLEAR: rewrite so an engineer who knows the codebase but never saw the source PR can tell what
+   situation is meant and what to ask; replace the named phrase by the plain mechanism (it may cost words).
+   TWO REQUESTS: ignore here (the merge step splits such entries); keep both requests.
 @FEEDBACK@
 Entries:
 @ENTRIES@
@@ -1162,10 +1166,12 @@ def trim(out: str, base: str, cfg: Config | None = None, effort: str = "high", m
     rules = [json.loads(l) for l in book_path(base).open() if l.strip()]
     act = {r["id"]: r for r in rules if r.get("status", "active") == "active"}
     before = sum(map(_size, act.values()))  # the trim below updates these entries in place
+    screen_cost = screen_clarity(list(act.values()), effort, cfg) if only is None else 0.0
     wc = lambda r: len((str(r.get("when")) + " " + str(r.get("expect"))).split())  # noqa: E731
     sel = [r for r in act.values() if (r["id"] in only if only is not None else
                                        wc(r) > trim_budget(r) + over_budget if over_budget is not None else
-                                       wc(r) > min_words or bool(design_flags(r)))]
+                                       wc(r) > min_words or any(not f.startswith("TWO REQUESTS")
+                                                                for f in design_flags(r)))]
     sel.sort(key=lambda r: (r.get("kind") or "", ",".join(r.get("paths") or []), r["id"]))
     batches = [sel[i:i + batch] for i in range(0, len(sel), batch)]
     fb_text = TRIM_FEEDBACK if feedback else ""
@@ -1176,6 +1182,7 @@ def trim(out: str, base: str, cfg: Config | None = None, effort: str = "high", m
         why = '(write no "why": it is kept as it is)'
         return _ask(TRIM.replace("@WHY@", why).replace("@FEEDBACK@", fb_text).replace("@ENTRIES@", ents), effort, cfg)
     res, cost = capped_map(once, batches, workers, max_cost, label=lambda b: f"trim {len(b)}")
+    cost += screen_cost
     today, n, changes = dt.date.today().isoformat(), 0, []
     for part in res:
         for d in part if isinstance(part, list) else []:
@@ -1183,7 +1190,8 @@ def trim(out: str, base: str, cfg: Config | None = None, effort: str = "high", m
             if not r or not d.get("expect") or not d.get("when"):
                 continue
             new = {"when": d["when"], "expect": d["expect"]}  # "why" stays as written: a record, not shown
-            if _size(new) >= _size(r) and not (design_flags(r) and not design_flags(new)):
+            fixes = [f for f in design_flags(r) if not f.startswith("TWO REQUESTS")]  # trim does not split
+            if _size(new) >= _size(r) and not (fixes and not design_flags(new)):
                 changes.append({"op": "trim-refused", "rules": [r["id"]], "why": f"not shorter ({_size(new)} vs {_size(r)})"})
                 continue
             r["history"] = list(r.get("history") or []) + [{"version": r.get("version", 1), "until": today, "by": out,
@@ -1212,12 +1220,83 @@ OVERRIDE = re.compile(r"\b(even if (?:it|this|that|they)|even without|regardless
                       r"check every|always flag)\b", re.I)  # "even if release raises" (a technical condition) is not one
 
 
+CLARITY = """Below are entries of a rulebook an AI reviewer of LMCache pull requests is given. Each entry says
+when it applies and what the reviewer should ask for. Read each one as an engineer who knows the
+codebase but has NOT seen the pull request it was learned from.
+
+For each entry answer two questions:
+- unclear: can that engineer tell what situation in a diff it means and what to ask the author? Name
+  the phrase that cannot be understood without the source (e.g. "per-group passes", "the label"),
+  or "" when it is clear. Terse is fine; only flag what a reader cannot decode.
+- two_requests: does it ask for two or more things that are unrelated (a reader could agree with one
+  and not the other, e.g. "keep output order" and "run the groups concurrently")? Name them, or "".
+  Parts of one request (the fix and its test) are one request.
+
+Output only JSON: [{"id": "...", "unclear": "...", "two_requests": "..."}]
+
+@ENTRIES@"""
+
+_CLARITY: dict[str, list[str]] | None = None
+
+
+def _clarity_path() -> pathlib.Path:
+    return Config().data / "distill" / "clarity.json"
+
+
+def _text_key(r: dict) -> str:
+    import hashlib
+    return hashlib.sha1(f"{r.get('when', '')}\n{r.get('expect', '')}".encode()).hexdigest()[:16]
+
+
+def _clarity() -> dict[str, list[str]]:
+    global _CLARITY
+    if _CLARITY is None:
+        p = _clarity_path()
+        _CLARITY = json.loads(p.read_text()) if p.exists() else {}
+    return _CLARITY
+
+
+def screen_clarity(rules: list[dict], effort: str = "high", cfg: Config | None = None, max_cost: float = 1.0,
+                   batch: int = 25) -> float:
+    """Ask a model which active entries a reader without the source PR cannot follow (UNCLEAR) or that ask
+    for unrelated things at once (TWO REQUESTS). Results are cached by text in data/distill/clarity.json,
+    so each text is screened once; design_flags then reports them. Returns the cost."""
+    cfg = cfg or Config()
+    cache = _clarity()
+    todo = [r for r in rules if r.get("status", "active") == "active" and _text_key(r) not in cache]
+    if not todo:
+        return 0.0
+    batches = [todo[i:i + batch] for i in range(0, len(todo), batch)]
+
+    def once(b: list[dict]) -> tuple[object, float]:
+        ents = "\n\n".join(f"[{r['id']}]\nWHEN: {r.get('when', '')}\nEXPECT: {r.get('expect', '')}" for r in b)
+        return _ask(CLARITY.replace("@ENTRIES@", ents), effort, cfg)
+    res, cost = capped_map(once, batches, 3, max_cost, label=lambda b: f"clarity {len(b)}")
+    for b, part in zip(batches, res):
+        got = {d.get("id"): d for d in part if isinstance(d, dict)} if isinstance(part, list) else {}
+        for r in b:
+            if r["id"] not in got:
+                continue  # not answered (over the cap or dropped): screened next time
+            d, f = got[r["id"]], []
+            if str(d.get("unclear") or "").strip():
+                f.append(f"UNCLEAR: {str(d['unclear']).strip()}")
+            if str(d.get("two_requests") or "").strip():
+                f.append(f"TWO REQUESTS: {str(d['two_requests']).strip()}")
+            cache[_text_key(r)] = f
+    p = _clarity_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(cache, indent=1))
+    note(f"clarity screen: {len(todo)} entries, {sum(bool(cache.get(_text_key(r))) for r in todo)} flagged; ${cost:.2f}")
+    return cost
+
+
 def design_flags(r: dict) -> list[str]:
     """Where an entry's text goes against how entries are written (2026-11-25 read of v0029):
     OVERRIDE: a clause that overrides the reviewer's judgment ("even if ...", "flag each", "check every")
     instead of naming the concrete signal; PACKED: sub-cases listed one by one ("(a) ... (b) ...", five or
     more ";"-separated clauses) instead of one principle with short "e.g." clauses. A heuristic: the
-    trim prompt may keep a flagged text when the flag is wrong (an ordered layout, a knowledge fact)."""
+    trim prompt may keep a flagged text when the flag is wrong (an ordered layout, a knowledge fact).
+    Plus the model screen's UNCLEAR / TWO REQUESTS for this exact text, if it was screened."""
     out, text = [], f"{r.get('when', '')} {r.get('expect', '')}"
     if m := sorted({x.lower() for x in OVERRIDE.findall(text)}):
         out.append(f"OVERRIDE: {m}")
@@ -1225,7 +1304,7 @@ def design_flags(r: dict) -> list[str]:
         t = str(r.get(k) or "")
         if re.search(r"\(a\).*\(b\)", t) or t.count(";") >= 4:
             out.append(f"PACKED {k}: {t.count(';') + 1} clauses")
-    return out
+    return out + _clarity().get(_text_key(r), [])  # UNCLEAR / TWO REQUESTS, when screened (screen_clarity)
 
 
 def merge_budget(rs: list[dict]) -> int:
@@ -1251,8 +1330,8 @@ def _regroup_refusal(g: list[str], ents: list[dict], act: dict, shrink: float) -
     if set(g) - taken:
         return f"not taken over by any new entry: {sorted(set(g) - taken)}"
     old, new = sum(_size(act[x]) for x in g), sum(map(_size, ents))
-    if len(g) == 1 and len(ents) >= 2:  # a split of a packed entry: no longer than it, each entry unpacked
-        return (f"split not shorter ({new} words vs {old})" if new > old else
+    if len(g) == 1 and len(ents) >= 2:  # a split of a packed entry: at most 30% longer, each entry unpacked
+        return (f"split too long ({new} words vs {old}, limit 130%)" if new > old * 1.3 else
                 "split still packed" if any(design_flags(e) for e in ents) else "")
     if new >= old * shrink:
         return f"not short enough ({new} words vs {old}, limit {shrink:.0%})"
@@ -1406,8 +1485,9 @@ def compress(out: str, base: str, cfg: Config | None = None, effort: str = "high
     blocked = {g for g, k in times.items() if k >= 2}
     by = {r["id"]: r for r in rules}
     ok = lambda t, xs: all(_order(by[t]) >= _order(by[x]) for x in xs)  # noqa: E731
+    screened = screen_clarity(rules, effort, cfg) if not repair else 0.0  # before the book: it shows the flags
     book = _book_for_compress(rules, cm, record or {}, [f for f in feedback if frozenset(f["group"]) not in blocked])
-    spend = [0.0]
+    spend = [screened]
     note(f"compress {base} ({sum(r.get('status', 'active') == 'active' for r in rules)} entries, "
          f"{sum(_size(r) for r in rules if r.get('status', 'active') == 'active')} words; {n} drafts, every merge to vet)")
     act = {r["id"]: r for r in rules if r.get("status", "active") == "active"}

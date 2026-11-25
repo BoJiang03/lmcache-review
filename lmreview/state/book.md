@@ -1,8 +1,8 @@
-# Rulebook v0029
+# Rulebook v0032
 
-48 active entries, 2742 words (when + expect; the reviewer sees these, not why or examples). Generated from book.jsonl; do not edit.
+49 active entries, 2954 words (when + expect; the reviewer sees these, not why or examples). Generated from book.jsonl; do not edit.
 
-## Principle (39)
+## Principle (40)
 
 ### cx05k1-005
 
@@ -36,13 +36,13 @@
 
 ### cx07k1-002
 
-**When** A change adds tests, CI cases or benchmarks: a file for one backend or variant in a general-purpose folder; any tests of straightforward functions; CI cases running one path with different models.
+**When** A change adds tests, CI cases or benchmarks narrower than their place or overlapping existing ones: a file for one backend or variant in a general-purpose folder; tests of straightforward functions; CI cases running one path with different models.
 
-**Expect** Ask to fold the file into the existing general one, even if it measures something new, or remove it; keep tests of straightforward functions minimal, in their category's shared file; merge overlapping CI cases into one with the most demanding configuration.
+**Expect** Ask to fold them into the existing shared file or case (keeping the most demanding configuration) or remove them, and to keep tests of straightforward functions minimal.
 
 *Why (record only)*: Narrow or overlapping tests fragment folders and cost CI time.
 
-<sub>v2 · area ci-build,examples,overall · 3 comments from 3 PRs</sub>
+<sub>v3 · area ci-build,examples,overall · 3 comments from 3 PRs</sub>
 
 ### cx07k1-004
 
@@ -143,16 +143,6 @@
 *Why (record only)*: Trivial single-use helpers add indirection and spread one operation across places without adding reuse.
 
 <sub>v1 · area mp · 2 comments from 1 PRs</sub>
-
-### v0008c1-002
-
-**When** A reset, clear or teardown frees resources or drops state that in-flight work, possibly in other participants, may still hold.
-
-**Expect** Ask how it ensures quiescence: drain or reject work across all participants, or keep locked entries and return failure, never force-free them.
-
-*Why (record only)*: Freeing or forgetting state that active work still uses turns a reset during traffic into memory corruption or assertion failures instead of a clean failure.
-
-<sub>v3 · area vllm-integration · 1 comments from 1 PRs</sub>
 
 ### v0009c5-002
 
@@ -348,31 +338,31 @@
 
 **When** A function returns a tuple or record with a component that echoes a parameter or that no caller uses.
 
-**Expect** Ask, even without visible callers, to drop that component and update the return type and unpacking.
+**Expect** Ask to drop that component and update the return type and unpacking.
 
 *Why (record only)*: Echoed or unused return values widen the API and mislead readers into thinking the value is transformed.
 
-<sub>v5 · area gpu-connector · 1 comments from 1 PRs</sub>
+<sub>v6 · area gpu-connector · 1 comments from 1 PRs</sub>
 
 ### v0023c1-014
 
-**When** The review finds, or the diff fixes, a deterministic edge-case or error-path bug (boundary input, omitted optional argument, failure during cleanup) that no test in the diff forces.
+**When** A diff adds or fixes, or the review finds, a deterministic boundary or error-path defect that no test in the diff forces. Typical cases: a name, path or buffer built by adding to an input (suffix, prefix, header), so that a valid input can cross a system limit; cleanup in finally/except whose own call can raise; a branch relying on an optional argument that callers may omit.
 
-**Expect** Ask in the same review for a focused regression test that forces that exact condition and fails without the fix.
+**Expect** For each such defect, raise a separate point in the same review asking for a focused regression test. The test must force exactly that condition (valid input at the limit plus the addition; the cleanup call made to raise; the argument omitted) and must fail without the fix. Never report the bug or accept its fix without also asking for its test.
 
-*Why (record only)*: Edge-case and error-path bugs regress silently unless a test pins the exact triggering condition.
+*Why (record only)*: Edge-case and error-path fixes regress silently unless a test pins the exact triggering condition.
 
-<sub>v4 · area overall · 1 comments from 1 PRs</sub>
+<sub>v5 · area overall · 1 comments from 1 PRs</sub>
 
 ### v0024c1-002
 
 **When** A branch reads a public optional parameter whose default (0, None) is invalid there (division, shape), though validation or the reference requires it only for other branches.
 
-**Expect** Check every branch, not only validated ones. Ask to derive the value without that parameter, keeping reference parity, and for a test omitting it.
+**Expect** Ask to derive the value without that parameter, keeping reference parity, and for a test omitting it.
 
 *Why (record only)*: A documented default that works on the reference path becomes a crash on the new branch, which breaks parity for callers that follow the public contract.
 
-<sub>v3 · area overall,platform · 3 comments from 1 PRs</sub>
+<sub>v4 · area overall,platform · 3 comments from 1 PRs</sub>
 
 ### v0026c1-012
 
@@ -393,6 +383,26 @@
 *Why (record only)*: Long narration buries the one fact a reader needs and goes stale; the team repeatedly asks for it to be removed or reduced to one line.
 
 <sub>v2 · area ci-build,mp,vllm-integration · 8 comments from 2 PRs</sub>
+
+### v0031c1-002
+
+**When** A reset, clear, shutdown or teardown frees resources or drops state that in-flight work, possibly in other participants, may still hold.
+
+**Expect** Ask how it ensures quiescence: drain or reject work across all participants, or keep locked entries and return failure, and never force-free resources in use. If a drain bounded by a timeout ends with work still active, teardown must stay blocked or fail closed instead of logging and proceeding.
+
+*Why (record only)*: Freeing resources under running work corrupts or crashes in-flight transfers.
+
+<sub>v1 · area mp,vllm-integration · 2 comments from 2 PRs</sub>
+
+### v0032c1-001
+
+**When** Deferred, queued or retried work captures an entry, registration or handle, but later resolves its target again by a reusable key (ID, name, slot). This includes a fallback that does a fresh lookup when the capture found nothing.
+
+**Expect** Ask to bind the work to the captured entry or its generation. When that entry is missing or no longer current, the work must fail directly and run its failure cleanup (e.g. releasing held locks), never calling code that looks the key up again. Ask for a separate regression test for each such path. The test removes the entry and re-registers the same key before the work runs, then asserts the work fails without touching the replacement. A test of one path does not cover another.
+
+*Why (record only)*: A reused key can point to a replacement target, so stale work silently runs against the new registration with old events, handles or IDs. Only a test that re-registers inside the window proves that each path is bound.
+
+<sub>v1 · area mp · 3 comments from 1 PRs</sub>
 
 ## Knowledge (9)
 
@@ -448,13 +458,13 @@
 
 ### v0023c1-012
 
-**When** Any added line contains `native_storage_ops` (imports, string module paths, mock.patch targets).
+**When** An added line references `native_storage_ops` (import, string module path, mock.patch target).
 
-**Expect** `lmcache.native_storage_ops` no longer exists; its contents, such as Bitmap, live in `lmcache.lmcache_native`. Flag each occurrence, noting the ModuleNotFoundError at import, and suggest `from lmcache.lmcache_native import <name>` or the matching string path.
+**Expect** `lmcache.native_storage_ops` no longer exists; its contents, such as Bitmap, live in `lmcache.lmcache_native`. Note the ModuleNotFoundError at import and suggest `from lmcache.lmcache_native import <name>` or the matching string path.
 
 *Why (record only)*: A stale import of the removed native module breaks module load and every test that imports the module.
 
-<sub>v4 · area distributed · 2 comments from 1 PRs</sub>
+<sub>v5 · area distributed · 2 comments from 1 PRs</sub>
 
 ### v0026c1-004
 
@@ -486,7 +496,7 @@
 
 <sub>v2 · area core-other · 1 comments from 1 PRs</sub>
 
-## Retired (60)
+## Retired (62)
 
 - cx05k1-002: regrouped
 - cx05k1-004: regrouped
@@ -506,6 +516,7 @@
 - v0004c1-001: Comments must be self-contained, with no PR-local planning labels
 - v0006c1-004: Base types hold only inherent/used capabilities; others go in subclasses or opt-in interfaces
 - v0008c1-001: Atomic file writes via a temporary file and rename
+- v0008c1-002: Reset/clear must not free or discard state that in-flight work still holds
 - v0008c1-003: Regression test for reset/clear while work is active
 - v0009c5-005: no fallback path for a dependency that is always present where the code runs
 - v0009c5-006: extension guides state concrete steps and complete, grouped API signatures
@@ -548,3 +559,4 @@
 - v0026c1-010: dedicated enum or format value for a new kind of data
 - v0026c1-013: merge redundant overlapping CI or end-to-end test variants
 - v0027c1-001: Keep vendor/engine specifics out of the generic layer, in code and in its text
+- v0031c1-003: deferred work must stay bound to the registration it captured

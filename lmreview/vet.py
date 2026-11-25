@@ -33,7 +33,11 @@ unprotected.
 only the comments the cases ask about: a rule change shows in the rule check, so the full review is not
 replayed (about $0.8 per sample instead of $3.5). Runs are cached under data/runs/<reviewer>/,
 so an earlier A/B with the same reviewer names costs nothing here. Single runs are noisy, so each
-failing case gets one more run with NEW before it counts (`retry`).
+failing case gets one more run with NEW before it counts (`retry`), and then a sequential check
+decides every effect and side case from its counts over all runs on disk (runs.hits; repeats are
+#r<k> runs): an effect case works at NEW 2/2, or at >= 3/4 where the first two disagree; a side case is
+kept at NEW 1/1, 2/2 or >= 2/3, and LOST only when NEW misses it (0/2, or 1/3) and BASE matches it at
+least once in two runs. Undecided cases (cost cap) make the vet INCOMPLETE.
 
 Verdict, by what the next book takes: ALL KEPT if every entry with new evidence works on at least one
 of its comments, nothing regressed and every revision fixed its trigger; PARTLY KEPT if some changes
@@ -55,7 +59,7 @@ from .annotate import cid_of, norm
 from .settings import get
 from .state import book_path
 from .progress import note
-from .regress import EST_RO, EST_RUN, FIELDS, replay, run_tag
+from .regress import EST_RO, EST_RUN, FIELDS, cite_ids, replay, run_tag
 from .schema import cites as finding_rules
 
 SIDE_PER_ENTRY = int(get("vet", "side_per_entry"))  # side effects: source comments replayed per affected entry (`--all`: every one)
@@ -95,6 +99,47 @@ def lint(r: dict) -> list[str]:
     if nums:
         out.append(f"numbers in when/expect: {nums[:5]}")
     return out
+
+
+def effect_verdict(h: int, n: int) -> tuple[str, int]:
+    """An effect case from NEW's counts (matched with a citation in h of n runs).
+
+    Returns:
+        ("works" | "no" | "more", runs wanted): works at n/n with n >= 2 or >= 3/4; no at 0/2, or when
+        3/4 is out of reach; else "more" up to 2 runs, then 4.
+    """
+    if n < 2:
+        return "more", 2 if n else 1
+    if h == n:
+        return "works", n
+    if h == 0:
+        return "no", n
+    if n < 4:
+        return ("no", n) if h + 4 - n < 3 else ("more", 4)
+    return ("works" if 4 * h >= 3 * n else "no"), n
+
+
+def side_verdict(h: int, n: int) -> tuple[str, int]:
+    """A side case from NEW's counts.
+
+    Returns:
+        ("kept" | "miss" | "more", runs wanted): kept at 1/1, n/n or >= 2/3; miss at 0/2 or under 2/3
+        after 3 runs; else "more" up to 2 runs (after a miss), then 3.
+    """
+    if n == 0:
+        return "more", 1
+    if h == n or (n >= 3 and 3 * h >= 2 * n):
+        return "kept", n
+    if h == 0 and n >= 2:
+        return "miss", n
+    if n < 3:
+        return "more", n + 1 if h == 0 else 3
+    return "miss", n
+
+
+def base_verdict(h: int, n: int) -> tuple[str, int]:
+    """BASE on a side case NEW misses: ("hit" at >= 1 match, "miss" at 0/2, else "more", runs wanted)."""
+    return ("hit", n) if h else ("miss", n) if n >= 2 else ("more", 2)
 
 
 def vet(book: str, base: str | None = None, prompt: str | None = None, effort: str | None = None,
@@ -209,7 +254,11 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         return runs.run_dir(cfg, f"{prompt}+{b}@{effort}{suffix}" + run_tag(only), k)
     todo = [(book, t, k) for t in samples for k in range(1, reps + 1)
             if not any(run_dir(book, k).glob(f"{t.split('@')[0]}-{t.split('@')[1]}*.json"))]
-    est = len(todo) * (EST_RO if ruleonly else EST_RUN * (2 if suffix else 1))  # base runs: only where NEW misses a side case
+    per_run = EST_RO if ruleonly else EST_RUN * (2 if suffix else 1)
+    # the sequential check runs NEW a second time on every effect sample (more only where the runs disagree)
+    second = sorted({tgt(e) for _, e in effect} - {t for t in samples if any(
+        run_dir(book, 2).glob(f"{t.split('@')[0]}-{t.split('@')[1]}*.json"))}) if retry else []
+    est = (len(todo) + len(second)) * per_run  # base runs: only where NEW misses a side case
     flags = {i: f for i in sorted(touched) if (f := lint(N[i]))}
 
     L = [f"# Vet of {book} (from {base})", "",
@@ -219,8 +268,10 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
          f"evidence comments added: {len(effect)}; base entries replayed for side effects: {len(affected)} "
          f"({len(side)} comments{', all entries' if everything else ''}; {unproven} unproven source comments not "
          f"replayed); revision fixes to check: {len(fixes)}",
-         f"- {len(samples)} samples with the new book ({len(todo)} not cached yet, est ${est:.0f}; the old book only "
-         f"where the new one misses a side-effect comment), cap ${max_cost:.0f}", "",
+         f"- {len(samples)} samples with the new book ({len(todo)} not cached yet"
+         + (f", plus {len(second)} second runs of effect samples" if second else "")
+         + f", est ${est:.0f}; the old book only where the new one misses a side-effect comment; more runs where "
+         f"runs disagree), cap ${max_cost:.0f}", "",
          "## 1. Generality flags", ""]
     L += [f"- {i}: {'; '.join(f)}" for i, f in flags.items()] or ["- none"]
     L.append("")
@@ -299,6 +350,67 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
             Nw |= {key(r): r for r in rows_r if r["passed"] is not None}
             J = judge()
 
+    # sequential check: decide every effect and side case from its counts over all runs on disk
+    rv_of = lambda b: f"{prompt}+{b}@{effort}{suffix}" + run_tag(only)  # noqa: E731
+    by_new, by_old = {r["id"]: r for r in new_rules}, {r["id"]: r for r in old_rules}
+    counts: dict = {}  # (book, entry, comment) -> (hits, runs)
+
+    def cnt(b: str, i: str, e) -> tuple[int, int]:
+        cites = None if b == book and i in retired else cite_ids(by_new if b == book else by_old, i)
+        counts[(b, i, e)] = runs.hits(rv_of(b), tgt(e), e, cfg, cites)
+        return counts[(b, i, e)]
+
+    def decide() -> tuple[dict, dict]:
+        """Verdicts of the effect and side cases, and the runs still wanted: {(book, k): [case]}."""
+        v, want = {}, {}
+        for i, e in effect:
+            v[("e", i, e)] = x = effect_verdict(*cnt(book, i, e))
+            if x[0] == "more":
+                want.setdefault((book, x[1]), []).append((i, {"target": tgt(e), "with": w, "comments": [e]}))
+        for i, e in side:
+            v[("s", i, e)] = x = side_verdict(*cnt(book, i, e))
+            if x[0] == "more":
+                want.setdefault((book, x[1]), []).append((i, {"target": tgt(e), "with": w, "comments": [e]}))
+            elif x[0] == "miss":
+                v[("b", i, e)] = y = base_verdict(*cnt(base, i, e))
+                if y[0] == "more":
+                    want.setdefault((base, y[1]), []).append((i, {"target": tgt(e), "with": w, "comments": [e]}))
+        return v, want
+
+    c_s = 0.0
+    if retry:
+        V, want = decide()
+        for _ in range(4):  # effect runs go 1 -> 2 -> 4, side NEW 1 -> 2 -> 3, BASE 1 -> 2
+            left = max_cost - c_b - c_n - c_r - c_s
+            if not want or left <= 0:
+                break
+            note(f"[seq] {sum(map(len, want.values()))} case(s) need more runs: "
+                 + ", ".join(f"{b} to {k} runs: {len(cs)}" for (b, k), cs in sorted(want.items())))
+            for (b, k), cs in sorted(want.items()):
+                _, c = replay(b, cs, k, max(0.0, max_cost - c_b - c_n - c_r - c_s), cfg, suffix=suffix, only=only)
+                c_s += c
+            before = dict(counts)
+            V, want = decide()
+            if counts == before:  # nothing new could run (cost cap): the rest stays undecided
+                break
+        works = {i for i, e in effect if V[("e", i, e)][0] == "works"}
+        unknown = {i for i, e in effect if V[("e", i, e)][0] == "more"}
+        lost, kept, both_miss, s_which = [], 0, 0, []
+        for i, e in side:
+            x, y = V[("s", i, e)][0], V.get(("b", i, e), ("", 0))[0]
+            if x == "kept":
+                kept += 1
+            elif x == "more" or y == "more":
+                s_which.append((i, e, "new" if x == "more" else "base"))
+            elif y == "hit":
+                lost.append((i, e))
+            else:
+                both_miss += 1
+        J.update(works=works, unknown=unknown, no_effect=sorted({i for i, _ in effect} - works - unknown),
+                 lost=lost, kept=kept, both_miss=both_miss, s_unknown=len(s_which), s_which=s_which)
+        note(f"      sequential check (${c_s:.2f}): works {sorted(works)}, not working {J['no_effect']}, "
+             f"lost {len(lost)}, kept {kept}, undecided {len(unknown) + len(s_which)}")
+
     # 4. precision: a changed entry must not draw more refuted findings than the text it replaces did, on
     # the samples where its new text drew any (BASE runs only there)
     c_p, wide, p_rows = 0.0, {}, []
@@ -313,7 +425,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         note(f"[4/4] precision: {len({t for _, t in need_p})} samples with the old book {base} "
              f"(refuted findings citing changed entries)")
         _, c_p = replay(base, [(p, {"target": t, "with": w, "comments": []}) for p, t in need_p], 1,
-                        max(0.0, max_cost - c_b - c_n - c_r), cfg, suffix=suffix, only=only)
+                        max(0.0, max_cost - c_b - c_n - c_r - c_s), cfg, suffix=suffix, only=only)
     p_unknown = []
     for i in chg:
         if not flagged[i]:
@@ -335,20 +447,27 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         return {True: "hit", False: "miss", None: "not run"}[x]
 
     eff_lines, fair = [], 0
+    passed = lambda i, e: (Nw.get(ck(i, e), {}).get("passed") if not retry else  # noqa: E731
+                           {"works": True, "no": False}.get(effect_verdict(*counts[(book, i, e)])[0]))
     for i, e in effect:
         b, n = B.get(ck(i, e), {}), Nw.get(ck(i, e), {})
-        nc, ba = n.get("passed"), b.get("any")
-        res = ("not run" if nc is None else "corrected" if nc and ba is False else "both hit" if nc and ba
-               else "fires, base not run" if nc else "new finds it, no citation" if n.get("any") else "miss")
+        nc, ba = passed(i, e), b.get("any")
+        res = ("not run" if nc is None and not retry else "undecided" if nc is None else "corrected" if nc and ba is False
+               else "both hit" if nc and ba else "fires, base not run" if nc
+               else "new finds it, no citation" if n.get("any") else "miss")
+        if retry:
+            res += f" (NEW {counts[(book, i, e)][0]}/{counts[(book, i, e)][1]})"
         is_fair = i in O and bool(b.get("passed"))  # entry existed in base: a base hit citing it is fair
         fair += is_fair
-        eff_lines.append(f"- {i} #{tgt(e)} c{e} ({cm[e]['author']}): {res}; base {mark(ba)}"
+        rh, rn = runs.hits(meta["runs"], tgt(e), e, cfg) if ba is None and meta.get("runs") else (0, 0)
+        eff_lines.append(f"- {i} #{tgt(e)} c{e} ({cm[e]['author']}): {res}; base "
+                         + (f"not run (the round's reviewer {rh}/{rn})" if ba is None and rn else mark(ba))
                          + (" (base cites it: fair hit)" if is_fair else ""))
     today = dt.date.today().isoformat()
     tests: dict[str, list[dict]] = {}
     for i, e in effect:  # an effect comment was missed by the round's review: that miss is the control
-        b, n = B.get(ck(i, e), {}), Nw.get(ck(i, e), {})
-        if n.get("passed"):
+        b = B.get(ck(i, e), {})
+        if passed(i, e):
             tests.setdefault(i, []).append(
                 {"target": tgt(e), "control": f"{w}{suffix} on {base}" if b.get("any") is not None else "round miss",
                  "with": f"{prompt}+{book}@{effort}{suffix}", "result": "both-hit" if b.get("any") else "corrected",
@@ -374,9 +493,16 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
               f"new {Nw.get(fk(i, t), {}).get('invalid')}" for i, t in fixes] + [""]
     L += ["## 3. Side effects", "", f"kept {J['kept']}, lost {len(J['lost'])}, missed by both {J['both_miss']}, "
           f"not run {J['s_unknown']}"]
-    L += [f"- LOST {i}{' (retired)' if i in retired else ''} #{tgt(e)} c{e} ({cm[e]['author']}: "
+    def nb(i: str, e) -> str:
+        """NEW and BASE counts of a side case, when the sequential check ran."""
+        x, y = counts.get((book, i, e)), counts.get((base, i, e))
+        return (f"NEW {x[0]}/{x[1]}" + (f", BASE {y[0]}/{y[1]}" if y else "") + "; ") if x else ""
+    L += [f"- LOST {i}{' (retired)' if i in retired else ''} #{tgt(e)} c{e} ({nb(i, e)}{cm[e]['author']}: "
           f"{cm[e]['body'][:100]!r})" for i, e in J["lost"]]
-    L += [f"- NOT RUN ({side}) {i} #{tgt(e)} c{e}" for i, e, side in J.get("s_which") or []]
+    L += [f"- NOT RUN ({side}) {i} #{tgt(e)} c{e}" + (f" ({nb(i, e).rstrip('; ')})" if nb(i, e) else "")
+          for i, e, side in J.get("s_which") or []]
+    L += [f"- kept after disagreeing runs: {i} #{tgt(e)} c{e} ({nb(i, e).rstrip('; ')})" for i, e in side
+          if (x := counts.get((book, i, e))) and 0 < x[0] < x[1] and side_verdict(*x)[0] == "kept"]
     L += ["", "## 4. Precision (refuted findings citing a changed entry: new text vs the text it replaces)",
           f"margin {WIDE_MARGIN}; too wide: {J['too_wide'] or 'none'}"
           + (f"; not run: {J['p_unknown']}" if J["p_unknown"] else "")]
@@ -384,18 +510,18 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
           for i, nb, ob, k in p_rows]
     if out is not None:
         out.update(wide=wide, verdict=verdict, J=J, effect=effect, rows=list(Nw.values()), kept=_with_tests(_passing(new_rules, old_rules, O, J, rel), tests),
-                   cost=c_b + c_n + c_r + c_p, retired=retired)
+                   cost=c_b + c_n + c_r + c_s + c_p, retired=retired)
     if write:
         kept_book = _with_tests(_passing(new_rules, old_rules, O, J, rel), tests)
         book_path(write).write_text("".join(json.dumps(r) + "\n" for r in kept_book))
         write_meta(write, {**meta, "base": base, "vetted_from": book})  # keeps "seen" for the next distill
         L += ["", f"wrote rules/{write}.jsonl: {len(kept_book)} entries (failing changes dropped or reverted)"]
     unk = sum(runs.unknown_model(cfg, f"{prompt}+{b}@{effort}{suffix}" + run_tag(only), sorted(samples)) for b in (book, base))
-    L = L[:2] + [f"**{verdict}** · cost ${c_b + c_n + c_r + c_p:.2f}", ""] \
+    L = L[:2] + [f"**{verdict}** · cost ${c_b + c_n + c_r + c_s + c_p:.2f}", ""] \
         + ([f"- {unk} run(s) of unknown model (made before runs recorded their model)", ""] if unk else []) + L[2:]
     note(f"{verdict}: entries working {len(J['works'])}/{n_eff}, lost {len(J['lost'])}, "
          f"revisions not fixed {len(J['not_fixed'])}" + (f"; dropped or reverted: {', '.join(bad)}" if bad else "")
-         + f"; ${c_b + c_n + c_r + c_p:.2f}; report reports/vet_{book}.md",
+         + f"; ${c_b + c_n + c_r + c_s + c_p:.2f}; report reports/vet_{book}.md",
          {"ALL KEPT": "ok", "PARTLY KEPT": "ok", "NONE KEPT": "err"}.get(verdict, "warn"))
     (REPORTS / f"vet_{book}.md").write_text("\n".join(L) + "\n")
     return "\n".join(L)

@@ -29,6 +29,7 @@ OUT = pathlib.Path(__file__).resolve().parents[1] / "data" / "compress_exp"
 
 
 def state_hash() -> str:
+    """SHA-256 over every file under lmreview/state/: the experiment must leave it unchanged."""
     h = hashlib.sha256()
     for p in sorted(STATE.rglob("*")):
         if p.is_file():
@@ -58,11 +59,13 @@ llm.run = run
 
 
 def size(name: str) -> tuple[int, int]:
+    """(active entries, words) of rulebook `name`."""
     act = [r for r in load_rules(name) if r.get("status", "active") == "active"]
     return len(act), sum(map(_size, act))
 
 
 def draft_groups(text: str) -> list[list[str]]:
+    """The groups one compress draft proposed (merge, absorb or regroup)."""
     try:
         arr = llm.extract_json(text)
     except Exception:
@@ -85,6 +88,7 @@ def trim_feedback(cand_name: str, lost: list, cfg: Config) -> dict:
 
 
 def main() -> None:
+    """Run one experiment; see the module docstring."""
     ap = argparse.ArgumentParser()
     ap.add_argument("name")
     ap.add_argument("--base", default="v0027")

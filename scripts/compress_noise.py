@@ -25,6 +25,7 @@ from compress_exp import OUT, state_hash  # noqa: E402
 
 
 def main() -> None:
+    """Replay proven cases of an unchanged book twice; see the module docstring."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--book", default="v0027")
     ap.add_argument("--n", type=int, default=10)

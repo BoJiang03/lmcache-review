@@ -90,3 +90,23 @@
 {"time": "2026-11-24T21:29:22+00:00", "step": "distill", "name": "v0020c1", "parent": 19, "comments": 7, "not_rulable": 0, "summary": "rules/v0020c1.jsonl: 59 entries ({'principle': 55, 'knowledge': 4}) from 7 comments ({'learnable': 7}), $2.04"}
 {"time": "2026-11-24T21:32:41+00:00", "step": "promote", "version": 20, "parent": 19, "by": "vet", "from": "v0020c1"}
 {"time": "2026-11-24T21:32:41+00:00", "step": "vet", "name": "v0020c1", "verdict": "FAIL", "cost": 3.34, "version": 20, "resolved": 6, "failed": 0, "needs_human": 1}
+{"time": "2026-11-24T22:18:24+00:00", "step": "judge", "reviewer": "p8ac175c5+v0020@high-rc-ms", "runs": 6, "cost": 1.71, "covered": 2, "to_distill": 3, "resolved": 0, "no_gt": 1, "cited_helpful": 17, "cited_harmful": 3}
+{"time": "2026-11-24T22:19:33+00:00", "step": "distill", "name": "v0021c1", "parent": 20, "comments": 3, "not_rulable": 2, "summary": "rules/v0021c1.jsonl: 60 entries ({'principle': 56, 'knowledge': 4}) from 3 comments ({'learnable': 1, 'contested': 1, 'context': 1}), $0.83"}
+{"time": "2026-11-24T22:20:12+00:00", "step": "promote", "version": 21, "parent": 20, "by": "vet", "from": "v0021c1"}
+{"time": "2026-11-24T22:20:12+00:00", "step": "vet", "name": "v0021c1", "verdict": "PASS", "cost": 0.24, "version": 21, "resolved": 1, "failed": 0, "needs_human": 0}
+{"time": "2026-11-24T22:35:41+00:00", "step": "judge", "reviewer": "p8ac175c5+v0021@high-rc-ms", "runs": 3, "cost": 1.13, "covered": 2, "to_distill": 2, "resolved": 0, "no_gt": 0, "cited_helpful": 11, "cited_harmful": 1}
+{"time": "2026-11-24T22:36:47+00:00", "step": "distill", "name": "v0022c1", "parent": 21, "comments": 2, "not_rulable": 1, "summary": "rules/v0022c1.jsonl: 61 entries ({'principle': 57, 'knowledge': 4}) from 2 comments ({'not_issue': 1, 'learnable': 1}), $0.80"}
+{"time": "2026-11-24T22:37:11+00:00", "step": "promote", "version": 22, "parent": 21, "by": "vet", "from": "v0022c1"}
+{"time": "2026-11-24T22:37:11+00:00", "step": "vet", "name": "v0022c1", "verdict": "PASS", "cost": 0.26, "version": 22, "resolved": 1, "failed": 0, "needs_human": 0}
+{"time": "2026-11-24T23:14:15+00:00", "step": "judge", "reviewer": "p0eee5b79+v0022@high-rc-ms", "runs": 9, "cost": 5.77, "covered": 21, "to_distill": 19, "resolved": 0, "no_gt": 0, "cited_helpful": 46, "cited_harmful": 8}
+{"time": "2026-11-24T23:14:15+00:00", "step": "requeue", "comments": ["3277049751", "3391365872", "4549810293:0", "3503034766", "3586414315", "3557008798", "3768204044", "5143626923:3"]}
+{"time": "2026-11-24T23:25:30+00:00", "step": "distill", "name": "v0023c1", "parent": 22, "comments": 27, "not_rulable": 2, "summary": "rules/v0023c1.jsonl: 75 entries ({'principle': 67, 'knowledge': 8}) from 27 comments ({'learnable': 25, 'context': 1, 'rejected': 1}), $3.62"}
+{"time": "2026-11-24T23:25:35+00:00", "step": "vet", "name": "v0023c1", "verdict": "INCOMPLETE", "cost": 0.0}
+{"time": "2026-11-24T23:34:05+00:00", "step": "promote", "version": 23, "parent": 22, "by": "vet", "from": "v0023c1"}
+{"time": "2026-11-24T23:34:05+00:00", "step": "vet", "name": "v0023c1", "verdict": "FAIL", "cost": 8.6, "version": 23, "resolved": 13, "failed": 12, "needs_human": 0}
+{"time": "2026-11-24T23:41:10+00:00", "step": "distill", "name": "v0024c1", "parent": 23, "comments": 12, "not_rulable": 0, "summary": "rules/v0024c1.jsonl: 75 entries ({'principle': 67, 'knowledge': 8}) from 12 comments ({'learnable': 12}), $2.06"}
+{"time": "2026-11-24T23:46:24+00:00", "step": "promote", "version": 24, "parent": 23, "by": "vet", "from": "v0024c1"}
+{"time": "2026-11-24T23:46:24+00:00", "step": "vet", "name": "v0024c1", "verdict": "PASS", "cost": 4.62, "version": 24, "resolved": 4, "failed": 7, "needs_human": 1}
+{"time": "2026-11-24T23:51:21+00:00", "step": "distill", "name": "v0025c1", "parent": 24, "comments": 7, "not_rulable": 0, "summary": "rules/v0025c1.jsonl: 75 entries ({'principle': 67, 'knowledge': 8}) from 7 comments ({'learnable': 7}), $1.60"}
+{"time": "2026-11-24T23:52:36+00:00", "step": "promote", "version": 25, "parent": 24, "by": "vet", "from": "v0025c1"}
+{"time": "2026-11-24T23:52:36+00:00", "step": "vet", "name": "v0025c1", "verdict": "PASS", "cost": 1.1, "version": 25, "resolved": 6, "failed": 0, "needs_human": 1}

@@ -67,7 +67,7 @@ def draft_groups(text: str) -> list[list[str]]:
         arr = llm.extract_json(text)
     except Exception:
         return []
-    return [sorted(d.get("rules") or []) for d in arr or [] if isinstance(d, dict) and d.get("op") in ("merge", "absorb")]
+    return [sorted(d.get("rules") or []) for d in arr or [] if isinstance(d, dict) and d.get("op") in ("merge", "absorb", "regroup")]
 
 
 def trim_feedback(cand_name: str, lost: list, cfg: Config) -> dict:
@@ -97,6 +97,9 @@ def main() -> None:
     ap.add_argument("--over-budget", type=int, default=None, help="trim: entries this many words over trim_budget")
     ap.add_argument("--budget", default="", help="trim: BASE,PER words of trim_budget (default 70,15)")
     ap.add_argument("--no-why", action="store_true", help="trim: trimmed entries keep no why")
+    ap.add_argument("--feedback-from", default="", help="merge: comma-separated earlier merge experiments whose "
+                    "undone groups are shown (and blocked after two)")
+    ap.add_argument("--start", default="", help="the book to compress (default --base; sizes are reported vs --base)")
     ap.add_argument("--drafts", type=int, default=3, help="merge: number of COMPRESS drafts")
     ap.add_argument("--resume", action="store_true", help="try 1's candidate exists: vet it (cached runs are free)")
     ap.add_argument("--repair-from", default="", help="trim: start from an earlier trim experiment's final book and "
@@ -112,6 +115,7 @@ def main() -> None:
     effort = str(get("distill", "effort"))
     e0, w0 = size(a.base)
     cur, fb, tries, tfb = a.base, [], [], {}
+    cur = a.start or cur
     if a.repair_from:
         rp = json.loads((OUT / f"{a.repair_from}.json").read_text())
         cur, last = rp["final"], rp["tries"][-1]
@@ -121,6 +125,11 @@ def main() -> None:
             _, fb = compress_undone(last["candidate"], {r["id"] for r in load_rules(last["base"])},
                                     load_rules(last["candidate"]), {"lost": [tuple(x) for x in last["lost"]]}, cfg)
         e0, w0 = size(a.base)
+    for nm in [x for x in a.feedback_from.split(",") if x]:
+        for t in json.loads((OUT / f"{nm}.json").read_text())["tries"]:
+            if t.get("lost"):
+                fb += compress_undone(t["candidate"], {r["id"] for r in load_rules(t["base"])}, load_rules(t["candidate"]),
+                                      {"lost": [tuple(x) for x in t["lost"]]}, cfg)[1]
     for k in range(1, a.tries + 1):
         out = f"{a.name}k{k}"
         DRAFTS.clear()

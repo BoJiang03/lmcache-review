@@ -653,7 +653,9 @@ def compress_step(max_cost: float | None = None, cfg: Config | None = None, stag
             raise RuntimeError(f"candidate {candidate()['name']} is waiting: `lmreview vet` it or `lmreview discard`")
         name, parent, spent0 = candidate_name(), head(), llm.SPENT
         fb_all = compress_feedback()
-        last = next((x["candidate"] for x in reversed(fb_all) if x.get("stage", "merge") == stage), None)
+        p = STATE / "log.jsonl"  # the last candidate of this stage: a repair redoes only what vet undid there
+        last = next((x["name"] for x in reversed([json.loads(l) for l in p.open() if l.strip()] if p.exists() else [])
+                     if x.get("step") == "compress" and x.get("stage", "merge") == stage), None)
         fb_last = [x for x in fb_all if x.get("candidate") == last]
         if repair and not fb_last:
             return "nothing to repair"
@@ -664,7 +666,8 @@ def compress_step(max_cost: float | None = None, cfg: Config | None = None, stag
         try:
             if stage == "merge":
                 msg, k = compress(name, vname(parent), cfg, effort=effort, max_cost=max_cost, record=outcomes(),
-                                  feedback=fb_last if repair else [x for x in fb_all if x.get("group")],
+                                  feedback=[x for x in fb_all if x.get("group") and (not repair or x.get("candidate") != last)]
+                                  + (fb_last if repair else []),
                                   repair=repair, n=int(get("compress", "drafts")))
             else:
                 two = stage == "trim2"

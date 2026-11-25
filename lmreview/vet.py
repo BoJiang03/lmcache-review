@@ -323,7 +323,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         if nb > ob + WIDE_MARGIN:
             wide[i] = {"new": nb, "old": ob, "samples": flagged[i],
                        "findings": _refuted_findings(run_dir(book, 1), flagged[i], rel.get(i, {i}), cfg)}
-    J["too_wide"], J["p_unknown"] = sorted(wide), p_unknown
+    J["too_wide"], J["p_unknown"], J["wide"] = sorted(wide), p_unknown, wide
 
     def mark(x: bool | None) -> str:
         return {True: "hit", False: "miss", None: "not run"}[x]

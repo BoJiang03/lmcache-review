@@ -960,11 +960,7 @@ Changes:
   entry (which component holds what, where it lives) stay word for word.
   Generalizing means the entry also applies to situations none of the merged entries named: that is
   intended, as long as it is the same principle. Keep it at the lowest level that covers them all.
-A merged entry makes ONE core request in "expect". Entries that ask for different changes are not one
-principle, however close their topics: leave them apart. An entry marked PACKED or TWO REQUESTS that bundles
-different requests may be split: op "regroup" with that one entry in "rules" and an "entries" list of two or more
-entries, each with "from": [its id], each making one request (together at most 30% longer than the original).
-Do not merge entries that ask for different or opposite changes because they share a topic (e.g.
+Do not merge entries that ask for opposite changes because they share a topic (e.g.
 "shorten docstrings to the contract" and "explain tricky state changes in a docstring with a worked
 example"). Do not write an entry so broad that it fits any change: a reviewer must still recognize
 each proven case from the "when". Entries whose record shows refuted citations are already too wide;
@@ -992,7 +988,7 @@ Rulebook:
 
 Answer with one JSON block only, one object per change ([] if none):
 ```json
-[{"op": "merge|absorb|regroup", "rules": ["<id>", "<id>"], "into": "<absorb only>", "reason": "one line", "kind": "...",
+[{"op": "merge|absorb", "rules": ["<id>", "<id>"], "into": "<absorb only>", "reason": "one line", "kind": "...",
   "when": "...", "expect": "...", "why": "...", "examples": ["..."], "paths": []}]
 ```"""
 
@@ -1019,11 +1015,9 @@ For each change:
    "examples"). Do not list the entries' requests one by one. Aim at
    or under the change's budget for "when" + "expect" ("why" at most 10 words); a group whose total is not
    under 75% of the words it replaces is refused.
-3. One entry is the goal, making ONE core request. If the group's proven comments ask for different
-   things, the group is redrawn as two (each names in "from" the ids it takes over): still fewer words
-   than the group. Never pack several requests into one "expect". A one-entry change is a split of a
-   PACKED or TWO REQUESTS entry: two or more entries, each one request, together at most 30% longer than
-   the original. Each new entry must read clearly to an engineer who never saw the source PR.
+3. One entry is the goal. If the group's proven comments ask for different things, the group may be
+   redrawn as two (each names in "from" the ids it takes over): still fewer words than the group.
+   The entry must read clearly to an engineer who never saw the source PR.
 4. Keep the project facts of a knowledge entry (which component holds what, where it lives) word for word.
 5. Never move a deciding condition into "examples": the reviewer does not see them.
 
@@ -1072,10 +1066,9 @@ For each entry:
    layout is one request; a project fact may say to flag every occurrence). OVERRIDE: replace the clause that overrides the reviewer's
    judgment ("even if ...", "flag each", "check every ...") by the concrete signal the proven comment gives.
    PACKED: state the one kind of situation the listed sub-cases share, keeping each proven comment's
-   concrete pattern as a short "e.g." clause; one request in "expect", not a list of asks.
+   concrete pattern as a short "e.g." clause; "expect" states what they share, not a list of asks.
    UNCLEAR: rewrite so an engineer who knows the codebase but never saw the source PR can tell what
    situation is meant and what to ask; replace the named phrase by the plain mechanism (it may cost words).
-   TWO REQUESTS: ignore here (the merge step splits such entries); keep both requests.
 @FEEDBACK@
 Entries:
 @ENTRIES@
@@ -1170,8 +1163,7 @@ def trim(out: str, base: str, cfg: Config | None = None, effort: str = "high", m
     wc = lambda r: len((str(r.get("when")) + " " + str(r.get("expect"))).split())  # noqa: E731
     sel = [r for r in act.values() if (r["id"] in only if only is not None else
                                        wc(r) > trim_budget(r) + over_budget if over_budget is not None else
-                                       wc(r) > min_words or any(not f.startswith("TWO REQUESTS")
-                                                                for f in design_flags(r)))]
+                                       wc(r) > min_words or bool(design_flags(r)))]
     sel.sort(key=lambda r: (r.get("kind") or "", ",".join(r.get("paths") or []), r["id"]))
     batches = [sel[i:i + batch] for i in range(0, len(sel), batch)]
     fb_text = TRIM_FEEDBACK if feedback else ""
@@ -1190,8 +1182,7 @@ def trim(out: str, base: str, cfg: Config | None = None, effort: str = "high", m
             if not r or not d.get("expect") or not d.get("when"):
                 continue
             new = {"when": d["when"], "expect": d["expect"]}  # "why" stays as written: a record, not shown
-            fixes = [f for f in design_flags(r) if not f.startswith("TWO REQUESTS")]  # trim does not split
-            if _size(new) >= _size(r) and not (fixes and not design_flags(new)):
+            if _size(new) >= _size(r) and not (design_flags(r) and not design_flags(new)):
                 changes.append({"op": "trim-refused", "rules": [r["id"]], "why": f"not shorter ({_size(new)} vs {_size(r)})"})
                 continue
             r["history"] = list(r.get("history") or []) + [{"version": r.get("version", 1), "until": today, "by": out,
@@ -1224,15 +1215,11 @@ CLARITY = """Below are entries of a rulebook an AI reviewer of LMCache pull requ
 when it applies and what the reviewer should ask for. Read each one as an engineer who knows the
 codebase but has NOT seen the pull request it was learned from.
 
-For each entry answer two questions:
-- unclear: can that engineer tell what situation in a diff it means and what to ask the author? Name
-  the phrase that cannot be understood without the source (e.g. "per-group passes", "the label"),
-  or "" when it is clear. Terse is fine; only flag what a reader cannot decode.
-- two_requests: does it ask for two or more things that are unrelated (a reader could agree with one
-  and not the other, e.g. "keep output order" and "run the groups concurrently")? Name them, or "".
-  Parts of one request (the fix and its test) are one request.
+For each entry: can that engineer tell what situation in a diff it means and what to ask the author?
+Name the phrase that cannot be understood without the source (e.g. "per-group passes", "the label"),
+or "" when it is clear. Terse is fine; only flag what a reader cannot decode.
 
-Output only JSON: [{"id": "...", "unclear": "...", "two_requests": "..."}]
+Output only JSON: [{"id": "...", "unclear": "..."}]
 
 @ENTRIES@"""
 
@@ -1258,8 +1245,8 @@ def _clarity() -> dict[str, list[str]]:
 
 def screen_clarity(rules: list[dict], effort: str = "high", cfg: Config | None = None, max_cost: float = 1.0,
                    batch: int = 25) -> float:
-    """Ask a model which active entries a reader without the source PR cannot follow (UNCLEAR) or that ask
-    for unrelated things at once (TWO REQUESTS). Results are cached by text in data/distill/clarity.json,
+    """Ask a model which active entries a reader without the source PR cannot follow (UNCLEAR). Rules
+    are written to be read by people too: precision is left to their feedback after launch. Results are cached by text in data/distill/clarity.json,
     so each text is screened once; design_flags then reports them. Returns the cost."""
     cfg = cfg or Config()
     cache = _clarity()
@@ -1280,8 +1267,6 @@ def screen_clarity(rules: list[dict], effort: str = "high", cfg: Config | None =
             d, f = got[r["id"]], []
             if str(d.get("unclear") or "").strip():
                 f.append(f"UNCLEAR: {str(d['unclear']).strip()}")
-            if str(d.get("two_requests") or "").strip():
-                f.append(f"TWO REQUESTS: {str(d['two_requests']).strip()}")
             cache[_text_key(r)] = f
     p = _clarity_path()
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -1296,7 +1281,7 @@ def design_flags(r: dict) -> list[str]:
     instead of naming the concrete signal; PACKED: sub-cases listed one by one ("(a) ... (b) ...", five or
     more ";"-separated clauses) instead of one principle with short "e.g." clauses. A heuristic: the
     trim prompt may keep a flagged text when the flag is wrong (an ordered layout, a knowledge fact).
-    Plus the model screen's UNCLEAR / TWO REQUESTS for this exact text, if it was screened."""
+    Plus the model screen's UNCLEAR for this exact text, if it was screened."""
     out, text = [], f"{r.get('when', '')} {r.get('expect', '')}"
     if m := sorted({x.lower() for x in OVERRIDE.findall(text)}):
         out.append(f"OVERRIDE: {m}")
@@ -1304,7 +1289,7 @@ def design_flags(r: dict) -> list[str]:
         t = str(r.get(k) or "")
         if re.search(r"\(a\).*\(b\)", t) or t.count(";") >= 4:
             out.append(f"PACKED {k}: {t.count(';') + 1} clauses")
-    return out + _clarity().get(_text_key(r), [])  # UNCLEAR / TWO REQUESTS, when screened (screen_clarity)
+    return out + [f for f in _clarity().get(_text_key(r), []) if f.startswith("UNCLEAR")]  # when screened
 
 
 def merge_budget(rs: list[dict]) -> int:
@@ -1330,9 +1315,6 @@ def _regroup_refusal(g: list[str], ents: list[dict], act: dict, shrink: float) -
     if set(g) - taken:
         return f"not taken over by any new entry: {sorted(set(g) - taken)}"
     old, new = sum(_size(act[x]) for x in g), sum(map(_size, ents))
-    if len(g) == 1 and len(ents) >= 2:  # a split of a packed entry: at most 30% longer, each entry unpacked
-        return (f"split too long ({new} words vs {old}, limit 130%)" if new > old * 1.3 else
-                "split still packed" if any(design_flags(e) for e in ents) else "")
     if new >= old * shrink:
         return f"not short enough ({new} words vs {old}, limit {shrink:.0%})"
     return ""

@@ -13,6 +13,8 @@ shell = false        # -sh: the agents also get a sandboxed shell (needs bubblew
 # apply to a PR total more words than this, a first call picks the ones worth checking from their
 # "when" lines (rulepick.md), and only those are checked in full.
 rulecheck_stage_words = 6000
+rc_merge = false     # -rc: false lists the main review and rule-check findings side by side; true runs one more
+                     # merge agent over them (~$0.4 per PR at high; off since 2026-11-25 for cost)
 rulecheck_effort = "medium"  # the tool-less rule check (2026-11-24 pilot: same verdicts as high on 14 samples, all
                              # new rules still fire on their source PRs, ~18% cheaper)
 

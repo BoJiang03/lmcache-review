@@ -297,7 +297,7 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
         if r["findings"] is not None:
             r["findings"] = [{**f, "support": 1} for f in r["findings"]]
         return {**r, **meta}
-    e = ensemble(once, n, side_by_side if ms else merge, ok=lambda x: x["findings"] is not None,
+    e = ensemble(once, n, side_by_side if ms or not prompt_params(version)["rc_merge"] else merge, ok=lambda x: x["findings"] is not None,
                  extra=[rulecheck] if rc else [])
     if n == 1 and not rc:
         return {**e.result, **meta}

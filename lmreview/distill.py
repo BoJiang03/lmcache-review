@@ -1036,7 +1036,7 @@ For each entry:
    re-derive what the shared component holds", where "duplicate types" lets a reviewer decide that a
    wrapper is not a duplicate).
 2. Then write the shortest "when", "expect" and "why" that satisfy every "keeps" line. Each entry shows its
-   budget: aim at or under it ("why" at most 10 words).
+   budget: aim at or under it @WHY@.
 3. Cut, in this order: detail in "why"; alternative remedies (keep the one the reviewers asked for);
    exception clauses; lists of synonyms or near-equal cases; repeated "flag ..." sentences; instructions on
    how to review ("scan every added line", "do not wait to know the callers"), unless a "keeps" line needs
@@ -1065,9 +1065,15 @@ applied but found nothing violated, the "expect" lost the condition that comment
 """
 
 
+TRIM_BASE, TRIM_PER = 70, 15  # trim_budget: words for one proven sample, and for each further one
+TRIM_WHY = True  # False: trimmed entries keep no "why" (the reviewer is shown when + expect only)
+
+
 def trim_budget(r: dict) -> int:
-    """Words for when + expect of a trimmed entry: 70, plus 15 for each proven sample beyond the first."""
-    return 70 + 15 * max(0, len({t["target"] for t in r.get("tests") or [] if t.get("result") == "corrected"}) - 1)
+    """Words for when + expect of a trimmed entry: TRIM_BASE, plus TRIM_PER for each proven sample beyond the
+    first."""
+    n = len({t["target"] for t in r.get("tests") or [] if t.get("result") == "corrected"})
+    return TRIM_BASE + TRIM_PER * max(0, n - 1)
 
 
 def _trim_entry_text(r: dict, cm: dict, fb: dict | None) -> str:
@@ -1095,13 +1101,15 @@ def _trim_entry_text(r: dict, cm: dict, fb: dict | None) -> str:
 
 def trim(out: str, base: str, cfg: Config | None = None, effort: str = "high", max_cost: float = 3.0,
          min_words: int = 100, batch: int = 9, only: set[str] | None = None, feedback: dict | None = None,
-         workers: int = 3) -> tuple[str, int]:
+         workers: int = 3, over_budget: int | None = None) -> tuple[str, int]:
     """Rewrite the long entries of rulebook `base` shorter, in place, as rulebook `out` (TRIM).
 
     Args:
         min_words: entries whose when + expect has more words are trimmed (unless `only` is given).
         batch: entries per call; entries are batched by kind and paths, so related ones share a call.
         only: trim exactly these ids (the repair step: those vet put back).
+        over_budget: instead of `min_words`, trim the entries whose when + expect is more than this many
+            words over their trim_budget (a second pass over a trimmed and merged book).
         feedback: id -> {"text": the failed short text, "lost": [{comment, body, check}]} for `only`.
 
     Returns:
@@ -1112,7 +1120,9 @@ def trim(out: str, base: str, cfg: Config | None = None, effort: str = "high", m
     rules = [json.loads(l) for l in book_path(base).open() if l.strip()]
     act = {r["id"]: r for r in rules if r.get("status", "active") == "active"}
     wc = lambda r: len((str(r.get("when")) + " " + str(r.get("expect"))).split())  # noqa: E731
-    sel = [r for r in act.values() if (r["id"] in only if only is not None else wc(r) > min_words)]
+    sel = [r for r in act.values() if (r["id"] in only if only is not None else
+                                       wc(r) > trim_budget(r) + over_budget if over_budget is not None else
+                                       wc(r) > min_words)]
     sel.sort(key=lambda r: (r.get("kind") or "", ",".join(r.get("paths") or []), r["id"]))
     batches = [sel[i:i + batch] for i in range(0, len(sel), batch)]
     fb_text = TRIM_FEEDBACK if feedback else ""
@@ -1120,7 +1130,8 @@ def trim(out: str, base: str, cfg: Config | None = None, effort: str = "high", m
 
     def once(b: list[dict]) -> tuple[object, float]:
         ents = "\n\n".join(_trim_entry_text(r, cm, (feedback or {}).get(r["id"])) for r in b)
-        return _ask(TRIM.replace("@FEEDBACK@", fb_text).replace("@ENTRIES@", ents), effort, cfg)
+        why = '("why" at most 10 words)' if TRIM_WHY else '(leave "why" empty)'
+        return _ask(TRIM.replace("@WHY@", why).replace("@FEEDBACK@", fb_text).replace("@ENTRIES@", ents), effort, cfg)
     res, cost = capped_map(once, batches, workers, max_cost, label=lambda b: f"trim {len(b)}")
     today, n, changes = dt.date.today().isoformat(), 0, []
     for part in res:
@@ -1128,7 +1139,7 @@ def trim(out: str, base: str, cfg: Config | None = None, effort: str = "high", m
             r = act.get(d.get("id")) if isinstance(d, dict) else None
             if not r or not d.get("expect") or not d.get("when"):
                 continue
-            new = {"when": d["when"], "expect": d["expect"], "why": d.get("why") or ""}
+            new = {"when": d["when"], "expect": d["expect"], "why": (d.get("why") or "") if TRIM_WHY else ""}
             if _size(new) >= _size(r):
                 changes.append({"op": "trim-refused", "rules": [r["id"]], "why": f"not shorter ({_size(new)} vs {_size(r)})"})
                 continue

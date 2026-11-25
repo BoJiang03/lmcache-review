@@ -94,6 +94,9 @@ def main() -> None:
     ap.add_argument("--total", type=float, default=15.0, help="cap for the whole experiment (all tries)")
     ap.add_argument("--mode", choices=["merge", "trim"], default="merge")
     ap.add_argument("--min-words", type=int, default=100, help="trim: entries whose when+expect is longer")
+    ap.add_argument("--over-budget", type=int, default=None, help="trim: entries this many words over trim_budget")
+    ap.add_argument("--budget", default="", help="trim: BASE,PER words of trim_budget (default 70,15)")
+    ap.add_argument("--no-why", action="store_true", help="trim: trimmed entries keep no why")
     ap.add_argument("--resume", action="store_true", help="try 1's candidate exists: vet it (cached runs are free)")
     ap.add_argument("--repair-from", default="", help="trim: start from an earlier trim experiment's final book and "
                     "repair only the entries its vet put back, with the rule check's reasons")
@@ -101,6 +104,10 @@ def main() -> None:
     a = ap.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
     cfg, h0, t0 = Config(), state_hash(), time.time()
+    from lmreview import distill
+    if a.budget:
+        distill.TRIM_BASE, distill.TRIM_PER = (int(x) for x in a.budget.split(","))
+    distill.TRIM_WHY = not a.no_why
     effort = str(get("distill", "effort"))
     e0, w0 = size(a.base)
     cur, fb, tries, tfb = a.base, [], [], {}
@@ -133,7 +140,8 @@ def main() -> None:
         elif a.mode == "trim":
             fbt = {i: x for i, x in tfb.items()}
             msg, retired = trim(out, cur, cfg, effort=effort, max_cost=min(a.compress_cost, left),
-                                min_words=a.min_words, only=set(fbt) if fbt else None, feedback=fbt or None)
+                                min_words=a.min_words, only=set(fbt) if fbt else None, feedback=fbt or None,
+                                over_budget=a.over_budget)
         else:
             msg, retired = compress(out, cur, cfg, effort=effort, max_cost=min(a.compress_cost, left), record=outcomes(),
                                     feedback=fb, repair=bool(a.repair_from) and k == 1)

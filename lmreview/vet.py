@@ -162,17 +162,19 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     def has_new(t: str) -> bool:
         return any((cfg.data / "runs").glob(f"{prompt}+{book}@{effort}{suffix}*/{t.replace('@', '-')}*.json"))
     side = []
+    # a trimmed entry (rewritten shorter, same id) must keep everything it did, as a replaced one must
+    full = set(retired) | {i for i in revised if (N[i].get("revised") or {}).get("reason") == "trim"}
     for i in affected:
         cs = [e for e in sorted(old_ev[i], key=str) if e in where and (i, e) not in eff_set]
         cs.sort(key=lambda e: (tgt(e) not in have, not has_new(tgt(e))))
         # a retired (replaced) entry: the comments it was proven to correct (its "corrected" tests), since
         # the replacement must keep what it did; with no such record, every source comment
         # (a test may be on another PR than the entry's sources: take every proven comment in the gold set)
-        pr = [e for e in sorted(_proven(O[i]), key=str) if e in where and (i, e) not in eff_set] if i in retired else []
+        pr = [e for e in sorted(_proven(O[i]), key=str) if e in where and (i, e) not in eff_set] if i in full else []
         if pr and not everything:
             side += [(i, e) for e in pr]
         else:
-            side += [(i, e) for e in (cs if everything or i in retired else cs[:SIDE_PER_ENTRY])]
+            side += [(i, e) for e in (cs if everything or i in full else cs[:SIDE_PER_ENTRY])]
         have |= {tgt(e) for e in cs[:SIDE_PER_ENTRY]}
     fixes = list(dict.fromkeys((i, x["target"]) for i in revised
                                for x in (N[i].get("revised") or {}).get("signals") or []))
@@ -361,8 +363,12 @@ def _passing(new_rules: list[dict], old_rules: list[dict], O: dict, J: dict, rel
     back = {i for i in J["no_effect"] if i in O}  # reverted alone: its links did not cause the miss
     drop = {i for i in J["no_effect"] if i not in O}
     drop |= {x for i in lost for x in rel.get(i, set()) if x not in old_all}
+    # a regroup (n -> m) is kept or undone whole: one dropped entry drops the others of its group
+    gids = {r["regroup"] for r in new_rules if r["id"] in drop and r.get("regroup")}
+    drop |= {r["id"] for r in new_rules if r.get("regroup") in gids and r["id"] not in old_all}
     # a dropped replacement gives back every entry it replaced, not only the one that lost a comment
-    lost |= {r["id"] for r in new_rules if (r.get("retired") or {}).get("replaced_by") in drop}
+    lost |= {r["id"] for r in new_rules if (r.get("retired") or {}).get("replaced_by") in drop
+             or ((r.get("retired") or {}).get("regroup") in gids and r["id"] in old_all)}
     out = []
     for r in new_rules:
         if r["id"] in drop:

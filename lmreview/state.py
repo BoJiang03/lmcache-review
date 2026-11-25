@@ -202,6 +202,8 @@ def prompt_id(save: bool = False) -> str:
     texts = {"": (PROMPTS / "reviewer.md").read_text(), **{k: (PROMPTS / f"{k}.md").read_text() for k in PARTS}}
     # the staging threshold and the rule check's effort change its verdicts, so they are part of the name too
     stage = f"\0stage={get('review', 'rulecheck_stage_words')}\0rce={get('review', 'rulecheck_effort')}"
+    if not get("review", "rc_merge"):  # only when off, so ids named before the setting stay the same
+        stage += "\0rc_merge=false"
     pid = "p" + hashlib.sha256(("\0".join(texts.values()) + stage).encode()).hexdigest()[:8]
     files = {(f"{pid}.{k}.md" if k else f"{pid}.md"): text for k, text in texts.items()}
     files[f"{pid}.params.json"] = json.dumps(_params(), sort_keys=True) + "\n"
@@ -215,7 +217,8 @@ def prompt_id(save: bool = False) -> str:
     return pid
 
 
-PARAMS = ("rulecheck_effort", "rulecheck_stage_words")  # [review] settings hashed into the prompt id
+PARAMS = ("rulecheck_effort", "rulecheck_stage_words", "rc_merge")  # [review] settings hashed into the prompt id
+LEGACY_PARAMS = {"rc_merge": True}  # how ids saved before a setting existed ran
 
 
 def _params() -> dict:
@@ -235,7 +238,7 @@ def prompt_params(version: str) -> dict:
         {setting: value} for every name in PARAMS.
     """
     p = STATE / "prompts" / f"{version}.params.json"
-    return {**_params(), **json.loads(p.read_text())} if p.exists() else _params()
+    return {**_params(), **LEGACY_PARAMS, **json.loads(p.read_text())} if p.exists() else _params()
 
 
 def part_path(version: str, part: str) -> pathlib.Path:

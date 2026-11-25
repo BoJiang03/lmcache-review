@@ -130,6 +130,30 @@ def version_meta(n: int) -> dict:
     return json.loads(p.read_text()) if p.exists() else {}
 
 
+def book_markdown(rules: list[dict], name: str) -> str:
+    """A readable view of a rulebook for people (book.jsonl stays the source): active entries by kind,
+    each with when / expect / why, then one line per retired entry."""
+    act = [r for r in rules if r.get("status", "active") == "active"]
+    words = sum(len(f"{r.get('when', '')} {r.get('expect', '')}".split()) for r in act)
+    L = [f"# Rulebook {name}", "", f"{len(act)} active entries, {words} words (when + expect; the reviewer sees "
+         "these, not why or examples). Generated from book.jsonl; do not edit.", ""]
+    for kind in ("principle", "knowledge"):
+        ks = sorted((r for r in act if r.get("kind", "principle") == kind), key=lambda r: r["id"])
+        if ks:
+            L += [f"## {kind.capitalize()} ({len(ks)})", ""]
+        for r in ks:
+            L += [f"### {r['id']}", "", f"**When** {r.get('when', '')}", "", f"**Expect** {r.get('expect', '')}", ""]
+            if r.get("why"):
+                L += [f"*Why (record only)*: {r['why']}", ""]
+            L += [f"<sub>v{r.get('version', 1)} · area {r.get('area') or 'overall'} · "
+                  f"{len(r.get('evidence') or [])} comments from {r.get('n_prs', 0)} PRs</sub>", ""]
+    ret = [r for r in rules if r.get("status") == "retired"]
+    if ret:
+        L += [f"## Retired ({len(ret)})", ""] + [f"- {r['id']}: {r.get('concern') or r.get('when', '')[:100]}"
+                                                for r in sorted(ret, key=lambda r: r["id"])]
+    return "\n".join(L) + "\n"
+
+
 def new_version(rules: list[dict], parent: int | None, **meta: object) -> int:
     """Write `rules` as the next version and make it the book in use. Returns its number."""
     n = max([int(p.stem[1:]) for p in (STATE / "history").glob("v*.jsonl")] or [0]) + 1
@@ -138,6 +162,7 @@ def new_version(rules: list[dict], parent: int | None, **meta: object) -> int:
     _write(_meta(STATE / "history" / f"{vname(n)}.jsonl"), json.dumps({"version": n, "parent": parent, "date": _now(),
                                                                 "settings": made_with, **meta}, indent=1) + "\n")
     _write(STATE / "book.jsonl", _jsonl(rules))
+    _write(STATE / "book.md", book_markdown(rules, vname(n)))
     _write(STATE / "HEAD.json", json.dumps({"version": n, "updated": _now()}, indent=1) + "\n")
     log("promote", version=n, parent=parent, **{k: v for k, v in meta.items() if k in ("by", "from")})
     return n

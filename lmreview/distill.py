@@ -1161,6 +1161,7 @@ def trim(out: str, base: str, cfg: Config | None = None, effort: str = "high", m
     _, cm = load_gold(cfg)
     rules = [json.loads(l) for l in book_path(base).open() if l.strip()]
     act = {r["id"]: r for r in rules if r.get("status", "active") == "active"}
+    before = sum(map(_size, act.values()))  # the trim below updates these entries in place
     wc = lambda r: len((str(r.get("when")) + " " + str(r.get("expect"))).split())  # noqa: E731
     sel = [r for r in act.values() if (r["id"] in only if only is not None else
                                        wc(r) > trim_budget(r) + over_budget if over_budget is not None else
@@ -1203,7 +1204,7 @@ def trim(out: str, base: str, cfg: Config | None = None, effort: str = "high", m
     write_meta(out, {"base": base, "kind": "compress", "seen": []})
     a2 = [r for r in rules if r.get("status", "active") == "active"]
     msg = (f"{n} of {len(sel)} entries trimmed; {len(a2)} entries, {sum(map(_size, a2))} words "
-           f"(from {sum(map(_size, act.values()))}); ${cost:.2f}")
+           f"(from {before}); ${cost:.2f}")
     return msg, n
 
 

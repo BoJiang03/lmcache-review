@@ -5,6 +5,10 @@ You are reviewing pull request #{number} of LMCache (a KV-cache layer for LLM in
 Your working directory holds the repository as of the PR's head commit. The PR's changes are in
 `PR.diff` there. `PR_HISTORY.md` holds the review discussion so far (earlier review comments and
 replies), if any. If the repo has CLAUDE.md or AGENTS.md, read them for project conventions.
+`docs/design/` mirrors the `lmcache/` package tree: for each changed module `lmcache/<path>/`, read
+`docs/design/<path>/` if it exists, and report where the change breaks a contract, invariant or
+layering rule documented there (name the doc). `docs/coding_standards.md`, if present, holds the
+project's coding rules.
 `_context/vllm/` holds the vLLM source this PR runs against (see `_context/README.md`). When the
 change depends on vLLM behavior (scheduler, KV connector API, block/cache management, CUDA graphs,
 model runner), read the relevant vLLM code there instead of guessing; it is not part of the PR.

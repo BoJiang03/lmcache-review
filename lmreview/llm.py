@@ -61,7 +61,8 @@ def run(prompt: str, effort: str, cwd: str | None = None, tools: str = "", timeo
         model: the model id; None = Claude Code's default.
 
     Returns:
-        {"text": final text, "cost": usd, "turns": n, "denials": [blocked tool calls]}.
+        {"text": final text, "cost": usd, "turns": n, "denials": [blocked tool calls], "usage",
+         "model": the model id that did most of the work (see primary_model)}.
     """
     env = {k: v for k, v in os.environ.items() if k not in _STRIP}
     # Hard sandbox (verified with a probe): only `tools` exist, file tools are confined to cwd,
@@ -95,6 +96,11 @@ def run(prompt: str, effort: str, cwd: str | None = None, tools: str = "", timeo
     t0, out, err = time.time(), None, None
     try:
         out = _call(cmd, cwd, env, shell, timeout, stdin)
+        if out.get("model"):
+            try:
+                observe(model or "default", out["model"])
+            except OSError as e:  # a bookkeeping failure must not lose a paid result
+                print(f"could not record the model: {e}", file=sys.stderr)
         return {**out, "effort": effort}
     except BaseException as e:
         err = f"{type(e).__name__}: {e}"[:500]
@@ -146,9 +152,40 @@ def _call(cmd: list[str], cwd: str | None, env: dict, shell: bool, timeout: int,
     if d.get("is_error"):
         raise RuntimeError(f"claude -p error: {str(d.get('result'))[:500]}")
     return {"text": d.get("result") or "", "cost": d.get("total_cost_usd") or 0.0,
-            "turns": d.get("num_turns"), "usage": usage_of(d),
+            "turns": d.get("num_turns"), "usage": usage_of(d), "model": primary_model(d),
             "denials": [{"tool": x.get("tool_name"), "input": str(x.get("tool_input"))[:200]}
                         for x in d.get("permission_denials") or []]}
+
+
+def primary_model(d: dict) -> str | None:
+    """The model id of a `claude -p` result: the `modelUsage` key with the highest cost (Claude Code may
+    also make small calls on another model); None if it lists none."""
+    mu = d.get("modelUsage") or {}
+    return max(mu, key=lambda m: (mu[m] or {}).get("costUSD") or 0) if mu else None
+
+
+_models_lock = __import__("threading").Lock()
+_seen: dict[str, str] = {}
+
+
+def observe(requested: str, actual: str, path: pathlib.Path | None = None) -> None:
+    """Note that model name `requested` ("default" or an id) resolved to `actual`, in <data>/models.json
+    (runs.models_path), so cached runs made with an older model are not reused (runs.cached). Written
+    only when the resolution changes."""
+    from .config import Config
+    from .runs import models_path
+    path = path or models_path(Config())
+    with _models_lock:
+        if _seen.get(str(path) + "|" + requested) == actual:
+            return
+        cur = json.loads(path.read_text()) if path.exists() else {}
+        if cur.get(requested) != actual:
+            cur[requested] = actual
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(cur, indent=1, sort_keys=True) + "\n")
+            tmp.replace(path)
+        _seen[str(path) + "|" + requested] = actual
 
 
 def usage_of(d: dict) -> dict:

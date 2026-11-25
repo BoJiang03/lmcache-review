@@ -49,6 +49,7 @@ import json
 import pathlib
 import re
 
+from . import runs
 from .config import Config
 from .annotate import cid_of, norm
 from .settings import get
@@ -205,7 +206,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         only |= {x for i in list(only) for x in rel.get(i, {i}) | rel_old.get(i, {i})}
 
     def run_dir(b: str, k: int) -> pathlib.Path:
-        return cfg.data / "runs" / (f"{prompt}+{b}@{effort}{suffix}" + run_tag(only) + ("" if k == 1 else f"#r{k}"))
+        return runs.run_dir(cfg, f"{prompt}+{b}@{effort}{suffix}" + run_tag(only), k)
     todo = [(book, t, k) for t in samples for k in range(1, reps + 1)
             if not any(run_dir(book, k).glob(f"{t.split('@')[0]}-{t.split('@')[1]}*.json"))]
     est = len(todo) * (EST_RO if ruleonly else EST_RUN * (2 if suffix else 1))  # base runs: only where NEW misses a side case
@@ -389,7 +390,9 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         book_path(write).write_text("".join(json.dumps(r) + "\n" for r in kept_book))
         write_meta(write, {**meta, "base": base, "vetted_from": book})  # keeps "seen" for the next distill
         L += ["", f"wrote rules/{write}.jsonl: {len(kept_book)} entries (failing changes dropped or reverted)"]
-    L = L[:2] + [f"**{verdict}** · cost ${c_b + c_n + c_r + c_p:.2f}", ""] + L[2:]
+    unk = sum(runs.unknown_model(cfg, f"{prompt}+{b}@{effort}{suffix}" + run_tag(only), sorted(samples)) for b in (book, base))
+    L = L[:2] + [f"**{verdict}** · cost ${c_b + c_n + c_r + c_p:.2f}", ""] \
+        + ([f"- {unk} run(s) of unknown model (made before runs recorded their model)", ""] if unk else []) + L[2:]
     note(f"{verdict}: entries working {len(J['works'])}/{n_eff}, lost {len(J['lost'])}, "
          f"revisions not fixed {len(J['not_fixed'])}" + (f"; dropped or reverted: {', '.join(bad)}" if bad else "")
          + f"; ${c_b + c_n + c_r + c_p:.2f}; report reports/vet_{book}.md",

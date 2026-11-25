@@ -306,23 +306,27 @@ def score(version: str = "v0", workers: int = 4, effort: str = "high", max_cost:
     return "\n".join(L[:9])
 
 
-def judge_runs(cfg: Config, reviewer: str, prs: set[int] | None, split: str, max_cost: float) -> tuple[list, float]:
+def judge_runs(cfg: Config, reviewer: str, prs: set[int] | None, split: str, max_cost: float,
+               rep: int = 1) -> tuple[list, float]:
     """Judge `reviewer`'s runs on `split` (only `prs`, if given) against the human comments, for the
     ledger (state.judge); already judged runs are read from disk. Runs over the cost cap stay unjudged and are skipped.
+    `rep` > 1: the runs of that repeat (<reviewer>#r<rep>, see runs.py).
 
     Returns:
         ([(run, normalized score)], cost).
     """
     from .progress import note
+    from .runs import run_dir
     ss, cm = load_gold(cfg)
     out, cost = [], 0.0
-    files = sorted((cfg.data / "runs" / reviewer).glob("*.json"))
+    d = run_dir(cfg, reviewer, rep)
+    files = sorted(d.glob("*.json"))
     for f in files:
         run = json.loads(f.read_text())
         s = ss.get((run["pr"], run["commit"]))
         if not s or s.get("split") != split or (prs and run["pr"] not in prs) or run.get("findings") is None:
             continue
-        sp = cfg.data / "scores" / reviewer / f.name
+        sp = cfg.data / "scores" / d.name / f.name
         was = sp.exists() and json.loads(sp.read_text()).get("judge") == JUDGE  # else judged (again) below
         if not was and cost >= max_cost:
             continue

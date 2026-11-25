@@ -28,6 +28,7 @@ from .distill import COVERAGE, _ask, _fmt, _id
 from .reviewer import load_rules, parse_reviewer, reviewer_context, ruleonly_of, run_reviewer
 from .annotate import annotate, cid_of, points
 from .settings import get
+from .runs import cached as is_cached, run_dir, run_models, save_run
 from .score import REPORTS, hkey, load_gold, refuted, score_one
 from .workspace import cached_pr, sample_workspace
 
@@ -82,6 +83,13 @@ def text_check(rules: list[dict], ids: list[str], cm: dict, cfg: Config, effort:
     return lost, cost
 
 
+def cite_ids(by: dict[str, dict], i: str) -> set[str]:
+    """Ids whose citation counts for entry `i` of a book (`by`: its entries by id): itself, its principle,
+    a principle's members."""
+    r = by.get(i, {})
+    return {i, *([r["principle"]] if r.get("principle") else []), *(r.get("members") or [])}
+
+
 def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float, cfg: Config,
            workers: int = 4, suffix: str = "", only: set[str] | None = None) -> tuple[list[dict], float]:
     """Layer 2: re-review each case's target with `book` (the prompt and effort of the test's rule
@@ -119,10 +127,10 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
         if key is None:
             raise ValueError(f"test target {target} is not a sample in the gold set")
         s, name = ss[key], f"{pr}-{key[1][:8]}.json"
-        d = cfg.data / "runs" / (rv + tag + ("" if k == 1 else f"#r{k}"))
+        d = run_dir(cfg, rv + tag, k)
         d.mkdir(parents=True, exist_ok=True)
-        cached = (d / name).exists() and not (  # a failed run (unparsable output) is run again, not reused
-            (old := json.loads((d / name).read_text())).get("findings") is None and old.get("error"))
+        # a failed run (unparsable output) is run again, not reused; so is one made with an older model
+        cached = is_cached(cfg, rv, d / name, rerun_failed=True)
         if not cached:
             with lock:  # cached runs are always read; a new one waits until it fits with those running
                 while spent[0] < max_cost and reserved[0] and spent[0] + reserved[0] + est > max_cost:
@@ -135,7 +143,7 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
                 with sample_workspace(cfg, s, f"regress{k}", reviewer_context(rv)) as (wt, base):
                     r = run_reviewer(wt, cached_pr(cfg, key[0], s["time"]), rv, only=only)
                 cost = float(r.get("cost") or 0.0)
-                (d / name).write_text(json.dumps({"pr": key[0], "commit": key[1], "base": base, **r}, indent=1))
+                save_run(cfg, d / name, {"pr": key[0], "commit": key[1], "base": base, **r, "model": run_models(r)})
             finally:  # always release the reservation, or the runs waiting for budget wait forever
                 with lock:
                     reserved[0] -= est
@@ -181,9 +189,7 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
     by = {r["id"]: r for r in load_rules(book)}
 
     def related(i: str) -> set[str]:
-        """Ids whose citation counts for entry i: itself, its principle, a principle's members."""
-        r = by.get(i, {})
-        return {i, *([r["principle"]] if r.get("principle") else []), *(r.get("members") or [])}
+        return cite_ids(by, i)
 
     rows = []
     for i, t in cases:

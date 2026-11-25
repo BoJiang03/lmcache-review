@@ -7,6 +7,7 @@
     compress [--stage S] [--repair]      trim / merge / trim2 the book in use -> a candidate (then vet)
     round PR ...                         all four on these samples, distill + vet until settled; compress + vet when the book is over [compress] words
     status | rollback vN | discard       look at / move the state
+    stability --reviewer R               hit rate of each comment over R's repeat runs (free)
 
 A reviewer is named <prompt>[+<book>][@<effort>][x<n>][-rc|-ro][-ms]; the default is the current prompt
 (prompts/reviewer.md) with the book in use. Paid commands stop starting new LLM calls once
@@ -63,6 +64,8 @@ def main(argv: list[str] | None = None) -> None:
     e.add_argument("--max-cost", type=float, default=get("budget", "eval"))
 
     sub.add_parser("status", help="book in use, candidate, ledger counts (free)")
+    sb = sub.add_parser("stability", help="comments judged in >= 2 repeat runs of a reviewer and their hit rates (free)")
+    sb.add_argument("--reviewer", help="default: the reviewer round learns with")
     j = sub.add_parser("judge", help="judge the current reviewer's runs and file the comments in the ledger (paid, cached)")
     j.add_argument("--prs", type=int, nargs="+")
     j.add_argument("--max-cost", type=float, default=get("budget", "judge"))
@@ -153,6 +156,12 @@ def main(argv: list[str] | None = None) -> None:
     elif a.cmd == "review":
         from .replay import replay
         print(f"spent ${replay(a.reviewer, a.split, a.limit or None, a.workers, a.max_cost, a.only_pr, a.area):.2f}")
+    elif a.cmd == "stability":
+        from .runs import stability
+        if not a.reviewer:
+            from .state import reviewer
+            a.reviewer = reviewer(learn=True)
+        print(stability(a.reviewer))
     elif a.cmd == "eval" and a.rules:
         from .distill import coverage
         print(coverage(a.rules, a.split, a.area, a.misses_of, workers=a.workers, max_cost=a.max_cost))

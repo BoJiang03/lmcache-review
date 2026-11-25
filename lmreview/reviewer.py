@@ -310,7 +310,7 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
     keep = {"parallel": n, "merged": e.merged, "merge_cost": merge_cost, "usage": usage,
             "merge_error": None if e.merged or not e.merge else e.merge["error"],
             # raw kept per run so scripts/reparse_invalid.py can recover any of them
-            "runs": [{k: x[k] for k in ("findings", "error", "raw", "cost", "turns", "kind", "verdicts", "usage", "stage") if k in x}
+            "runs": [{k: x[k] for k in ("findings", "error", "raw", "cost", "turns", "kind", "verdicts", "usage", "stage", "model") if k in x}
                      for x in e.runs]}
     return {**out, "cost": sum(x["cost"] for x in e.runs) + merge_cost, **keep, **meta}
 
@@ -500,7 +500,7 @@ def _parsed(r: dict, rulecheck: bool = False, fix: Callable[[object], object] | 
     except (ValueError, SchemaError) as e:  # SchemaError is a ValueError; kept explicit for clarity
         error = str(e)
     out = {"findings": findings, "error": error, "raw": r["text"], "cost": r["cost"], "turns": r["turns"],
-           "denials": r["denials"], "usage": r.get("usage") or {}}
+           "denials": r["denials"], "usage": r.get("usage") or {}, "model": r.get("model")}
     return out | ({"kind": "rulecheck", "verdicts": verdicts} if rulecheck else {})
 
 

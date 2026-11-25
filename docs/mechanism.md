@@ -88,6 +88,25 @@ needs_human 不该靠人逐条改，而是暴露 workflow 的缺陷。复盘后�
 | 文档说法要和调用点核对，rule check 只能判"适用" | 不带工具的 rule check 看不到 diff 以外的代码 | rule check 输入加 SYMBOLS：diff 定义的名字和文档里提到的名字，在整个仓库里的定义和使用位置（grep，确定性预处理） |
 | "报 bug 时要求补回归测试"写成规则永远不触发 | 规则只作用于 diff，看不到 reviewer 自己的 finding | 这类关于 finding 写法的要求放进 reviewer.md；以后攒多了再考虑"作用于 finding 的规则" |
 
+## 只把真正测过的当成试过（2026-11-25，batch 7/8）
+
+| 现象 | 缺陷 | 修复 |
+| --- | --- | --- |
+| vet 碰到成本上限仍提升了规则库 | 有失败的条目时 verdict 先判 FAIL，盖过 INCOMPLETE | 只要有没跑的 case 就是 INCOMPLETE，保留候选 |
+| 没测到的条目也算一次失败 | tries 不分"测了没用"和"没测" | "kept but not tested" 不计入 MAX_TRIES |
+| 为某条评论改写的旧条目从不在该评论上测 | vet 只测新挂上的 evidence | vet 测所有挂着本轮目标评论的条目（`targets`） |
+| needs_human 回不来 | requeue 把"出现在 try 里"当成"测过"，且靠 COVERAGE 猜覆盖 | 只认 vet 真正跑过且文字没改过的条目；挂着该评论的条目直接算覆盖 |
+| vet 部分保留被叫做 FAIL | 命名 | ALL KEPT / PARTLY KEPT / NONE KEPT / INCOMPLETE |
+
+## compress 的两个问题（2026-11-25，batch 8）
+
+68 条、10158 词的书，3 份草稿各只提 1–2 个 merge，多数票后剩 1 个，vet 又撤了它：几乎没压。
+
+| 问题 | 原因 | 修复 |
+| --- | --- | --- |
+| 压得太少 | 草稿只挑最有把握的；多数票再筛 | 先把整本书分组再逐组 merge；不投票，取所有草稿的 merge（重叠取多数草稿提的），vet 是唯一的门 |
+| 压完丢 case | 为了压到一半词数，删掉了让条目触发的区分条件（"包了一层也算重复"） | 上限 50%→70%；merge 必须保留决定触发的条件和知识条目的事实；撤销时记下 rule check 的理由（不适用 → 改 when；适用但未违反 → expect 丢了条件），同一 round 再压一次（`[compress] tries = 2`） |
+
 ## 上线前（AI review 不展示）
 
 人的 review 是独立的，就是标准答案。**目标：减少可学的 human 独有。**

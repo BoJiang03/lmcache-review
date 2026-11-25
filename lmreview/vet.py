@@ -25,9 +25,11 @@ replayed (about $0.8 per sample instead of $3.5). Runs are cached under data/run
 so an earlier A/B with the same reviewer names costs nothing here. Single runs are noisy, so each
 failing case gets one more run with NEW before it counts (`retry`).
 
-Verdict: PASS if every entry with new evidence works on at least one of its comments, nothing
-regressed and every revision fixed its trigger; generality flags are listed for the reader and do not
-fail the book. `write` saves NEW without the failing changes, as the next working book.
+Verdict, by what the next book takes: ALL KEPT if every entry with new evidence works on at least one
+of its comments, nothing regressed and every revision fixed its trigger; PARTLY KEPT if some changes
+fail (they are dropped or reverted, the rest promoted); NONE KEPT if none works; INCOMPLETE if any case
+was not run (nothing is promoted). Generality flags are listed for the reader and keep nothing out.
+`write` saves NEW without the failing changes, as the next working book.
 """
 
 from __future__ import annotations
@@ -296,7 +298,11 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     fails = J["no_effect"] or J["lost"] or J["not_fixed"]
     # anything left untested (cost cap, a failed run) makes the whole vet INCOMPLETE, even when some entries
     # already failed: promoting then would keep untested entries and skip their side-effect replays
-    verdict = "INCOMPLETE" if J["unknown"] or J["s_unknown"] or J["f_unknown"] else "FAIL" if fails else "PASS"
+    # otherwise the verdict says what the next book takes: every change, some (the failing ones are dropped
+    # or reverted, the rest promoted), or none. A partial result is the normal outcome, not a failure.
+    bad = sorted(set(J["no_effect"]) | {i for i, _ in J["lost"]} | {i for i, _ in J["not_fixed"]})
+    verdict = ("INCOMPLETE" if J["unknown"] or J["s_unknown"] or J["f_unknown"] else
+               "ALL KEPT" if not fails else "PARTLY KEPT" if J["works"] else "NONE KEPT")
     n_eff = len({i for i, _ in effect})
     L += ["## 2. Effect (leaky: rules on their own source comments)", "",
           f"entries working: {len(J['works'])}/{n_eff}; not working: {J['no_effect'] or 'none'}"
@@ -319,8 +325,9 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         L += ["", f"wrote rules/{write}.jsonl: {len(kept_book)} entries (failing changes dropped or reverted)"]
     L = L[:2] + [f"**{verdict}** · cost ${c_b + c_n + c_r:.2f}", ""] + L[2:]
     note(f"{verdict}: entries working {len(J['works'])}/{n_eff}, lost {len(J['lost'])}, "
-         f"revisions not fixed {len(J['not_fixed'])}; ${c_b + c_n + c_r:.2f}; report reports/vet_{book}.md",
-         {"PASS": "ok", "FAIL": "err"}.get(verdict, "warn"))
+         f"revisions not fixed {len(J['not_fixed'])}" + (f"; dropped or reverted: {', '.join(bad)}" if bad else "")
+         + f"; ${c_b + c_n + c_r:.2f}; report reports/vet_{book}.md",
+         {"ALL KEPT": "ok", "PARTLY KEPT": "ok", "NONE KEPT": "err"}.get(verdict, "warn"))
     (REPORTS / f"vet_{book}.md").write_text("\n".join(L) + "\n")
     return "\n".join(L)
 

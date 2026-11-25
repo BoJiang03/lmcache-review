@@ -742,12 +742,15 @@ def consolidate(rules: list[dict], base_rules: list[dict], out: str, cm: dict, e
 def _consolidate(rules: list[dict], base_ids: set[str], out: str, cm: dict, effort: str, cfg: Config,
                  spend: list[float], max_cost: float, n: int, prompt: str = "", book: str = "",
                  absorb_ok: Callable[[str, list[str]], bool] | None = None, blocked: set[frozenset] = frozenset(),
-                 shrink: float = 1.0, final_prompt: str = "", incremental: bool = False) -> tuple[list[dict], list[dict]]:
+                 shrink: float = 1.0, final_prompt: str = "", incremental: bool = False,
+                 union: bool = False) -> tuple[list[dict], list[dict]]:
     """The proposing part of consolidate(): drafts, votes, final texts, applied. compress() passes its own
     `prompt` and `book` text, `final_prompt` for the final texts, `shrink` (a merge must have under that share
     of the words it replaces), `absorb_ok(into, others)` (which absorbs may happen) and `blocked` groups
     (merges vet undid twice: not proposed again). `incremental` (consolidate in distill): a merge or absorb
-    must include a NEW entry; pairs of existing entries are left to compress."""
+    must include a NEW entry; pairs of existing entries are left to compress. `union` (compress): no vote,
+    every draft's merge counts (vet is the only gate); overlapping groups are resolved by taking the group
+    most drafts proposed, then the larger one, and skipping groups that share an entry with a taken one."""
     act = {r["id"]: r for r in rules if r.get("status", "active") == "active"}
     new_ids = {i for i in act if i not in base_ids}
     if len(act) < 2 or spend[0] >= max_cost:
@@ -763,7 +766,7 @@ def _consolidate(rules: list[dict], base_ids: set[str], out: str, cm: dict, effo
     drafts = [[d for d in r if isinstance(d, dict)] for r in res if isinstance(r, list)]
     if not drafts:
         return rules, []
-    need = len(drafts) // 2 + 1
+    need = 1 if union else len(drafts) // 2 + 1
     pair, rew, con, into = C.Counter(), C.Counter(), C.Counter(), C.Counter()
     for dr in drafts:
         mp, rw, ct = set(), set(), set()
@@ -781,7 +784,16 @@ def _consolidate(rules: list[dict], base_ids: set[str], out: str, cm: dict, effo
         pair.update(mp)
         rew.update(rw)
         con.update(ct)
-    groups = _components({p for p, v in pair.items() if v >= need})
+    if union:
+        proposed = C.Counter(frozenset(x for x in d.get("rules") or [] if x in act) for dr in drafts for d in dr
+                             if d.get("op") in ("merge", "absorb"))
+        groups, used = [], set()
+        for g, _ in sorted(proposed.items(), key=lambda kv: (-kv[1], -len(kv[0]), sorted(kv[0]))):
+            if len(g) >= 2 and not g & used:
+                groups.append(sorted(g))
+                used |= g
+    else:
+        groups = _components({p for p, v in pair.items() if v >= need})
     changes: list[dict] = []
     for g in [g for g in groups if frozenset(g) in blocked]:
         changes.append({"op": "consolidate-blocked", "rules": g, "members": [], "concern": "",
@@ -892,7 +904,15 @@ findings judged valid vs refuted).
 Your job is to make the rulebook much SMALLER without losing anything it does: fewer entries and far
 fewer words, while a reviewer given the smaller book still raises every point each entry's proven cases
 and comments ask for. Every entry is loaded into every review, so overlapping entries cost on every
-review and dilute the reviewer's attention. Changes:
+review and dilute the reviewer's attention.
+
+Work in two passes. First go through EVERY entry and sort the whole book into groups of entries that are
+instances of one principle or one area of project knowledge (an entry may stay alone). Then propose a
+change for every group of two or more. A book grown one comment at a time has many such groups; listing
+only the one or two merges you are surest of is not doing the job. Each change is checked on its own,
+so a doubtful one costs nothing when it fails.
+
+Changes:
 - "absorb": one entry ("into") already makes a reviewer raise everything the others ask for, AS WRITTEN.
   It stays word for word; the others are retired. "into" must be an entry written or revised AFTER the
   others (shown as "order"): an entry older than another cannot already cover it, since that one was
@@ -902,7 +922,12 @@ review and dilute the reviewer's attention. Changes:
   a reviewer recognizes each merged entry's proven cases as instances of it. Do NOT list the merged
   entries' situations and requests one by one in the text (that is packing, not merging, and saves
   little); their concrete triggers go in "examples" (one short line each). The merged entry must be
-  at most HALF the words of the entries it replaces together; a merge that is not is refused.
+  at most 70% of the words of the entries it replaces together; a merge that is not is refused.
+  Keep every condition that decides whether a merged entry fires on its proven cases: a situation it
+  names that a looser word would not cover (e.g. "new types that only wrap or re-derive what the shared
+  component holds", where "duplicate types" lets a reviewer decide a wrapper is not a duplicate). Drop
+  wording, not conditions: a merge that drops one loses that case and is undone. Facts of a knowledge
+  entry (which component holds what, where it lives) stay word for word.
   Generalizing means the entry also applies to situations none of the merged entries named: that is
   intended, as long as it is the same principle. Keep it at the lowest level that covers them all.
 Do not merge entries that ask for different or opposite changes because they share a topic (e.g.
@@ -910,12 +935,16 @@ Do not merge entries that ask for different or opposite changes because they sha
 example"). Do not write an entry so broad that it fits any change: a reviewer must still recognize
 each proven case from the "when". Entries whose record shows refuted citations are already too wide;
 do not widen them further. Groups listed under "Undone earlier" lost a proven case when they were
-merged: merge them again only if your entry also makes a reviewer raise that case.
+merged, with what the rule check said about the merged entry on that case: merge them again with a text
+that fixes exactly that (it did not apply: the "when" must name that situation; it applied but found
+nothing violated: the "expect" lost the condition that case needs).
 List only changes; everything else stays. Every change is checked by replaying all the proven cases of
 the entries it touches, and a change that loses any of them is undone; an entry whose citations later
 turn out refuted in reviews gets revised or retired.
 
 """ + GENERAL + """
+
+For a merge, the length limit is the 70% above, not the 80 words of "Length".
 
 Fields of a written entry (merge): "kind" (principle | knowledge), "when", "expect", "why" (one line),
 "examples" (1-3 short concrete instances), "paths" (globs, [] = anywhere).
@@ -930,14 +959,16 @@ Answer with one JSON block only, one object per change ([] if none):
 ```"""
 
 FINAL_COMPRESS = """Several independent drafts proposed how to make the LMCache review rulebook below smaller. The
-changes listed under "Agreed changes" are the ones most drafts agreed on (which entries to merge). For
+changes listed under "Agreed changes" are the merges taken from the drafts (which entries to merge). For
 each agreed merge write the ONE final entry, using the drafts' versions:
 - It states the principle the merged entries are instances of: the common kind of situation in "when",
   the common request in "expect". It does not list the merged entries' situations one by one; their
   concrete triggers go in "examples", one short line each.
 - A reviewer must still recognize each merged entry's proven cases as instances of it and raise them.
-- It is at most HALF the words of the entries it replaces together (an entry that is not is refused).
-  Prefer the shortest draft that meets the line above; take the clearest wording from any draft.
+- It is at most 70% of the words of the entries it replaces together (an entry that is not is refused),
+  and keeps every condition that decides whether a merged entry fires on its proven cases, and every
+  fact of a knowledge entry word for word. Take the clearest wording from any draft. The length limit is
+  this one, not the 80 words of "Length".
 
 """ + GENERAL + """
 
@@ -952,7 +983,7 @@ Answer with one JSON block only, one object per agreed change:
 [{"change": 0, "kind": "...", "when": "...", "expect": "...", "why": "...", "examples": ["..."], "paths": []}]
 ```"""
 
-SHRINK = 0.6  # a compress merge must have under this share of the words it replaces (prompt asks for half)
+SHRINK = 0.75  # a compress merge must have under this share of the words it replaces (prompt asks for 70%)
 
 
 def _apply_merge(rules: list[dict], g: list[str], d: dict, out: str, cm: dict, base_ids: set[str]) -> str:
@@ -1015,11 +1046,15 @@ def _book_for_compress(rules: list[dict], cm: dict, record: dict, feedback: list
                    f"record: {len(rec.get('helpful') or [])} valid, {len(rec.get('harmful') or [])} refuted\n"
                    f"  reviewers said:\n" + "\n".join(said) + (f"\n    (+{more} more comments)" if more > 0 else ""))
     undone = [f"- {', '.join(f['group'])} ({f['op']}, {f['candidate']}): lost "
-              + "; ".join(f"c{x['comment']} of {x['entry']}: {x['body']!r}" for x in f.get("lost") or [])
+              + "; ".join(f"c{x['comment']} of {x['entry']}: {x['body']!r}"
+                          + (f" (the rule check said of the merged entry: applies={x['check'].get('applies')}, "
+                             f"violated={x['check'].get('violated')}: {x['check'].get('why')})" if x.get("check") else "")
+                          for x in f.get("lost") or [])
               + (f"\n  The undone {f['op']} read: When {f['text'].get('when')}: {f['text'].get('expect')} "
                  f"(examples: {'; '.join(f['text'].get('examples') or [])}).\n  A reviewer given it did not raise "
-                 f"the lost comment: its \"when\" did not make that situation recognizable. A new {f['op']} must "
-                 f"name that kind of situation in its \"when\"."
+                 f"the lost comment. If the rule check said it did not apply, the \"when\" must name that kind of "
+                 f"situation; if it applied but found nothing violated, the \"expect\" dropped the condition that "
+                 f"case needs (restore it from the original entry)."
                  if f.get("text") else "")
               for f in feedback]
     return "\n".join(out) + ("\n\nUndone earlier:\n" + "\n".join(undone) if undone else "")
@@ -1027,7 +1062,8 @@ def _book_for_compress(rules: list[dict], cm: dict, record: dict, feedback: list
 
 def compress(out: str, base: str, cfg: Config | None = None, effort: str = "high", max_cost: float = 3.0,
              n: int = 3, record: dict | None = None, feedback: list[dict] | None = None) -> tuple[str, int]:
-    """Make rulebook `base` smaller as rulebook `out`: `n` COMPRESS drafts voted in code (as consolidate),
+    """Make rulebook `base` smaller as rulebook `out`: `n` COMPRESS drafts, every merge they propose taken
+    (overlaps resolved in _consolidate's `union`; vet is the only gate),
     absorbs only into an entry newer than the ones it absorbs, merges that generalize to at most SHRINK
     of the words they replace. No blind check: vet is the judge (a merge that loses a proven case is
     undone), and a merge too wide shows up as refuted citations that distill's signals act on. Merges
@@ -1048,10 +1084,10 @@ def compress(out: str, base: str, cfg: Config | None = None, effort: str = "high
     book = _book_for_compress(rules, cm, record or {}, [f for f in feedback if frozenset(f["group"]) not in blocked])
     spend = [0.0]
     note(f"compress {base} ({sum(r.get('status', 'active') == 'active' for r in rules)} entries, "
-         f"{sum(_size(r) for r in rules if r.get('status', 'active') == 'active')} words; {n} drafts, voted)")
+         f"{sum(_size(r) for r in rules if r.get('status', 'active') == 'active')} words; {n} drafts, every merge to vet)")
     rules, changes = _consolidate(rules, {r["id"] for r in base_rules}, out, cm, effort, cfg, spend, max_cost, n,
                                   prompt=COMPRESS, book=book, absorb_ok=ok, blocked=blocked, shrink=SHRINK,
-                                  final_prompt=FINAL_COMPRESS)
+                                  final_prompt=FINAL_COMPRESS, union=True)
     note(f"      proposed: {dict(C.Counter(ch['op'] for ch in changes)) or 'nothing'}")
     rules = [r for r in rules if r["id"] in {x["id"] for x in base_rules} or r.get("status", "active") == "active"]
     diff = rule_diff(base_rules, rules)

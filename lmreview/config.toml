@@ -86,5 +86,6 @@ state = ""                                 # "" = lmreview/state/ in the package
 sandbox = "/var/tmp/lmreview-{uid}/sandbox"  # agent workspaces; outside $HOME and /tmp (see llm.py)
 
 [compress]
+tries = 2            # compress + vet runs per round: a second one retries the merges vet undid, with the rule check's reasons
 words = 10000        # round compresses the book (then vets it) when its active entries total more words than this;
                      # a trigger, not a limit: the book may stay above it when nothing can be merged

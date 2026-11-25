@@ -337,7 +337,8 @@ def requeue_parked(max_cost: float = 0.5, cfg: Config | None = None) -> set[int]
 
     - the distill prompts (attribute, write, consolidate) changed since it was parked;
     - parked after failed attempts: the book in use has an entry the attempts did not have. One COVERAGE
-      call per batch lists the active entries each comment is an instance of; a comment is requeued
+      call per batch lists the active entries each comment is an instance of, plus those holding it as
+      evidence; a comment is requeued
       when one of them was not actually tested on it in its current text (tested_entries).
     A person's decision (a note starting "human") is never reopened."""
     from .distill import COVERAGE, BATCH, _ask, _fmt, _id
@@ -365,7 +366,9 @@ def requeue_parked(max_cost: float = 0.5, cfg: Config | None = None) -> set[int]
                             max_cost, label=lambda b: f"parked coverage {len(b)}")
         hits = {_id(x.get("id")): [e for e in x.get("rules") or [] if e in book]
                 for part in res if isinstance(part, list) for x in part if isinstance(x, dict)}
-        for r in tried:
+        for r in tried:  # entries that already hold the comment as evidence cover it: no guess needed
+            own = [i for i, e in book.items() if norm(r["comment"]) in {norm(x) for x in e.get("evidence") or []}]
+            hits[r["comment"]] = list(dict.fromkeys(own + (hits.get(r["comment"]) or [])))
             done = tested_entries(r, book, text)
             new = [e for e in hits.get(r["comment"]) or [] if e not in done]
             if new:
@@ -581,6 +584,9 @@ def book_words(n: int | None = None) -> int:
     return sum(_size(r) for r in load_book(vname(head() if n is None else n)) if r.get("status", "active") == "active")
 
 
+COMPRESS_TRIES = int(get("compress", "tries"))  # compress + vet runs per round while vet undoes merges
+
+
 def compress_if_big(vet_cost: float, cfg: Config | None = None) -> list[str]:
     """The last step of a round: when the book in use is over [compress] words, compress it and vet the
     candidate. Skipped when the last compress already ran on this same version (it found what it could).
@@ -601,12 +607,19 @@ def compress_if_big(vet_cost: float, cfg: Config | None = None) -> list[str]:
     if tried:
         note(f"book {vname(head())}: {w} words, over {cap}, but compress already ran on this version")
         return []
-    note(f"book {vname(head())}: {w} words, over {cap}: compress, then vet")
-    out = [compress_step(cfg=cfg)]
-    if candidate():
+    out = []
+    for k in range(COMPRESS_TRIES):  # a second try sees the merges vet undid and the rule check's reasons
+        n_fb = len(compress_feedback())
+        note(f"book {vname(head())}: {book_words()} words, over {cap}: compress (try {k + 1}/{COMPRESS_TRIES}), then vet")
+        out.append(compress_step(cfg=cfg))
+        if not candidate():
+            break
         out.append(vet_step(vet_cost, cfg=cfg).split("\n\n")[-1])
         if candidate():
             note("vet INCOMPLETE (cost cap): candidate kept; rerun `lmreview vet` with a higher --max-cost")
+            break
+        if len(compress_feedback()) == n_fb or book_words() <= cap:  # nothing undone, or small enough
+            break
     out.append(f"book {vname(head())}: {book_words()} words (was {w}; compress at > {cap})")
     return out
 
@@ -640,31 +653,55 @@ def compress_step(max_cost: float | None = None, cfg: Config | None = None) -> s
         return f"candidate {name}: {msg}. Next: `lmreview vet`"
 
 
-def _record_compress(c: dict, cand: list[dict], J: dict, cfg: Config) -> str:
-    """After vet of a compress candidate: file the groups vet undid (with the proven cases they lost) for
-    the next compress, and count refuted findings citing the new entries in vet's runs (precision: recorded,
-    not a gate). Returns a one-line summary."""
+def compress_undone(name: str, parent_ids: set[str], cand: list[dict], J: dict,
+                    cfg: Config) -> tuple[dict[str, list[str]], list[dict]]:
+    """The groups of compress candidate `name` (a book whose parent has `parent_ids`) and the rows for those
+    vet undid: {group, op, into, candidate, lost: [{entry, comment, body, check}], text}, where "check" is the
+    rule check's verdict on the merged entry in vet's runs on that case. Reads only; see _record_compress."""
     from .annotate import cid_of
-    from .schema import cites
-    from .score import load_gold, refuted
-    _, gcm = load_gold(cfg)
+    from .score import load_gold
+    gss, gcm = load_gold(cfg)
     by = {r["id"]: r for r in cand}
-    parent_ids = {r["id"] for r in load_book(vname(c["parent"]))}
+    where = {int(x): k for k, sm in gss.items() for x in sm["gold_ids"]}
+
+    def check(t: str, e) -> dict | None:
+        """The rule check's verdict on merged entry `t` in vet's last run on comment `e`'s sample."""
+        k = where.get(cid_of(e) if not isinstance(e, int) else e)
+        if not k:
+            return None
+        vs = [v for d in sorted((cfg.data / "runs").glob(f"*+{name}@*"), key=lambda p: ("#r" in p.name, p.name))
+              if (f := d / f"{k[0]}-{k[1][:8]}.json").exists()
+              for v in json.loads(f.read_text()).get("verdicts") or [] if v.get("rule") == t]
+        # the run that shows why it was missed: not applied, or applied with nothing violated
+        seen = next((v for v in vs if not (v.get("applies") and v.get("violated"))), vs[-1] if vs else None)
+        return {x: (str(seen.get(x))[:300] if x == "why" else seen.get(x)) for x in ("applies", "violated", "why")} \
+            if seen else None
     groups: dict[str, list[str]] = {}
     for r in cand:
         t = (r.get("retired") or {}).get("replaced_by")
-        if r.get("status") == "retired" and t and (r.get("retired") or {}).get("by") == c["name"]:
+        if r.get("status") == "retired" and t and (r.get("retired") or {}).get("by") == name:
             groups.setdefault(t, []).append(r["id"])
     lost: dict[str, list[dict]] = {}
     for old, e in J["lost"]:
         t = (by.get(old, {}).get("retired") or {}).get("replaced_by")
         if t in groups:
             body = " ".join((gcm.get(cid_of(e)) or {}).get("body", "").split())[:160]
-            lost.setdefault(t, []).append({"entry": old, "comment": e, "body": body})
+            lost.setdefault(t, []).append({"entry": old, "comment": e, "body": body,
+                                           **({"check": ck} if (ck := check(t, e)) else {})})
     rows = [{"group": sorted(groups[t] + ([t] if t in parent_ids else [])), "op": "absorb" if t in parent_ids else "merge",
-             "into": t, "candidate": c["name"], "lost": v, "date": _now()[:10],
+             "into": t, "candidate": name, "lost": v, "date": _now()[:10],
              **({"text": {k: by[t].get(k) for k in ("when", "expect", "examples")}} if t in by else {})}
             for t, v in lost.items()]
+    return groups, rows
+
+
+def _record_compress(c: dict, cand: list[dict], J: dict, cfg: Config) -> str:
+    """After vet of a compress candidate: file the groups vet undid (compress_undone) for the next compress,
+    and count refuted findings citing the new entries in vet's runs (precision: recorded, not a gate).
+    Returns a one-line summary."""
+    from .schema import cites
+    from .score import refuted
+    groups, rows = compress_undone(c["name"], {r["id"] for r in load_book(vname(c["parent"]))}, cand, J, cfg)
     if rows:
         with (STATE / "compress.jsonl").open("a") as f:
             f.writelines(json.dumps(x) + "\n" for x in rows)

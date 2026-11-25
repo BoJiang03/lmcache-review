@@ -584,6 +584,7 @@ def book_words(n: int | None = None) -> int:
     return sum(_size(r) for r in load_book(vname(head() if n is None else n)) if r.get("status", "active") == "active")
 
 
+COMPRESS_STAGES = list(get("compress", "stages"))  # the passes of a round's compress, in order
 COMPRESS_TRIES = int(get("compress", "tries"))  # compress + vet runs per round while vet undoes merges
 
 
@@ -608,26 +609,41 @@ def compress_if_big(vet_cost: float, cfg: Config | None = None) -> list[str]:
         note(f"book {vname(head())}: {w} words, over {cap}, but compress already ran on this version")
         return []
     out = []
-    for k in range(COMPRESS_TRIES):  # a second try sees the merges vet undid and the rule check's reasons
-        n_fb = len(compress_feedback())
-        note(f"book {vname(head())}: {book_words()} words, over {cap}: compress (try {k + 1}/{COMPRESS_TRIES}), then vet")
-        out.append(compress_step(cfg=cfg))
-        if not candidate():
-            break
-        out.append(vet_step(vet_cost, cfg=cfg).split("\n\n")[-1])
-        if candidate():
-            note("vet INCOMPLETE (cost cap): candidate kept; rerun `lmreview vet` with a higher --max-cost")
-            break
-        if len(compress_feedback()) == n_fb or book_words() <= cap:  # nothing undone, or small enough
-            break
+    for stage in COMPRESS_STAGES:  # e.g. trim, merge, trim2; each one full, then repairs of what vet undid
+        for k in range(COMPRESS_TRIES):
+            repair = k > 0
+            note(f"book {vname(head())}: {book_words()} words: compress {stage}"
+                 + (f" (repair {k}/{COMPRESS_TRIES - 1})" if repair else "") + ", then vet")
+            res = compress_step(cfg=cfg, stage=stage, repair=repair)
+            out.append(f"{stage}{' repair' if repair else ''}: {res}")
+            if not candidate():
+                break
+            name = candidate()["name"]
+            out.append(vet_step(vet_cost, cfg=cfg).split("\n\n")[-1])
+            if candidate():
+                note("vet INCOMPLETE (cost cap): candidate kept; rerun `lmreview vet` with a higher --max-cost")
+                out.append(f"book {vname(head())}: {book_words()} words (was {w}); stopped: vet INCOMPLETE")
+                return out
+            if not [x for x in compress_feedback() if x.get("candidate") == name]:
+                break  # vet undid nothing: no repair needed
     out.append(f"book {vname(head())}: {book_words()} words (was {w}; compress at > {cap})")
     return out
 
 
-def compress_step(max_cost: float | None = None, cfg: Config | None = None) -> str:
-    """Make the book in use smaller as a candidate (distill.compress: absorb and merge only); `lmreview vet`
-    then keeps the changes that lose none of their entries' proven cases."""
+def compress_step(max_cost: float | None = None, cfg: Config | None = None, stage: str = "merge",
+                  repair: bool = False) -> str:
+    """Make the book in use smaller as a candidate; `lmreview vet` then keeps the changes that lose none of
+    their entries' proven cases.
+
+    Args:
+        stage: "merge" (distill.compress: merge or regroup entries), "trim" (distill.trim: each long entry
+            rewritten shorter in place) or "trim2" (trim again with the tighter [compress] trim2 budget and
+            no "why", every entry over its budget).
+        repair: rewrite only what vet undid on the last candidate of this stage, shown with the rule check's
+            reasons (compress.jsonl), instead of a full pass.
+    """
     from . import llm
+    from . import distill as D
     from .distill import compress
     max_cost = get("budget", "compress") if max_cost is None else max_cost
     with lock(), step("compress", f"book {vname(head())}; cap ${max_cost:.0f}") as st:
@@ -636,16 +652,37 @@ def compress_step(max_cost: float | None = None, cfg: Config | None = None) -> s
         if candidate():
             raise RuntimeError(f"candidate {candidate()['name']} is waiting: `lmreview vet` it or `lmreview discard`")
         name, parent, spent0 = candidate_name(), head(), llm.SPENT
+        fb_all = compress_feedback()
+        last = next((x["candidate"] for x in reversed(fb_all) if x.get("stage", "merge") == stage), None)
+        fb_last = [x for x in fb_all if x.get("candidate") == last]
+        if repair and not fb_last:
+            return "nothing to repair"
         _write(STATE / "candidate" / "meta.json", json.dumps(
-            {"name": name, "parent": parent, "comments": [], "kind": "compress", "created": _now()}, indent=1) + "\n")
+            {"name": name, "parent": parent, "comments": [], "kind": "compress", "stage": stage, "repair": repair,
+             "created": _now()}, indent=1) + "\n")
+        effort = str(get("distill", "effort"))
         try:
-            msg, k = compress(name, vname(parent), cfg, effort=str(get("distill", "effort")), max_cost=max_cost,
-                              record=outcomes(), feedback=compress_feedback())
+            if stage == "merge":
+                msg, k = compress(name, vname(parent), cfg, effort=effort, max_cost=max_cost, record=outcomes(),
+                                  feedback=fb_last if repair else [x for x in fb_all if x.get("group")],
+                                  repair=repair, n=int(get("compress", "drafts")))
+            else:
+                two = stage == "trim2"
+                D.TRIM_BASE, D.TRIM_PER = (int(x) for x in get("compress", "trim2_budget" if two else "trim_budget"))
+                D.TRIM_WHY = not two
+                fb = {x["entry"]: {"text": x["text"], "lost": x["lost"]} for x in fb_last} if repair else None
+                msg, k = D.trim(name, vname(parent), cfg, effort=effort, max_cost=max_cost,
+                                min_words=int(get("compress", "trim_words")), only=set(fb) if fb else None,
+                                feedback=fb, over_budget=0 if two and not fb else None)
         except BaseException:
             clear_candidate()
             raise
+        finally:
+            D.TRIM_BASE, D.TRIM_PER = (int(x) for x in get("compress", "trim_budget"))
+            D.TRIM_WHY = True
         st.cost = llm.SPENT - spent0
-        log("compress", name=name, parent=parent, retired=k, cost=round(st.cost, 2), summary=msg)
+        log("compress", name=name, parent=parent, stage=stage, repair=repair, retired=k, cost=round(st.cost, 2),
+            summary=msg)
         st.result = msg
         if not k:
             clear_candidate()
@@ -713,13 +750,38 @@ def compress_undone(name: str, parent_ids: set[str], cand: list[dict], J: dict,
     return groups, rows
 
 
+def trim_undone(name: str, cand: list[dict], J: dict, cfg: Config) -> tuple[dict[str, list[str]], list[dict]]:
+    """The entries trim candidate `name` rewrote, and rows for those vet put back: {entry, op: "trim",
+    candidate, text (the short text that failed), lost: [{comment, body, check}], date}. Reads only."""
+    from .annotate import cid_of
+    from .score import load_gold
+    gss, gcm = load_gold(cfg)
+    where = {int(x): k for k, sm in gss.items() for x in sm["gold_ids"]}
+    trimmed = {r["id"]: r for r in cand if (r.get("revised") or {}).get("by") == name
+               and (r.get("revised") or {}).get("reason") == "trim"}
+    lost: dict[str, list[dict]] = {}
+    for i, e in J["lost"]:
+        if i in trimmed:
+            lost.setdefault(i, []).append({"comment": str(e), "check": vet_verdict(name, i, e, cfg, where),
+                                           "body": " ".join(str((gcm.get(cid_of(e)) or gcm.get(e) or {})
+                                                                .get("body", "")).split())[:200]})
+    rows = [{"entry": i, "op": "trim", "candidate": name, "date": _now()[:10], "lost": v,
+             "text": {k: trimmed[i].get(k) for k in ("when", "expect", "why")}} for i, v in lost.items()]
+    return {i: [i] for i in trimmed}, rows
+
+
 def _record_compress(c: dict, cand: list[dict], J: dict, cfg: Config) -> str:
     """After vet of a compress candidate: file the groups vet undid (compress_undone) for the next compress,
     and count refuted findings citing the new entries in vet's runs (precision: recorded, not a gate).
     Returns a one-line summary."""
     from .schema import cites
     from .score import refuted
-    groups, rows = compress_undone(c["name"], {r["id"] for r in load_book(vname(c["parent"]))}, cand, J, cfg)
+    stage = c.get("stage", "merge")
+    if stage == "merge":
+        groups, rows = compress_undone(c["name"], {r["id"] for r in load_book(vname(c["parent"]))}, cand, J, cfg)
+    else:
+        groups, rows = trim_undone(c["name"], cand, J, cfg)
+    rows = [x | {"stage": stage} for x in rows]
     if rows:
         with (STATE / "compress.jsonl").open("a") as f:
             f.writelines(json.dumps(x) + "\n" for x in rows)
@@ -736,7 +798,7 @@ def _record_compress(c: dict, cand: list[dict], J: dict, cfg: Config) -> str:
                 if a and cites(x) & new:
                     bad += refuted(a)
                     valid += a.get("valid") is True
-    return (f"compress: {len(groups) - len(rows)} of {len(groups)} groups kept; findings citing the new entries in "
+    return (f"compress {stage}: {len(groups) - len(rows)} of {len(groups)} kept; findings citing the new entries in "
             f"vet's runs: {valid} valid, {bad} refuted")
 
 

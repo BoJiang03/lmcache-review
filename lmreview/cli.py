@@ -4,7 +4,7 @@
     judge                                file the human comments: covered / to_distill
     distill                              to_distill comments -> a candidate book
     vet                                  promote what works as the next version; record what failed
-    compress                             absorb / merge entries of the book in use -> a candidate (then vet)
+    compress [--stage S] [--repair]      trim / merge / trim2 the book in use -> a candidate (then vet)
     round PR ...                         all four on these samples, distill + vet until settled; compress + vet when the book is over [compress] words
     status | rollback vN | discard       look at / move the state
 
@@ -77,9 +77,12 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("rollback", help="make an earlier version the book in use, as a new version").add_argument(
         "version", help="e.g. v0001")
     sub.add_parser("discard", help="drop the candidate without vetting it")
-    cp = sub.add_parser("compress", help="make the book in use smaller (absorb / merge only) as a candidate; "
+    cp = sub.add_parser("compress", help="make the book in use smaller (trim, merge or trim2) as a candidate; "
                                          "`lmreview vet` keeps what loses no proven case (paid)")
     cp.add_argument("--max-cost", type=float, default=get("budget", "compress"), help="drafts, final texts, verify")
+    cp.add_argument("--stage", choices=["trim", "merge", "trim2"], default="merge",
+                    help="trim: rewrite long entries shorter; merge: merge or regroup entries; trim2: tighter trim")
+    cp.add_argument("--repair", action="store_true", help="rewrite only what vet undid on this stage's last candidate")
     i = sub.add_parser("init", help="start the state from rules/<book>.jsonl as v0001")
     i.add_argument("book")
     i.add_argument("--note", default="")
@@ -175,7 +178,7 @@ def main(argv: list[str] | None = None) -> None:
             print(f"book in use: {state.vname(state.init(a.book, a.note))}")
     elif a.cmd == "compress":
         from .state import compress_step
-        print(compress_step(a.max_cost))
+        print(compress_step(a.max_cost, stage=a.stage, repair=a.repair))
     elif a.cmd == "vet" and not a.rules:
         from .state import vet_step
         print(vet_step(a.max_cost, a.reps, a.all))

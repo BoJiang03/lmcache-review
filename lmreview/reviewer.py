@@ -129,6 +129,15 @@ def rule_examples(version: str) -> bool:
     return bool(re.search(r"^<!--\s*rules:\s*examples\s*-->$", prompt_path(version).read_text(), re.M))
 
 
+def rule_why(version: str) -> bool:
+    """Whether prompt `version` shows each rule's "why" (on unless `<!-- rules: nowhy -->`).
+
+    The why stays in the book as a record of where an entry comes from (like its evidence), but the
+    reviewer acts on when + expect; leaving it out shortens every review's rule list (2026-11-25).
+    """
+    return not re.search(r"^<!--\s*rules:\s*nowhy\s*-->$", prompt_path(version).read_text(), re.M)
+
+
 def reviewer_context(reviewer: str) -> tuple[str, ...]:
     """Extra workspace context the reviewer's prompt needs (the judge gets the same)."""
     return prompt_template(parse_reviewer(reviewer)[0])[1]
@@ -162,23 +171,23 @@ def applicable(rules: list[dict], paths: list[str]) -> list[dict]:
     return [r for r in use if not r.get("paths") or any(fnmatch.fnmatch(p, g) for p in paths for g in r["paths"])]
 
 
-def rule_lines(use: list[dict], examples: bool = False) -> list[str]:
+def rule_lines(use: list[dict], examples: bool = False, why: bool = True) -> list[str]:
     """One prompt line per rule: id, kind (and principle, if it is a specialization of one), text;
-    with `examples`, also the rule's first example (see rule_examples)."""
+    with `examples`, also the rule's first example (see rule_examples); with `why`, its why (rule_why)."""
     def text(r: dict) -> str:
         t = f"When {r['when']}: {r['expect']}" if r.get("expect") else r.get("rule", "")
-        t = t.rstrip(".") + "." + (f" Why: {r['why']}" if r.get("why") else "")
+        t = t.rstrip(".") + "." + (f" Why: {r['why']}" if why and r.get("why") else "")
         return t + (f" E.g. {r['examples'][0]}" if examples and r.get("examples") else "")
     return [f"- [{r['id']}] ({r.get('kind', 'principle')}" + (f", under {r['principle']}" if r.get("principle") else "")
             + f") {text(r)}" for r in use]
 
 
-def rules_section(rules: list[dict], paths: list[str], examples: bool = False) -> str:
+def rules_section(rules: list[dict], paths: list[str], examples: bool = False, why: bool = True) -> str:
     """The prompt section with the active rules that apply to `paths` (rules without paths always apply)."""
     use = applicable(rules, paths)
     if not use:
         return ""
-    lines = rule_lines(use, examples)
+    lines = rule_lines(use, examples, why)
     return ("\n\nTeam rules distilled from past LMCache reviews. Check the change against the ones "
             "that apply; when a finding follows from a rule, put its id in the finding's \"rule\" "
             "field. A rule finding must be about code this PR adds or changes: do not raise a rule "
@@ -214,7 +223,7 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
             raise ValueError("only= is for rule-only (-ro) reviewers")
         use = [r for r in use if r["id"] in only]
     if rules:
-        sec = rules_section(load_rules(rules), changed_paths(wt), rule_examples(version))
+        sec = rules_section(load_rules(rules), changed_paths(wt), rule_examples(version), rule_why(version))
         prompt = prompt.replace("\nFinish with one JSON block", sec + "\nFinish with one JSON block", 1) \
             if "\nFinish with one JSON block" in prompt else prompt + sec
     system = prompt_system(version)
@@ -249,7 +258,7 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
         stage (rule_stage); an older prompt version reads the workspace with tools."""
         t = part_path(version, "rulecheck").read_text()
         if "{context}" not in t and "{shared}" not in t:  # an older prompt: the agent reads the workspace with tools
-            p = t.format(rules="\n".join(rule_lines(use, rule_examples(version))), **pr_meta(raw))
+            p = t.format(rules="\n".join(rule_lines(use, rule_examples(version), rule_why(version))), **pr_meta(raw))
             return _parsed(llm.run(p, effort, cwd=str(wt), tools=tools, system=system, sandbox=sb), rulecheck=True)
         if not re.fullmatch(r"p[0-9a-f]{8}", version):  # a named prompt would silently get today's check
             raise ValueError(f"prompt {version} predates the tool-less rule check; use a p<sha8> version")
@@ -260,7 +269,7 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
             # the check, so the check reads them from the cache the pick wrote instead of paying for them again
             rsys = ((system or "") + "\n\n" + SHARED_HEAD.format(**pr_meta(raw)) + ctx).strip()
         check, pick = rule_stage(version, use, ctx, raw, rce, rsys)
-        p = t.format(rules="\n".join(rule_lines(check, rule_examples(version))), context=ctx, shared="", **pr_meta(raw))
+        p = t.format(rules="\n".join(rule_lines(check, rule_examples(version), rule_why(version))), context=ctx, shared="", **pr_meta(raw))
         r = _parsed(llm.run(p, rce, cwd=str(wt), tools="", system=rsys), rulecheck=True)
         if pick:  # rules left out in stage 1 get a verdict too: not applicable
             left = [x["id"] for x in use if x not in check]
@@ -424,7 +433,8 @@ def rule_stage(version: str, use: list[dict], ctx: str, raw: dict, effort: str,
         (the rules to check in full, the picking call's {"cost", "usage"} or None when not staged; a
          failed or empty pick checks every rule).
     """
-    words = sum(len(f"{r.get('when', '')} {r.get('expect', '')} {r.get('why', '')}".split()) for r in use)
+    words = sum(len(f"{r.get('when', '')} {r.get('expect', '')} {r.get('why', '') if rule_why(version) else ''}".split())
+                for r in use)
     if words <= int(prompt_params(version)["rulecheck_stage_words"]):
         return use, None
     try:

@@ -110,3 +110,13 @@
 {"time": "2026-11-24T23:51:21+00:00", "step": "distill", "name": "v0025c1", "parent": 24, "comments": 7, "not_rulable": 0, "summary": "rules/v0025c1.jsonl: 75 entries ({'principle': 67, 'knowledge': 8}) from 7 comments ({'learnable': 7}), $1.60"}
 {"time": "2026-11-24T23:52:36+00:00", "step": "promote", "version": 25, "parent": 24, "by": "vet", "from": "v0025c1"}
 {"time": "2026-11-24T23:52:36+00:00", "step": "vet", "name": "v0025c1", "verdict": "PASS", "cost": 1.1, "version": 25, "resolved": 6, "failed": 0, "needs_human": 1}
+{"time": "2026-11-25T00:20:07+00:00", "step": "judge", "reviewer": "p30fca59f+v0025@high-rc-ms", "runs": 8, "cost": 4.68, "covered": 14, "to_distill": 38, "resolved": 0, "no_gt": 0, "cited_helpful": 58, "cited_harmful": 7}
+{"time": "2026-11-25T00:20:11+00:00", "step": "requeue", "comments": ["3586414315"]}
+{"time": "2026-11-25T00:28:09+00:00", "step": "distill", "name": "v0026c1", "parent": 25, "comments": 39, "not_rulable": 6, "summary": "rules/v0026c1.jsonl: 86 entries ({'principle': 75, 'knowledge': 11}) from 39 comments ({'not_issue': 4, 'learnable': 33, 'rejected': 2}), $4.17"}
+{"time": "2026-11-25T00:35:24+00:00", "step": "promote", "version": 26, "parent": 25, "by": "vet", "from": "v0026c1"}
+{"time": "2026-11-25T00:35:24+00:00", "step": "vet", "name": "v0026c1", "verdict": "FAIL", "cost": 5.3, "version": 26, "resolved": 21, "failed": 12, "needs_human": 0}
+{"time": "2026-11-25T00:39:51+00:00", "step": "distill", "name": "v0027c1", "parent": 26, "comments": 12, "not_rulable": 3, "summary": "rules/v0027c1.jsonl: 88 entries ({'principle': 77, 'knowledge': 11}) from 12 comments ({'learnable': 9, 'not_issue': 3}), $2.22"}
+{"time": "2026-11-25T00:43:15+00:00", "step": "promote", "version": 27, "parent": 26, "by": "vet", "from": "v0027c1"}
+{"time": "2026-11-25T00:43:15+00:00", "step": "vet", "name": "v0027c1", "verdict": "FAIL", "cost": 1.79, "version": 27, "resolved": 9, "failed": 0, "needs_human": 0}
+{"time": "2026-11-25T00:45:56+00:00", "step": "compress", "name": "v0028c1", "parent": 27, "retired": 2, "cost": 1.16, "summary": "67 entries, 9958 words (from 68, 10158); 2 retired; $1.16"}
+{"time": "2026-11-25T00:48:06+00:00", "step": "vet", "name": "v0028c1", "verdict": "FAIL", "cost": 1.85, "version": 27, "resolved": 0, "failed": 0, "needs_human": 0}

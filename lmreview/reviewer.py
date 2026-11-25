@@ -10,6 +10,7 @@ import os
 import shutil
 import pathlib
 import re
+import subprocess
 
 from . import github, llm
 from .annotate import cid_of
@@ -247,16 +248,20 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
         current prompt it reads the diff and discussion without tools, on a long book after a picking
         stage (rule_stage); an older prompt version reads the workspace with tools."""
         t = part_path(version, "rulecheck").read_text()
-        if "{context}" not in t:  # an older prompt: the agent reads the workspace with tools
+        if "{context}" not in t and "{shared}" not in t:  # an older prompt: the agent reads the workspace with tools
             p = t.format(rules="\n".join(rule_lines(use, rule_examples(version))), **pr_meta(raw))
             return _parsed(llm.run(p, effort, cwd=str(wt), tools=tools, system=system, sandbox=sb), rulecheck=True)
         if not re.fullmatch(r"p[0-9a-f]{8}", version):  # a named prompt would silently get today's check
             raise ValueError(f"prompt {version} predates the tool-less rule check; use a p<sha8> version")
-        ctx = rulecheck_context(wt)
+        ctx = rulecheck_context(wt, symbols="SYMBOLS" in t)  # older prompt versions: as they ran
         rce = str(prompt_params(version)["rulecheck_effort"])  # its own effort, part of the prompt id
-        check, pick = rule_stage(version, use, ctx, raw, rce, system)
-        p = t.format(rules="\n".join(rule_lines(check, rule_examples(version))), context=ctx, **pr_meta(raw))
-        r = _parsed(llm.run(p, rce, cwd=str(wt), tools="", system=system), rulecheck=True)
+        rsys = system
+        if "{shared}" in t:  # the PR and its context go in the system prompt, the same for the picking stage and
+            # the check, so the check reads them from the cache the pick wrote instead of paying for them again
+            rsys = ((system or "") + "\n\n" + SHARED_HEAD.format(**pr_meta(raw)) + ctx).strip()
+        check, pick = rule_stage(version, use, ctx, raw, rce, rsys)
+        p = t.format(rules="\n".join(rule_lines(check, rule_examples(version))), context=ctx, shared="", **pr_meta(raw))
+        r = _parsed(llm.run(p, rce, cwd=str(wt), tools="", system=rsys), rulecheck=True)
         if pick:  # rules left out in stage 1 get a verdict too: not applicable
             left = [x["id"] for x in use if x not in check]
             r["verdicts"] = list(r.get("verdicts") or []) + [
@@ -301,19 +306,104 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
     return {**out, "cost": sum(x["cost"] for x in e.runs) + merge_cost, **keep, **meta}
 
 
-def rulecheck_context(wt: pathlib.Path) -> str:
-    """What the tool-less rule check reads: the PR's diff and the review discussion so far.
+SYMBOLS_MAX, SYMBOL_LINES, SYMBOLS_CHARS = 25, 8, 14000  # names looked up, lines per name, section size
+SYMBOL_FILES = 12  # files listed per name beyond its shown lines
+_SRC = ("*.py", "*.pyi", "*.c", "*.cc", "*.cpp", "*.cu", "*.cuh", "*.h", "*.hpp", "*.md", "*.rst", "*.toml", "*.yaml")
+_COMMON = {"self", "None", "True", "False", "return", "import", "from", "class", "def", "init", "main", "test",
+           "args", "kwargs", "data", "value", "name", "type", "list", "dict", "self.", "config"}
+
+
+def diff_symbols(diff: str) -> list[str]:
+    """Names a rule may need to check outside the diff: functions and classes the diff defines or
+    changes, and identifiers in backticks on changed lines of docs (what the docs claim about code).
+    Doc names first, then definitions, at most SYMBOLS_MAX."""
+    docs, defs, path = [], [], ""
+    for line in diff.splitlines():
+        if line.startswith("diff --git "):
+            path = line.rsplit(" b/", 1)[-1]
+            continue
+        if line.startswith(("+++ a/", "+++ b/", "--- a/", "--- b/", "+++ /dev/null", "--- /dev/null")):
+            continue
+        if line.startswith("@@"):
+            m = re.search(r"\b(?:def|class)\s+(\w+)", line)
+            if m:
+                defs.append(m.group(1))
+            continue
+        if not line[:1] in "+-" or line[:3] in ("+++", "---"):
+            continue
+        if path.endswith((".md", ".rst")):
+            docs += [x.strip("()") for x in re.findall(r"`([A-Za-z_][\w.]*(?:\(\))?)`", line)]
+        else:
+            defs += re.findall(r"^[+-]\s*(?:async\s+)?(?:def|class)\s+(\w+)", line)
+    out = []
+    for x in docs + defs:
+        x = x.split(".")[-1]
+        # a code name: has an underscore or inner capital (skips words like "cuda", "auto", "torch")
+        if len(x) >= 4 and x not in _COMMON and x not in out and ("_" in x.strip("_") or re.search(r"[a-z][A-Z]", x)):
+            out.append(x)
+    return out[:SYMBOLS_MAX]
+
+
+def symbol_context(wt: pathlib.Path, diff: str) -> str:
+    """Where the diff's names are defined and used in the repository at this commit (grep), so the
+    tool-less rule check can verify claims that reach outside the diff (callers, which modes use a
+    function). Every name gets the same share of SYMBOLS_CHARS (definitions first, then uses outside
+    tests). Empty when the diff names nothing to look up."""
+    found = []
+    for name in diff_symbols(diff):
+        try:
+            r = subprocess.run(["grep", "-rnwI", *[f"--include={g}" for g in _SRC], "--exclude-dir=vllm",
+                                "--exclude-dir=dev", "--exclude=PR_HISTORY.md", "--", name, "."],
+                               cwd=wt, capture_output=True, text=True, timeout=20)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        hits = [h[2:] if h.startswith("./") else h for h in r.stdout.splitlines()]
+        if not hits:
+            continue
+        hits.sort(key=lambda h: (not re.search(rf"\b(def|class)\s+{re.escape(name)}\b", h), "test" in h.split(":")[0]))
+        found.append((name, hits))
+    if not found:
+        return ""
+    per = max(2, min(SYMBOL_LINES, SYMBOLS_CHARS // (len(found) * 150)))  # lines per name, to fit the budget
+    lines: list[str] = []
+    for n_done, (name, hits) in enumerate(found):
+        if sum(len(x) + 1 for x in lines) > SYMBOLS_CHARS:
+            lines.append(f"(not shown: {', '.join(x for x, _ in found[n_done:])})")
+            break
+        files: dict[str, int] = {}
+        for h in hits:
+            files[h.split(":")[0]] = files.get(h.split(":")[0], 0) + 1
+        lines += [f"## {name} ({len(hits)} lines in {len(files)} files)"] + [h[:140] for h in hits[:per]]
+        if len(hits) > per:  # the rest as the files they are in: which modules and paths use the name
+            rest = sorted(files, key=lambda f: ("test" in f, f))
+            lines.append("also in: " + ", ".join(f"{f} ({files[f]})" for f in rest[:SYMBOL_FILES])
+                         + (f", ... {len(rest) - SYMBOL_FILES} more files" if len(rest) > SYMBOL_FILES else ""))
+    return "\n".join(lines)
+
+
+SHARED_HEAD = "You review pull request #{number} of LMCache ({title}). Its diff and context:\n\n"
+
+
+def rulecheck_context(wt: pathlib.Path, symbols: bool = True) -> str:
+    """What the tool-less rule check reads: the PR's diff, the review discussion so far, and where the
+    names the diff defines or its docs mention are defined and used in the repository (symbol_context).
 
     Args:
-        wt: the sample's workspace (PR.diff, PR_HISTORY.md).
+        wt: the sample's workspace (PR.diff, PR_HISTORY.md, the source tree at the commit).
+        symbols: add the SYMBOLS section (prompt versions whose rule check part reads it).
 
     Returns:
-        The prompt text of both, as markdown sections.
+        The prompt text, as markdown sections.
     """
-    parts = ["# PR.diff\n```diff\n" + (wt / "PR.diff").read_text(errors="replace") + "\n```"]
+    diff = (wt / "PR.diff").read_text(errors="replace")
+    parts = ["# PR.diff\n```diff\n" + diff + "\n```"]
     h = wt / "PR_HISTORY.md"
     if h.exists():
         parts.append("# PR_HISTORY.md (the review discussion so far)\n" + h.read_text(errors="replace"))
+    sym = symbol_context(wt, diff) if symbols else ""
+    if sym:
+        parts.append("# SYMBOLS (grep of the repository at this commit: where names from the diff and its docs are "
+                     "defined and used; may be incomplete)\n```\n" + sym + "\n```")
     return "\n\n".join(parts)
 
 
@@ -343,7 +433,7 @@ def rule_stage(version: str, use: list[dict], ctx: str, raw: dict, effort: str,
         return use, None
     lines = "\n".join(f"- {r['id']}: {r.get('when') or r.get('rule', '')}" for r in use)
     try:
-        res = llm.run(t.format(rules=lines, context=ctx, **pr_meta(raw)), effort, tools="", system=system)
+        res = llm.run(t.format(rules=lines, context=ctx, shared="", **pr_meta(raw)), effort, tools="", system=system)
     except Exception:  # a failed pick checks every rule rather than losing the rule check
         return use, None
     try:

@@ -35,7 +35,7 @@ import pathlib
 import re
 import shutil
 
-from typing import Iterator
+from typing import Callable, Iterator
 
 from .config import PROMPTS, RULES, Config
 from .annotate import cid_of, norm
@@ -296,8 +296,97 @@ def to_distill(rows: dict[int, dict] | None = None, prs: set[int] | None = None)
 
 def tries_note(r: dict) -> str:
     """What earlier distill attempts made of this comment, for the next attempt."""
+    def rc(t: dict) -> str:  # the rule check's own verdict on the tried entry, on this comment's sample
+        return "".join(f"; the rule check said of {v['entry']}: applies={v.get('applies')}, "
+                       f"violated={v.get('violated')}: {v.get('why')}" for v in t.get("rulecheck") or [])
     return " | ".join(f"attempt {i + 1} ({t['book']}, entries {t.get('entries') or 'none'}): {t['result']}"
-                      + (f" ({t['why']})" if t.get("why") else "") for i, t in enumerate(r.get("tries") or []))
+                      + (f" ({t['why']}{rc(t)})" if t.get("why") else "") for i, t in enumerate(r.get("tries") or []))
+
+
+MAX_REQUEUES = int(get("distill", "max_requeues"))  # times a parked (needs_human) comment is given another chance
+
+
+def distill_prompt_id() -> str:
+    """Short hash of the prompts that decide what is learned and how (attribute, write, consolidate):
+    a parked comment is retried once they change."""
+    from . import distill as d
+    return hashlib.sha256("\0".join((d.ATTRIBUTE, d.WRITE, d.MERGE_WRITE, d.GENERAL, d.CONSOLIDATE)).encode()).hexdigest()[:8]
+
+
+NO_EFFECT = "the reviewer did not apply the entry"
+
+
+def tested_entries(r: dict, book: dict, text: Callable) -> set[str]:
+    """Entries of `book` that vet actually ran on ledger row `r`'s comment, without effect, in their
+    current text. A try only counts when vet tested the entry there (NO_EFFECT) and the try records the
+    book after it ("after", since 2026-11-24) with the same text: an entry that only appeared in a try,
+    was promoted untested, or changed since, has not been tried on this comment."""
+    done = set()
+    for t in r.get("tries") or []:
+        ver = t.get("after")
+        if t.get("why") != NO_EFFECT or not ver or not book_path(ver).exists():
+            continue
+        was = {e["id"]: e for e in load_book(ver)}
+        done |= {e for e in t.get("entries") or [] if e in book and e in was and text(book[e]) == text(was[e])}
+    return done
+
+
+def requeue_parked(max_cost: float = 0.5, cfg: Config | None = None) -> set[int]:
+    """Give parked (needs_human) comments another chance when the workflow has changed where it matters,
+    at most MAX_REQUEUES times each; returns the PRs of the comments put back to to_distill.
+
+    - the distill prompts (attribute, write, consolidate) changed since it was parked;
+    - parked after failed attempts: the book in use has an entry the attempts did not have. One COVERAGE
+      call per batch lists the active entries each comment is an instance of; a comment is requeued
+      when one of them was not actually tested on it in its current text (tested_entries).
+    A person's decision (a note starting "human") is never reopened."""
+    from .distill import COVERAGE, BATCH, _ask, _fmt, _id
+    from .budget import capped_map
+    from .score import load_gold
+    cfg, rows = cfg or Config(), ledger()
+    parked = [r for r in rows.values() if r["status"] == "needs_human" and r.get("requeues", 0) < MAX_REQUEUES
+              and not str(r.get("note") or "").startswith("human")]
+    if not parked or not head():
+        return set()
+    book = {r["id"]: r for r in load_book(vname(head())) if r.get("status", "active") == "active"}
+    text = lambda r: (r.get("when"), r.get("expect"), r.get("examples"))  # noqa: E731
+    back: dict = {}
+    pid = distill_prompt_id()
+    for r in parked:
+        if (r.get("parked") or {}).get("prompt") != pid:
+            back[r["comment"]] = "the distill prompts changed since it was parked"
+    tried = [r for r in parked if r["comment"] not in back and r.get("tries")]
+    if tried and max_cost > 0:
+        _, cm = load_gold(cfg)
+        cs = [cm[r["comment"]] for r in tried if r["comment"] in cm]
+        rtext = "\n".join(f"{i}: when {r.get('when')} -> {r.get('expect')}" for i, r in book.items())
+        res, _ = capped_map(lambda b: _ask(COVERAGE.format(rules=rtext, comments="\n\n".join(_fmt(c, False) for c in b)),
+                                           "high", cfg), [cs[i:i + BATCH] for i in range(0, len(cs), BATCH)], 2,
+                            max_cost, label=lambda b: f"parked coverage {len(b)}")
+        hits = {_id(x.get("id")): [e for e in x.get("rules") or [] if e in book]
+                for part in res if isinstance(part, list) for x in part if isinstance(x, dict)}
+        for r in tried:
+            done = tested_entries(r, book, text)
+            new = [e for e in hits.get(r["comment"]) or [] if e not in done]
+            if new:
+                back[r["comment"]] = f"the book has changed entries for it: {', '.join(new)}"
+    if not back:
+        return set()
+    with lock():  # re-read under the lock: another command may have written the ledger meanwhile
+        rows = ledger()
+        back = {c: w for c, w in back.items() if c in rows and rows[c]["status"] == "needs_human"}
+        for c, why in back.items():
+            _requeue(rows[c], why)
+        save_ledger(rows)
+        log("requeue", comments=[str(c) for c in back])
+    return {rows[c]["pr"] for c in back}
+
+
+def _requeue(r: dict, why: str) -> None:
+    """Put a parked ledger row back to to_distill, with a fresh MAX_TRIES budget."""
+    r.update(status="to_distill", requeues=r.get("requeues", 0) + 1, requeued_at=len(r.get("tries") or []),
+             requeued={"date": _now()[:10], "book": vname(head()), "why": why})
+    note(f"  requeued #{r['pr']} c{r['comment']}: {why}")
 
 
 def judge(split: str = "train", prs: set[int] | None = None, max_cost: float = 10.0, rv: str | None = None,
@@ -464,7 +553,8 @@ def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: 
                 r.update(status="not_rulable", note=f"{a['kind']}: {a.get('reason') or a.get('why') or ''}"[:300])
                 n_out += 1
             elif r and a.get("kind") == "contested":  # only the PR author objected: a person decides
-                r.update(status="needs_human", note=f"contested: {a.get('why') or ''}"[:300])
+                r.update(status="needs_human", note=f"contested: {a.get('why') or ''}"[:300],
+                         parked={"by": "attribute", "prompt": distill_prompt_id(), "date": _now()[:10]})
                 n_out += 1
         save_ledger(rows)
         log("distill", name=name, parent=parent, comments=len(ids), not_rulable=n_out, summary=msg)
@@ -595,6 +685,15 @@ def _record_compress(c: dict, cand: list[dict], J: dict, cfg: Config) -> str:
             f"vet's runs: {valid} valid, {bad} refuted")
 
 
+UNTESTED = "its entry was kept but not tested on this comment"
+
+
+def counted_tries(r: dict) -> int:
+    """Failed distill attempts that count toward MAX_TRIES: those since the last requeue whose entry vet
+    actually tested on the comment (an untested one says nothing about whether the comment is learnable)."""
+    return sum(1 for t in r.get("tries", [])[r.get("requeued_at", 0):] if t.get("why") != UNTESTED)
+
+
 def vet_step(max_cost: float | None = None, reps: int | None = None, everything: bool = False, cfg: Config | None = None) -> str:
     """Vet the candidate against the book in use. What works becomes the next version (the rest is
     dropped or reverted, see vet._passing); each comment of the candidate is then resolved, or gets a
@@ -612,7 +711,8 @@ def vet_step(max_cost: float | None = None, reps: int | None = None, everything:
         note(f"▶ vet {c['name']} against {vname(c['parent'])} ({len(c['comments'])} comments); cap ${max_cost:.0f}")
         conf = config()
         report = vet(c["name"], vname(c["parent"]), prompt_id(), conf["effort"], "-ro" + ("-sh" if conf["shell"] else ""),
-                     reps=reps, max_cost=max_cost, everything=everything, cfg=cfg, out=res)
+                     reps=reps, max_cost=max_cost, everything=everything, cfg=cfg, out=res,
+                     targets=set(c["comments"]))
         if max_cost <= 0 or not res:
             return report
         if res["verdict"] == "INCOMPLETE":
@@ -630,10 +730,14 @@ def vet_step(max_cost: float | None = None, reps: int | None = None, everything:
             body = " ".join((gcm.get(cid_of(e)) or gcm.get(e) or {}).get("body", "").split())[:160]
             lost_by.setdefault(replaced_by.get(old) or "", []).append(f"{old} lost its proven case c{e}: {body!r}")
         ents: dict[int, list[str]] = {}
-        old_ev = {norm(e) for r in load_book(vname(c["parent"])) for e in r.get("evidence") or []}
+        par = {r["id"]: r for r in load_book(vname(c["parent"]))}
+        old_ev = {norm(e) for r in par.values() for e in r.get("evidence") or []}
+        tg = {norm(i) for i in c["comments"]}
         for r in cand:
+            # an entry holding a target comment as evidence counts as its entry even when the parent already
+            # held it (a revision made for it, or an earlier untested promotion): vet tests it there (targets)
             for e in r.get("evidence") or []:
-                if norm(e) not in old_ev:
+                if norm(e) not in old_ev or norm(e) in tg:
                     ents.setdefault(norm(e), []).append(r["id"])
         comp = _record_compress(c, cand, J, cfg or Config()) if c.get("kind") == "compress" else ""
         if comp:
@@ -657,16 +761,23 @@ def vet_step(max_cost: float | None = None, reps: int | None = None, everything:
                 continue
             why = ("the two attribution calls disagreed on whether it is learnable" if not es and norm(i) in unconfirmed
                    else "distill made no entry for it" if not es else
-                   "the reviewer did not apply the entry" if any(e in J["no_effect"] for e in es) else
+                   NO_EFFECT if any(e in J["no_effect"] for e in es) else
                    "dropped: a linked change made an existing entry worse"
                    + ("; " + "; ".join(x for e in es for x in lost_by.get(e, [])) + ". A broader entry must also"
                       " make the reviewer raise these" if any(lost_by.get(e) for e in es) else "")
                    if not any(e in kept_ids for e in es) else
-                   "its entry was kept but not tested on this comment")
-            r.setdefault("tries", []).append({"book": c["name"], "entries": es, "result": "failed", "why": why,
-                                              "date": _now()[:10]})
-            if len(r["tries"]) >= MAX_TRIES:
+                   UNTESTED)
+            tr = {"book": c["name"], "after": vname(n), "entries": es, "result": "failed", "why": why,
+                  "date": _now()[:10]}
+            # the rule check's own reason on this comment's sample, so the next write sees why it did not fire
+            seen = [{"entry": x["entry"], **v} for x in res.get("rows") or [] if x["entry"] in es
+                    and norm(i) in {norm(cc) for cc in x["comments"]} for v in x.get("verdicts") or []]
+            if seen:
+                tr["rulecheck"] = [dict(v, why=str(v.get("why") or "")[:300]) for v in seen[-2:]]
+            r.setdefault("tries", []).append(tr)
+            if counted_tries(r) >= MAX_TRIES:
                 r["status"] = "needs_human"
+                r["parked"] = {"by": "vet", "prompt": distill_prompt_id(), "date": _now()[:10]}
                 out["needs_human"].append(i)
             else:
                 out["failed"].append(i)
@@ -770,6 +881,7 @@ def round_(prs: list[int | str], review_cost: float | None = None, judge_cost: f
         st.cost += s1.cost
         out.append(f"review {rv}: ${s1.cost:.2f}")
         out.append(judge("train", nums, judge_cost, rv, cfg))
+        nums = set(nums) | requeue_parked(cfg=cfg)  # parked comments the changed workflow may now learn
         for k in range(MAX_TRIES):
             left = to_distill(prs=nums)
             if not left:

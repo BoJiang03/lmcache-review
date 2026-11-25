@@ -186,7 +186,7 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
 
     rows = []
     for i, t in cases:
-        rv, flags, anys, bads, ok_ids = reviewer_of(t), [], [], [], related(i)
+        rv, flags, anys, bads, ok_ids, verdicts = reviewer_of(t), [], [], [], related(i), []
         for k in range(1, reps + 1):
             res = done.get((rv, t["target"], k))
             if res is None or res["score"] is None:
@@ -201,13 +201,18 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
                        for x in (hkey(res["score"], h), cid_of(hkey(res["score"], h)))}
             invalid = {a["id"] for a in res["score"].get("ai") or [] if refuted(a)}
             bads.append(len(cites & invalid))
+            run = res["run"]  # the rule check's own verdict on the entry: why it did or did not fire
+            verdicts += [{k2: v.get(k2) for k2 in ("applies", "violated", "why")}
+                         for x in [run, *(run.get("runs") or [])] for v in x.get("verdicts") or []
+                         if isinstance(v, dict) and v.get("rule") == i]
             flags.append(all(c in hit for c in t["comments"]))
             anys.append(all(c in hit_any for c in t["comments"]))
         ran = [f for f in flags if f is not None]
         rows.append({"entry": i, "target": t["target"], "comments": t["comments"], "reviewer": rv, "runs": flags,
                      "passed": any(ran) if ran else None,  # matched by a finding citing the entry (or linked)
                      "any": any(anys) if anys else None,  # matched by any finding
-                     "invalid": min(bads) if bads else None})  # findings citing the entry judged invalid
+                     "invalid": min(bads) if bads else None,  # findings citing the entry judged invalid
+                     "verdicts": verdicts})  # the rule check's verdicts on the entry, one per run
     return rows, spent[0]
 
 

@@ -84,7 +84,8 @@ def lint(r: dict) -> list[str]:
 def vet(book: str, base: str | None = None, prompt: str | None = None, effort: str | None = None,
         suffix: str | None = None, reps: int = 1,
         max_cost: float = 30.0, everything: bool = False, every_sample: bool = False, retry: bool = True,
-        write: str | None = None, cfg: Config | None = None, out: dict | None = None) -> str:
+        write: str | None = None, cfg: Config | None = None, out: dict | None = None,
+        targets: set | None = None) -> str:
     """Vet rulebook `book` against `base`; see the module docstring.
 
     Args:
@@ -100,6 +101,9 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         retry: give each failing case one more run with the new book before it counts.
         write: also write rules/<write>.jsonl: the new book without the changes that failed.
         cfg: configuration.
+        targets: the comments the candidate was distilled for. Every entry that carries one of them as
+            evidence is tested on it, even when the base already had that evidence (a revision made for it,
+            or one an earlier vet promoted untested).
         out: filled with the structured result for state.vet: {"verdict", "J", "effect", "kept", "cost"}.
 
     Returns:
@@ -130,8 +134,9 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     rel = _related_ids(new_rules)
     old_ev = {i: {norm(e) for e in r.get("evidence") or []} for i, r in O.items()}
     in_base = set().union(*old_ev.values()) if old_ev else set()
+    tg = {norm(t) for t in targets or ()}
     effect = [(i, norm(e)) for i, r in N.items() for e in r.get("evidence") or []
-              if norm(e) not in in_base and norm(e) in where]  # comments new to the book (a parent's
+              if norm(e) in where and (norm(e) not in in_base or norm(e) in tg)]  # comments new to the book (a parent's
     # inherited evidence is not new: its members' source comments are replayed as side effects)
     if not every_sample:  # one sample per PR: the one holding most of the new comments
         n_in: dict = {}
@@ -289,7 +294,9 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     reverted = {i for i, _ in J["lost"]} | {i for i, _ in J["not_fixed"]} | {i for i in J["no_effect"] if i in O}  # back to the base text: untested
     tests = {i: ts for i, ts in tests.items() if i not in reverted}
     fails = J["no_effect"] or J["lost"] or J["not_fixed"]
-    verdict = "FAIL" if fails else ("INCOMPLETE" if J["unknown"] or J["s_unknown"] or J["f_unknown"] else "PASS")
+    # anything left untested (cost cap, a failed run) makes the whole vet INCOMPLETE, even when some entries
+    # already failed: promoting then would keep untested entries and skip their side-effect replays
+    verdict = "INCOMPLETE" if J["unknown"] or J["s_unknown"] or J["f_unknown"] else "FAIL" if fails else "PASS"
     n_eff = len({i for i, _ in effect})
     L += ["## 2. Effect (leaky: rules on their own source comments)", "",
           f"entries working: {len(J['works'])}/{n_eff}; not working: {J['no_effect'] or 'none'}"
@@ -303,7 +310,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     L += [f"- LOST {i}{' (retired)' if i in retired else ''} #{tgt(e)} c{e} ({cm[e]['author']}: "
           f"{cm[e]['body'][:100]!r})" for i, e in J["lost"]]
     if out is not None:
-        out.update(verdict=verdict, J=J, effect=effect, kept=_with_tests(_passing(new_rules, old_rules, O, J, rel), tests),
+        out.update(verdict=verdict, J=J, effect=effect, rows=list(Nw.values()), kept=_with_tests(_passing(new_rules, old_rules, O, J, rel), tests),
                    cost=c_b + c_n + c_r, retired=retired)
     if write:
         kept_book = _with_tests(_passing(new_rules, old_rules, O, J, rel), tests)

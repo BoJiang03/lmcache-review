@@ -29,6 +29,7 @@ consolidate_drafts = 3 # tidy the whole book: drafts run in parallel; a change n
 induce = false         # step 5: principles over standalone entries (their parents earned nothing)
 min_signal_prs = 2     # revise / retire on failure signals alone: they must come from this many PRs
 max_tries = 2          # distill attempts per comment before it goes to a person (needs_human)
+max_requeues = 2       # times a parked (needs_human) comment gets another chance when the workflow changed (state.requeue_parked)
 
 [vet]
 side_per_entry = 2     # side effects: source comments replayed per affected entry

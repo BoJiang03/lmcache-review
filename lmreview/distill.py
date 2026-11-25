@@ -1053,11 +1053,15 @@ For each entry:
    "when" by which a reviewer recognizes that situation in a diff, and the ask of "expect" it must make. Use
    the reviewers' own words to find the condition that decides it (e.g. "new types that only wrap or
    re-derive what the shared component holds", where "duplicate types" lets a reviewer decide that a
-   wrapper is not a duplicate).
+   wrapper is not a duplicate). The clause QUOTES, in double quotes, the exact words of your new "when" or
+   "expect" that carry the comment's own detail: the specific thing its reviewer pointed at (e.g. "hit
+   downgraded to zero before allocation", "moving out frees nothing"), not a category that also covers it
+   ("a value changing before its use"). A quote not found word for word in the new text refuses the entry.
 2. Then write the shortest "when", "expect" and "why" that satisfy every "keeps" line. Each entry shows its
    budget: aim at or under it @WHY@.
 3. Cut, in this order: detail in "why"; alternative remedies (keep the one the reviewers asked for);
-   exception clauses; lists of synonyms or near-equal cases; repeated "flag ..." sentences; instructions on
+   exception clauses no proven comment needs (keep one that answers the excuse a reviewer would otherwise
+   accept, e.g. "even if it removes duplication"); lists of synonyms or near-equal cases; repeated "flag ..." sentences; instructions on
    how to review ("scan every added line", "do not wait to know the callers"), unless a "keeps" line needs
    one; sub-cases no proven comment needs.
 4. Generalize where it shortens: a list of sub-cases may become the one kind of situation they share, as
@@ -1065,12 +1069,7 @@ For each entry:
    entry also catches the next instance nobody listed.
 5. Keep the project facts of a knowledge entry (which component holds what, where it lives) word for word.
 6. Never move a deciding condition into "examples": the reviewer does not see them.
-7. An entry with DESIGN FLAGS (a heuristic) must lose them unless the flag is wrong for it (an ordered
-   layout is one request; a project fact may say to flag every occurrence). OVERRIDE: replace the clause that overrides the reviewer's
-   judgment ("even if ...", "flag each", "check every ...") by the concrete signal the proven comment gives.
-   PACKED: state the one kind of situation the listed sub-cases share, keeping each proven comment's
-   concrete pattern as a short "e.g." clause; "expect" states what they share, not a list of asks.
-   UNCLEAR: rewrite so an engineer who knows the codebase but never saw the source PR can tell what
+7. UNCLEAR (shown under an entry): rewrite so an engineer who knows the codebase but never saw the source PR can tell what
    situation is meant and what to ask; replace the named phrase by the plain mechanism (it may cost words).
 @FEEDBACK@
 Entries:
@@ -1113,15 +1112,37 @@ def trim_budget(r: dict) -> int:
     return TRIM_BASE + TRIM_PER * max(0, n - 1)
 
 
+def trim_flags(r: dict) -> list[str]:
+    """The design flags trim acts on: UNCLEAR only. OVERRIDE / PACKED text often is the signal a proven
+    comment needs (v0030c1 and fx01, 2026-11-25: rewriting it lost cases); they stay in vet's report."""
+    return [f for f in design_flags(r) if f.startswith("UNCLEAR")]
+
+
+def _proven_of(r: dict) -> list:
+    return _uniq([c for t in r.get("tests") or [] if t.get("result") == "corrected" for c in t.get("comments") or []])
+
+
+def _contract_gap(r: dict, new: dict, keeps: list) -> list[str]:
+    """Proven comments of `r` whose "keeps" line quotes nothing found word for word in the `new` text."""
+    flat = lambda t: " ".join(str(t).lower().split())  # noqa: E731
+    text = flat(f"{new.get('when', '')} {new.get('expect', '')}")
+    quoted: dict[str, list[str]] = {}
+    for k in keeps or []:
+        if isinstance(k, dict):
+            quoted.setdefault(str(k.get("comment")).split(":")[0], []).extend(re.findall(r'"([^"]{3,})"', str(k.get("clause"))))
+    return [str(c) for c in _proven_of(r)
+            if not any(flat(q) in text for q in quoted.get(str(c).split(":")[0], []))]
+
+
 def _trim_entry_text(r: dict, cm: dict, fb: dict | None) -> str:
     """One entry for TRIM: its text, budget, the proven comments in full and other sources briefly."""
-    proven = _uniq([c for t in r.get("tests") or [] if t.get("result") == "corrected" for c in t.get("comments") or []])
+    proven = _proven_of(r)
     body = lambda c, n: " ".join(str((cm.get(c) or cm.get(cid_of(c)) or {}).get("body", "")).split())[:n]  # noqa: E731
     who = lambda c: (cm.get(c) or cm.get(cid_of(c)) or {})  # noqa: E731
     lines = [f"### {r['id']} ({r.get('kind')}; when+expect {len((str(r.get('when')) + ' ' + str(r.get('expect'))).split())}"
              f" words, budget {trim_budget(r)})",
              f"when: {r.get('when')}", f"expect: {r.get('expect')}", f"why: {r.get('why') or ''}",
-             *([f"DESIGN FLAGS (fix these): {'; '.join(design_flags(r))}"] if design_flags(r) else []),
+             *([f"UNCLEAR (fix this): {'; '.join(trim_flags(r))}"] if trim_flags(r) else []),
              f"examples (NOT shown to the reviewer): {'; '.join(r.get('examples') or [])}",
              "proven comments (the reviewer must still raise each):"]
     lines += [f"- [{c}] PR #{who(c).get('pr')} {who(c).get('author')}: {body(c, 1500)}" for c in proven] or ["- (none)"]
@@ -1166,7 +1187,7 @@ def trim(out: str, base: str, cfg: Config | None = None, effort: str = "high", m
     wc = lambda r: len((str(r.get("when")) + " " + str(r.get("expect"))).split())  # noqa: E731
     sel = [r for r in act.values() if (r["id"] in only if only is not None else
                                        wc(r) > trim_budget(r) + over_budget if over_budget is not None else
-                                       wc(r) > min_words or bool(design_flags(r)))]
+                                       wc(r) > min_words or bool(trim_flags(r)))]
     sel.sort(key=lambda r: (r.get("kind") or "", ",".join(r.get("paths") or []), r["id"]))
     batches = [sel[i:i + batch] for i in range(0, len(sel), batch)]
     fb_text = TRIM_FEEDBACK if feedback else ""
@@ -1185,8 +1206,12 @@ def trim(out: str, base: str, cfg: Config | None = None, effort: str = "high", m
             if not r or not d.get("expect") or not d.get("when"):
                 continue
             new = {"when": d["when"], "expect": d["expect"]}  # "why" stays as written: a record, not shown
-            if _size(new) >= _size(r) and not (design_flags(r) and not design_flags(new)):
+            if _size(new) >= _size(r) and not (trim_flags(r) and not trim_flags(new)):
                 changes.append({"op": "trim-refused", "rules": [r["id"]], "why": f"not shorter ({_size(new)} vs {_size(r)})"})
+                continue
+            if gap := _contract_gap(r, new, d.get("keeps") or []):
+                changes.append({"op": "trim-refused", "rules": [r["id"]],
+                                "why": f"contract quotes nothing of the new text for proven comment(s) {gap}"})
                 continue
             r["history"] = list(r.get("history") or []) + [{"version": r.get("version", 1), "until": today, "by": out,
                                                              "reason": "trim", **{k: r.get(k) for k in ("when", "expect", "why")}}]

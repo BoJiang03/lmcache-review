@@ -44,7 +44,8 @@ as "related" (e.g. the other side of an inconsistency, a doc or caller that must
 Locations may be outside the diff. Lines refer to the file at this commit ("side": "new"), or to
 the base version for deleted code ("side": "old").
 
-Finish with one JSON block and nothing after it:
+Finish with one JSON block alone: a program reads it, not a person, so write no text before or
+after it. Keep each "body" to the point: what is wrong, why it matters, what to change.
 
 ```json
 [

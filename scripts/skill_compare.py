@@ -54,7 +54,8 @@ from lmreview.score import WANT, load_gold, score_one  # noqa: E402
 from lmreview.settings import get  # noqa: E402
 from lmreview.workspace import cached_pr, sample_workspace  # noqa: E402
 
-REVIEWER = "p29f48666+v0032@high-rc"  # the formal review: all Opus, design-doc prompt
+REVIEWER = os.environ.get("SC_REVIEWER", "p29f48666+v0032@high-rc")  # default: the formal review, all Opus
+TAG = REVIEWER.replace("+", "_").replace("@", "_")  # lmreview runs, scores and results are kept per reviewer
 EFFORT = "high"
 SKILL_TOOLS = "Read,Grep,Glob,Bash,Agent"
 EXCLUDE_PRS = {6212}
@@ -301,7 +302,7 @@ def parse_issues(text: str) -> list[dict] | None:
 
 def run_lmreview(cfg: Config, s: dict, budget: Budget) -> dict:
     """Arm B on sample `s` as replay.replay_one runs it; cached in lmreview/runs/."""
-    p = OUT / "lmreview" / "runs" / REVIEWER.replace("+", "_").replace("@", "_") / f"{key_of(s)}.json"
+    p = OUT / "lmreview" / "runs" / TAG / f"{key_of(s)}.json"
     if p.exists():
         return json.loads(p.read_text())
     budget.check("lmreview")
@@ -340,8 +341,9 @@ def blind(run: dict, seed: int = 0) -> tuple[dict, dict]:
 def judge(cfg: Config, s: dict, arm: str, run: dict, budget: Budget) -> dict:
     """Blind `run` and grade it with score.score_one; cached in <arm>/scores/."""
     judged, mp = blind(run)
-    save(OUT / arm / "blind" / f"{key_of(s)}.json", {"judged": judged, "map": mp})
-    sp = OUT / arm / "scores" / f"{key_of(s)}.json"
+    d = OUT / arm / (TAG if arm == "lmreview" else "")
+    save(d / "blind" / f"{key_of(s)}.json", {"judged": judged, "map": mp})
+    sp = d / "scores" / f"{key_of(s)}.json"
     if not sp.exists():
         budget.check("judge")
     _, cm = load_gold(cfg)
@@ -414,7 +416,7 @@ def run_many(cfg: Config, xs: list[dict], budget: Budget, workers: int) -> None:
 
     def one(x: dict) -> str:
         s = x["sample"]
-        rp = OUT / "results" / f"{key_of(s)}.json"
+        rp = OUT / "results" / TAG / f"{key_of(s)}.json"
         if rp.exists():
             return f"#{s['pr']}: cached"
         try:
@@ -433,7 +435,7 @@ def run_many(cfg: Config, xs: list[dict], budget: Budget, workers: int) -> None:
 
 def summary() -> None:
     """Recall of human points (by half and severity), findings, valid share, cost and time per arm."""
-    rs = [json.loads(p.read_text()) for p in sorted((OUT / "results").glob("*.json"))]
+    rs = [json.loads(p.read_text()) for p in sorted((OUT / "results" / TAG).glob("*.json"))]
     for half in ("covered", "resolved", "all"):
         xs = [r for r in rs if half == "all" or r["half"] == half]
         if not xs:

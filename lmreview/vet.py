@@ -22,8 +22,9 @@ distill only writes rules; vet decides whether they are kept. Three checks, then
    (a new one dropped) when NEW has more than WIDE_MARGIN more refuted findings citing it than BASE has
    citing the entries it replaces. Recall alone would let a merge or trim widen an entry unchecked.
 
-A replaced or trimmed entry replays every source comment, the unproven ones after the proven ones (lost
-only if BASE hits it, so an unproven comment costs a run but cannot fail a change wrongly). A case both
+A replaced or trimmed entry replays the source comments it was proven to correct; its unproven source
+comments are not replayed (BASE nearly always misses them too, so they decide nothing; the report counts
+them). With no proven comment, every source comment is replayed. A case both
 books missed gets one more run with BASE as well as NEW: a single BASE miss by noise would leave it
 unprotected.
 
@@ -173,7 +174,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
                                          [x["target"] for x in (N[i].get("revised") or {}).get("signals") or []]}
     def has_new(t: str) -> bool:
         return any((cfg.data / "runs").glob(f"{prompt}+{book}@{effort}{suffix}*/{t.replace('@', '-')}*.json"))
-    side = []
+    side, unproven = [], 0
     # a trimmed entry (rewritten shorter, same id) must keep everything it did, as a replaced one must
     full = set(retired) | {i for i in revised if (N[i].get("revised") or {}).get("reason") == "trim"}
     for i in affected:
@@ -183,8 +184,9 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         # the replacement must keep what it did; with no such record, every source comment
         # (a test may be on another PR than the entry's sources: take every proven comment in the gold set)
         pr = [e for e in sorted(_proven(O[i]), key=str) if e in where and (i, e) not in eff_set] if i in full else []
-        if pr and not everything:  # proven ones first, then the other source comments: lost only if BASE hits
-            side += [(i, e) for e in pr] + [(i, e) for e in cs if e not in set(pr)]
+        if pr and not everything:  # only the proven ones: an unproven source comment is nearly always missed by
+            side += [(i, e) for e in pr]  # BASE too, so it decides nothing and costs runs (2026-11-25, v0030c1)
+            unproven += sum(e not in set(pr) for e in cs)
         else:
             side += [(i, e) for e in (cs if everything or i in full else cs[:SIDE_PER_ENTRY])]
         have |= {tgt(e) for e in cs[:SIDE_PER_ENTRY]}
@@ -214,7 +216,8 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
          + ("; failures get one more run" if retry else ""),
          f"- changed entries: {len(touched)} (revised {len(revised)}, retired {len(retired)}); "
          f"evidence comments added: {len(effect)}; base entries replayed for side effects: {len(affected)} "
-         f"({len(side)} comments{', all entries' if everything else ''}); revision fixes to check: {len(fixes)}",
+         f"({len(side)} comments{', all entries' if everything else ''}; {unproven} unproven source comments not "
+         f"replayed); revision fixes to check: {len(fixes)}",
          f"- {len(samples)} samples with the new book ({len(todo)} not cached yet, est ${est:.0f}; the old book only "
          f"where the new one misses a side-effect comment), cap ${max_cost:.0f}", "",
          "## 1. Generality flags", ""]

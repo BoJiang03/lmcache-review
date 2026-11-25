@@ -97,6 +97,7 @@ def main() -> None:
     ap.add_argument("--over-budget", type=int, default=None, help="trim: entries this many words over trim_budget")
     ap.add_argument("--budget", default="", help="trim: BASE,PER words of trim_budget (default 70,15)")
     ap.add_argument("--no-why", action="store_true", help="trim: trimmed entries keep no why")
+    ap.add_argument("--drafts", type=int, default=3, help="merge: number of COMPRESS drafts")
     ap.add_argument("--resume", action="store_true", help="try 1's candidate exists: vet it (cached runs are free)")
     ap.add_argument("--repair-from", default="", help="trim: start from an earlier trim experiment's final book and "
                     "repair only the entries its vet put back, with the rule check's reasons")
@@ -144,7 +145,7 @@ def main() -> None:
                                 over_budget=a.over_budget)
         else:
             msg, retired = compress(out, cur, cfg, effort=effort, max_cost=min(a.compress_cost, left), record=outcomes(),
-                                    feedback=fb, repair=bool(a.repair_from) and k == 1)
+                                    feedback=fb, repair=bool(a.repair_from) and k == 1, n=a.drafts)
         ch = json.loads((cfg.data / "distill" / out / "changes.json").read_text())
         tr = {"try": k, "base": cur, "candidate": out, "compress": msg,
               "draft_groups": prev["tries"][0]["draft_groups"] if prev else [draft_groups(t) for t in DRAFTS],

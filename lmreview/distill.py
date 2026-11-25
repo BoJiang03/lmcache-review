@@ -944,10 +944,11 @@ Changes:
   learned from a comment the reviewer missed while the older entry was in the book.
 - "merge": two or more entries are instances of one principle. Write ONE entry that states that
   principle: name the common kind of situation in "when" and the common request in "expect", so that
-  a reviewer recognizes each merged entry's proven cases as instances of it. Do NOT list the merged
-  entries' situations and requests one by one in the text (that is packing, not merging, and saves
-  little); their concrete triggers go in "examples" (one short line each). The merged entry must be
-  at most 70% of the words of the entries it replaces together; a merge that is not is refused.
+  a reviewer recognizes each merged entry's proven cases as instances of it. Do NOT restate the merged
+  entries one by one (that is packing, not merging, and saves little). The reviewer never sees
+  "examples": a concrete trigger pattern a proven case needs stays in "when" as a short "e.g." clause.
+  The merged entry must be at most 70% of the words of the entries it replaces together; a merge that
+  is not is refused.
   Keep every condition that decides whether a merged entry fires on its proven cases: a situation it
   names that a looser word would not cover (e.g. "new types that only wrap or re-derive what the shared
   component holds", where "duplicate types" lets a reviewer decide a wrapper is not a duplicate). Drop
@@ -995,9 +996,14 @@ For each change:
    diff, and the ask of "expect" it must make. Use the reviewers' own words to find the condition that
    decides it (e.g. "new types that only wrap or re-derive what the shared component holds", where
    "duplicate types" lets a reviewer decide that a wrapper is not a duplicate).
+   The clause is the CONCRETE pattern that case needs, quoted from the new text (e.g. "periodic repeat
+   logs during a condition whose entry and exit are already logged"), not the principle restated ("logs
+   that repeat existing information"): a reviewer given only the principle finds a reason the case is
+   different ("this log adds the duration") and raises nothing.
 2. Then write the shortest text that satisfies every "keeps" line. State the principle the entries are
-   instances of: the common kind of situation in "when", the common request in "expect", not the entries'
-   situations listed one by one. A deciding condition that only one entry has stays, as a clause. Aim at
+   instances of: the common kind of situation in "when", the common request in "expect", then the
+   concrete patterns the proven comments need as short "e.g." clauses in "when" (the reviewer never sees
+   "examples"). Do not list the entries' requests one by one. Aim at
    or under the change's budget for "when" + "expect" ("why" at most 10 words); a group whose total is not
    under 75% of the words it replaces is refused.
 3. One entry is the goal. If the group's proven comments ask for different things, the group may be

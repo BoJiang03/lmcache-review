@@ -57,6 +57,7 @@ from .regress import EST_RO, EST_RUN, FIELDS, replay, run_tag
 from .schema import cites as finding_rules
 
 SIDE_PER_ENTRY = int(get("vet", "side_per_entry"))  # side effects: source comments replayed per affected entry (`--all`: every one)
+PRECISION = bool(get("vet", "precision"))  # precision gate on (off: left to human feedback after launch)
 WIDE_MARGIN = int(get("vet", "wide_margin"))  # precision: refuted findings a changed entry may add over its base text
 from .distill import book_meta, write_meta
 from .reviewer import load_rules, parse_reviewer
@@ -296,7 +297,7 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     # 4. precision: a changed entry must not draw more refuted findings than the text it replaces did, on
     # the samples where its new text drew any (BASE runs only there)
     c_p, wide, p_rows = 0.0, {}, []
-    chg = sorted(i for i in touched if i in N)
+    chg = sorted(i for i in touched if i in N) if PRECISION else []
     pred = {i: ({i} if i in O else set(N[i].get("replaces") or []) | set(N[i].get("replaces_new") or [])) & set(O)
             for i in chg}
     new_bad = {i: {t: _citing(run_dir(book, 1), t, rel.get(i, {i}), cfg) or (0, 0) for t in sorted(samples)}

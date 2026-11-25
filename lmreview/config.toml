@@ -34,6 +34,8 @@ max_requeues = 2       # times a parked (needs_human) comment gets another chanc
 [vet]
 side_per_entry = 2     # side effects: source comments replayed per affected entry
 reps = 1               # runs per replayed case and book
+precision = false      # precision gate off (2026-11-25): rules grown too wide are left to human feedback after
+                       # launch; vet gates recall only. true: revert changed entries drawing more refuted findings
 wide_margin = 1        # precision gate: a changed entry is reverted when, on the samples where it drew refuted
                        # findings, it drew more than this many more than the text it replaces did
 

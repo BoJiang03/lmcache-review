@@ -107,7 +107,11 @@ def main() -> None:
     if a.repair_from:
         rp = json.loads((OUT / f"{a.repair_from}.json").read_text())
         cur, last = rp["final"], rp["tries"][-1]
-        tfb = trim_feedback(last["candidate"], last["lost"], cfg)
+        if a.mode == "trim":
+            tfb = trim_feedback(last["candidate"], last["lost"], cfg)
+        else:
+            _, fb = compress_undone(last["candidate"], {r["id"] for r in load_rules(last["base"])},
+                                    load_rules(last["candidate"]), {"lost": [tuple(x) for x in last["lost"]]}, cfg)
         e0, w0 = size(a.base)
     for k in range(1, a.tries + 1):
         out = f"{a.name}k{k}"
@@ -132,7 +136,7 @@ def main() -> None:
                                 min_words=a.min_words, only=set(fbt) if fbt else None, feedback=fbt or None)
         else:
             msg, retired = compress(out, cur, cfg, effort=effort, max_cost=min(a.compress_cost, left), record=outcomes(),
-                                    feedback=fb)
+                                    feedback=fb, repair=bool(a.repair_from) and k == 1)
         ch = json.loads((cfg.data / "distill" / out / "changes.json").read_text())
         tr = {"try": k, "base": cur, "candidate": out, "compress": msg,
               "draft_groups": prev["tries"][0]["draft_groups"] if prev else [draft_groups(t) for t in DRAFTS],

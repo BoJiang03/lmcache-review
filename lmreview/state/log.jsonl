@@ -120,3 +120,4 @@
 {"time": "2026-11-25T00:43:15+00:00", "step": "vet", "name": "v0027c1", "verdict": "FAIL", "cost": 1.79, "version": 27, "resolved": 9, "failed": 0, "needs_human": 0}
 {"time": "2026-11-25T00:45:56+00:00", "step": "compress", "name": "v0028c1", "parent": 27, "retired": 2, "cost": 1.16, "summary": "67 entries, 9958 words (from 68, 10158); 2 retired; $1.16"}
 {"time": "2026-11-25T00:48:06+00:00", "step": "vet", "name": "v0028c1", "verdict": "FAIL", "cost": 1.85, "version": 27, "resolved": 0, "failed": 0, "needs_human": 0}
+{"time": "2026-11-25T17:14:52+00:00", "step": "promote", "version": 28, "parent": 27, "by": "compress", "from": "cx14k1v"}

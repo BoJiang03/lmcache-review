@@ -22,7 +22,7 @@ Usage:
   python scripts/skill_compare.py select                 # print the 20 chosen samples
   python scripts/skill_compare.py pilot [--cap 12]       # first sample of each half, both arms, judged
   python scripts/skill_compare.py report [--n 2]         # metrics of the first n chosen samples per half
-  python scripts/skill_compare.py run [--half covered|resolved] [--prs 4729 ...] [--workers 3] [--cap 70]
+  python scripts/skill_compare.py run [--half learned|unlearned] [--prs 4729 ...] [--workers 3] [--cap 70]
                                                           # chosen samples (filtered), in parallel; one result
                                                           # file per sample in results/
   python scripts/skill_compare.py summary                # recall etc. per half from results/
@@ -61,6 +61,7 @@ SKILL_TOOLS = "Read,Grep,Glob,Bash,Agent"
 EXCLUDE_PRS = {6212}
 MAX_SIZE = 2500  # additions + deletions
 PER_HALF = 10
+FIXED_UNLEARNED = {(4729, "57800f07")}  # its comments were never distilled (another #4729 sample was); already run
 OUT = pathlib.Path(__file__).resolve().parent.parent / "data" / "skill_compare"
 SKILL_FILES = (".claude/skills/pr-review/SKILL.md", "docs/coding_standards.md")
 # $ looked ahead before each step, so the cap is not crossed by the next call
@@ -100,53 +101,53 @@ SKILL_SEV = {"error": "major", "warning": "minor", "info": "nit"}
 # ---------------------------------------------------------------- selection
 
 def select_samples(cfg: Config, per_half: int = PER_HALF, seed: int = 0) -> list[dict]:
-    """The samples to compare on, deterministic for `seed`.
+    """The samples to compare on, deterministic for `seed`: 10 learned, 10 unlearned.
 
-    Pool: train samples whose PR appears in the ledger and that have >= 2 gold comments; one sample per
-    PR (most gold ids, ties: the earliest); not EXCLUDE_PRS; additions + deletions <= MAX_SIZE.
-    Halves by the PR's ledger rows: "covered" (more covered than resolved rows) or "resolved" (at least
-    as many resolved rows, and at least one); PRs with neither (only not_rulable rows) are left out.
-    Each half: shuffled with `seed`, then picked greedily for area diversity (the candidate adding the
-    most areas not picked yet; ties in shuffled order).
+    learned: train samples whose gold comments are all in the ledger, at least 2 of them covered or
+      resolved (the comments themselves went through distill, not just another sample of the PR).
+    unlearned: FIXED_UNLEARNED first, then test samples (never distilled) with no gold comment in the
+      ledger.
+    Both: >= 2 gold comments, one sample per PR (most gold ids, ties: the earliest), not EXCLUDE_PRS,
+    additions + deletions <= MAX_SIZE; shuffled with `seed`, then picked greedily for area diversity
+    (the candidate adding the most areas not picked yet; ties in shuffled order).
 
     Returns:
-        [{"half", "sample", "pr_meta"}], covered half first, each half in pick order.
+        [{"half", "sample", "pr_meta"}], learned first, each half in pick order.
     """
     ledger = [json.loads(l) for l in open(pathlib.Path(__file__).resolve().parent.parent
                                            / "lmreview" / "state" / "ledger.jsonl") if l.strip()]
-    st = C.defaultdict(C.Counter)
-    for r in ledger:
-        st[r["pr"]][r["status"]] += 1
+    status = {str(r["comment"]).split(":")[0]: r["status"] for r in ledger}
     meta = {p["pr"]: p for p in map(json.loads, (cfg.data / "dataset" / "prs.jsonl").open())}
     ss = [json.loads(l) for l in (cfg.data / "dataset" / "samples.jsonl").open()]
-    best: dict[int, dict] = {}
+
+    def half_of(s: dict) -> str | None:
+        g = [status.get(str(i)) for i in s["gold_ids"]]
+        if s["split"] == "train" and all(g) and sum(x in ("covered", "resolved") for x in g) >= 2:
+            return "learned"
+        if s["split"] == "test" and not any(g):
+            return "unlearned"
+        return None
+    best: dict[tuple[str, int], dict] = {}
     for s in ss:
-        if s["split"] != "train" or s["pr"] not in st or len(s["gold_ids"]) < 2 or s["pr"] in EXCLUDE_PRS:
+        m, h = meta.get(s["pr"]), half_of(s)
+        if (not h or len(s["gold_ids"]) < 2 or s["pr"] in EXCLUDE_PRS or not m
+                or (m.get("additions") or 0) + (m.get("deletions") or 0) > MAX_SIZE):
             continue
-        m = meta.get(s["pr"])
-        if not m or (m.get("additions") or 0) + (m.get("deletions") or 0) > MAX_SIZE:
-            continue
-        b = best.get(s["pr"])
+        b = best.get((h, s["pr"]))
         if b is None or (len(s["gold_ids"]), b["time"]) > (len(b["gold_ids"]), s["time"]):
-            best[s["pr"]] = s
-    halves: dict[str, list[dict]] = {"covered": [], "resolved": []}
-    for pr in sorted(best):
-        c, r = st[pr]["covered"], st[pr]["resolved"]
-        if c > r:
-            halves["covered"].append(best[pr])
-        elif r:
-            halves["resolved"].append(best[pr])
-    out = []
-    for half, cands in halves.items():
-        cands = list(cands)
+            best[(h, s["pr"])] = s
+    fixed = [s for s in ss if (s["pr"], s["commit"][:8]) in FIXED_UNLEARNED]
+    out = [{"half": "unlearned", "sample": s, "pr_meta": meta[s["pr"]]} for s in fixed]
+    for half in ("learned", "unlearned"):
+        cands = [s for (h, pr), s in sorted(best.items()) if h == half and pr not in {f["pr"] for f in fixed}]
         random.Random(seed).shuffle(cands)
-        seen: set[str] = set()
-        for _ in range(min(per_half, len(cands))):
+        seen: set[str] = {a for x in out if x["half"] == half for a in x["pr_meta"]["areas"]}
+        while cands and sum(x["half"] == half for x in out) < per_half:
             s = max(cands, key=lambda x: len(set(meta[x["pr"]]["areas"]) - seen))  # first max = shuffled order
             cands.remove(s)
             seen |= set(meta[s["pr"]]["areas"])
             out.append({"half": half, "sample": s, "pr_meta": meta[s["pr"]]})
-    return out
+    return sorted(out, key=lambda x: x["half"] != "learned")
 
 
 def print_selection(sel: list[dict]) -> None:
@@ -436,7 +437,7 @@ def run_many(cfg: Config, xs: list[dict], budget: Budget, workers: int) -> None:
 def summary() -> None:
     """Recall of human points (by half and severity), findings, valid share, cost and time per arm."""
     rs = [json.loads(p.read_text()) for p in sorted((OUT / "results" / TAG).glob("*.json"))]
-    for half in ("covered", "resolved", "all"):
+    for half in ("learned", "unlearned", "all"):
         xs = [r for r in rs if half == "all" or r["half"] == half]
         if not xs:
             continue
@@ -469,7 +470,7 @@ def summary() -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["select", "pilot", "report", "run", "summary"])
-    ap.add_argument("--half", choices=["covered", "resolved"])
+    ap.add_argument("--half", choices=["learned", "unlearned"])
     ap.add_argument("--prs", type=int, nargs="*")
     ap.add_argument("--workers", type=int, default=3)
     ap.add_argument("--cap", type=float, default=12.0)

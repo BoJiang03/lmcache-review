@@ -46,7 +46,7 @@ code{font-family:var(--mono);font-size:.85em}
 <main>
 <header>
 <h1>lmreview 对比 LMCache pr-review skill</h1>
-<p class="sub">20 个历史 PR 样本：学过的 10 个，没学过的 10 个。两边都用 Opus 5.5 medium，同一个盲评判分器。2026-11-26。</p>
+<p class="sub">20 个历史 PR 样本：学过的 10 个，没学过的 10 个。对比对象是 LMCache 的 pr-review skill 和 Claude Code 自带的 /code-review，都用 Opus 5.5 medium，同一个盲评判分器。2026-11-26。</p>
 </header>
 
 <section>
@@ -55,7 +55,9 @@ code{font-family:var(--mono);font-size:.85em}
 <div><b>学过的 PR：全面超过</b>命中 83% 对 51%；每样本成本 $0.88 对 $0.87，基本持平；时间 90 s 对 118 s。</div>
 <div><b>没学过的 PR：追平</b>命中 68% 对 65%；成本 $1.04 对 $1.18；时间 114 s 对 159 s。</div>
 <div><b>重要问题漏得少</b>major 命中 17/20，skill 是 13/20；两边 blocker 都是 4/5。</div>
+<div><b>对 Claude Code /code-review：命中远超，成本略高</b>命中 78% 对 33%；每样本成本 $0.96–1.17 对 $0.59–0.78。</div>
 </div>
+<p class="note" style="margin-top:8px">下面前几节都是和 pr-review skill 的对比，其中 lmreview 的 rule check 用 low。和 Claude Code 的对比单独一节，用的是正式配置，rule check 用 medium。</p>
 </section>
 
 <section>
@@ -127,6 +129,40 @@ code{font-family:var(--mono);font-size:.85em}
 <li><b>可以查 vLLM 源码</b>：用来核对 PR 对 vLLM 行为的假设。提到 vLLM 的条目，lmreview 22 条，skill 11 条。</li>
 <li><b>级别划分</b>：blocker/major 只留给行为错误。规范类问题两边都是 12 条。</li>
 </ul>
+</section>
+
+<section>
+<h2>对比 Claude Code 自带的 /code-review</h2>
+<p class="sub">同样的 20 个样本，两边都用 Opus medium。lmreview 用正式配置 <code>p990f2d2e+v0032@medium-rc</code>：主审和上面一样，rule check 用 medium。Claude Code 按开发者在本地对改动跑 review 的方式运行：PR 的改动作为未提交的改动，没有 PR 描述、历史评论和编码规范。</p>
+<div class="tw"><table>
+<thead><tr><th></th><th>学过：lmreview</th><th>学过：Claude Code</th><th>没学过：lmreview</th><th>没学过：Claude Code</th></tr></thead>
+<tbody>
+<tr><td>命中人类评论</td><td class="o win">83%（39/47）</td><td>28%（13/47）</td><td class="o win">71%（22/31）</td><td>42%（13/31）</td></tr>
+<tr><td>每样本成本</td><td class="o">$0.96</td><td class="win">$0.59</td><td class="o">$1.17</td><td class="win">$0.78</td></tr>
+<tr><td>每样本时间</td><td class="o">90 s</td><td class="win">87 s</td><td class="o win">114 s</td><td>127 s</td></tr>
+</tbody></table></div>
+<div class="tw" style="margin-top:12px"><table>
+<thead><tr><th>严重度（20 个样本合计）</th><th>lmreview</th><th>Claude Code</th></tr></thead>
+<tbody>
+<tr><td>blocker</td><td class="o">4/5</td><td>4/5</td></tr>
+<tr><td>major</td><td class="o win">18/20</td><td>7/20</td></tr>
+<tr><td>minor</td><td class="o win">27/35</td><td>12/35</td></tr>
+<tr><td>nit</td><td class="o win">12/18</td><td>3/18</td></tr>
+</tbody></table></div>
+<div class="tw" style="margin-top:12px"><table>
+<thead><tr><th>人类没提的问题</th><th>报出的条数</th><th>其中人类没提的</th><th>判分模型认为成立</th></tr></thead>
+<tbody>
+<tr><td>lmreview blocker</td><td class="o">12</td><td class="o">8</td><td class="o">7</td></tr>
+<tr><td>lmreview major</td><td class="o">78</td><td class="o">57</td><td class="o">55</td></tr>
+<tr><td>Claude Code important（当作 major）</td><td>63</td><td>57</td><td>40</td></tr>
+</tbody></table></div>
+<ul style="margin-top:10px">
+<li><b>命中</b>：lmreview 远高于 Claude Code，78% 对 33%。只有 lmreview 抓到的要点有 35 个，只有 Claude Code 抓到的 0 个。Claude Code 只在 blocker 上打平，major 以下的维护者意见基本抓不到。</li>
+<li><b>成本</b>：Claude Code 便宜约 35–40%。它查得浅，小 PR 上只花 $0.3–0.5，不到 1 分钟。时间两边差不多。</li>
+<li><b>人类没提的问题</b>：Claude Code 的 important 里，判分模型认为成立的占 70%（40/57），lmreview 的 major 是 96%（55/57）。这一项是 AI 的判断，不是 gold。</li>
+<li><b>还差什么</b>：成本这一项 lmreview 还没追平 Claude Code。</li>
+</ul>
+<p class="note">Claude Code 的级别映射为：important → major，pre_existing → minor，nit → nit。它的输出格式不固定，所以统一用一次小调用抽成 JSON，这部分成本（每个 PR 约 $0.08）已经算在它的成本里。</p>
 </section>
 
 <section>

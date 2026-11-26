@@ -48,3 +48,13 @@
 - attribute instability: 9 of 30 re-attributed points (all once judged learnable) were re-judged not_rulable
   (E3 4/16, E4 1/8, holdout 4/6); 3 of them look wrong (#3869 groupby, #3869 keep docstring, #3210 device_path).
 - Spend ≈ $189 of $200.
+
+## attribute stability and criteria (2026-11-26 PT ~01:30–02:00, $1.75)
+- 30 ledger comments × 3 attributions (old prompt): learnable-vs-not differs on 3/30 (10%; small sample, 2–27%).
+  The loop's 30% flip rate comes from selection: requeued points are the ambiguous ones. attribute does not see
+  the failure history. Covered points never pass attribute: 6 of 14 sampled covered points look like non-issues.
+- New criteria (commit after df3c0cc): a reason evident from the hunk + suggestion counts ("(inferred)" in asks);
+  learnable needs both calls; disagreement → "unclear" (not_rulable, note "unclear: ..."), no third call.
+  30 × 3 again: 2/30 differ; 2 majorities changed (a docstring-wording nit → learnable 3/3; "LMCache?" → learnable 2/3, debatable).
+  The 8 loop-dropped comments, 2 runs: itertools.groupby → learnable 2/2; inline constants → learnable 2/2;
+  README promo → context 2/2; #4004 docs questions → unclear 2/2; #3869 "keep docstring" and #3210 → not_issue / unclear.

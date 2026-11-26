@@ -68,6 +68,9 @@ def _tape_replay(prompt, effort, tools, system, model) -> dict | None:
             for line in pathlib.Path(TAPE).open():
                 d = json.loads(line)
                 _tape.setdefault(d["key"], []).append(d["out"])
+            used = pathlib.Path(TAPE).with_suffix(".used")  # answers earlier replay commands took
+            for u in used.read_text().split() if used.exists() else []:
+                _tape[u].pop(0)
         if not _tape.get(k):  # same lines in another order (parallel drafts joined as they finish)?
             k = _tape_reordered(prompt, effort, tools, system, model) or _tape_similar(prompt, effort, tools, system, model) or k
         if not _tape.get(k):
@@ -77,6 +80,8 @@ def _tape_replay(prompt, effort, tools, system, model) -> dict | None:
                                     "model": model, "prompt": prompt}) + "\n")
             raise RuntimeError(f"tape miss {k[:12]} ({_caller()})")
         out = _tape[k].pop(0)
+        with pathlib.Path(TAPE).with_suffix(".used").open("a") as f:
+            f.write(k + "\n")
         SPENT += float(out.get("cost") or 0)
     return {**out, "effort": effort}
 

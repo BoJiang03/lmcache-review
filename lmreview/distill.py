@@ -543,7 +543,9 @@ def update_rulebook(base_rules: list[dict], items: dict, evid: dict, out: str, c
                     ch |= {"version": r["version"], "when": r["when"], "expect": r["expect"], "changed": d["changed"]}
         elif op == "add" and d.get("expect") and mem:
             ch |= {k: d[k] for k in ("closest", "why_new") if d.get(k)}  # why no existing entry fits
-            added.append((_entry(d) | {"kind": d.get("kind") or "principle"}, ev, g["concern"]))
+            bundle = d.get("closest") if "bundl" in str(d.get("why_new") or "").lower() else None  # see WRITE
+            added.append((_entry(d) | {"kind": d.get("kind") or "principle"} | ({"split_from": bundle} if bundle else {}),
+                          ev, g["concern"]))
         elif op == "skip" and mem:
             ch["why"] = d.get("why")
         elif op == "contradict" and bkeys:
@@ -610,8 +612,8 @@ entries with each other is left to the periodic whole-book compress. Changes:
   for, AS WRITTEN. It stays word for word; the others are retired in its favor. Prefer this to a merge
   whenever it holds: rewording an entry that already works is not tidying.
 - "contradict": two entries ask for opposite changes in the same situation. Do not change them; say why.
-A NEW entry split out of a bundle (its why_new says it was bundled with other asks) is neither
-merged nor absorbed back into it.
+A NEW entry split out of a bundle (tagged "split from <id>") is neither merged nor absorbed back
+into that entry.
 List only changes; everything else stays as it is. Do not merge just to make the book smaller: every
 merge is checked later on all the comments the merged entries came from, and one that loses any of
 them is undone.
@@ -661,6 +663,7 @@ def _book_with_quotes(rules: list[dict], new_ids: set[str], cm: dict, quotes: in
         if r.get("status", "active") != "active":
             continue
         tag = "NEW" if r["id"] in new_ids else f"v{r.get('version', 1)}"
+        tag += f", split from {r['split_from']}" if r["id"] in new_ids and r.get("split_from") else ""
         said = [f"    PR #{cm[e]['pr']} {cm[e]['author']}: {' '.join(cm[e]['body'].split())[:300]}"
                 for e in (r.get("evidence") or [])[:quotes] if e in cm]
         more = len(r.get("evidence") or []) - len(said)

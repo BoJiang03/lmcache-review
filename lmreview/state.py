@@ -945,8 +945,11 @@ def vet_step(max_cost: float | None = None, reps: int | None = None, everything:
                 out["needs_human"].append(i)
             else:
                 out["failed"].append(i)
-        for _, e in J.get("tolerated") or []:  # a nit the new book no longer catches: stays learned, marked
-            r = rows.get(norm(e))
+        txt = lambda r: (r.get("status", "active"), r.get("when"), r.get("expect"))  # noqa: E731
+        kept_by = {r["id"]: r for r in kept} if changed else {}
+        new_text = {r["id"] for r in cand if r["id"] in kept_by and txt(kept_by[r["id"]]) == txt(r)}  # promoted as written
+        for i, e in J.get("tolerated") or []:  # a nit the promoted book no longer catches: stays learned, marked
+            r = rows.get(norm(e)) if i in new_text else None  # the entry was reverted or dropped: nothing lost
             if r and r["status"] in ("covered", "resolved"):
                 r["unretained"] = {"by": "vet", "book": vname(n), "date": _now()[:10]}
                 r.pop("retained", None)
@@ -1101,7 +1104,7 @@ def retain_step(prs: set[int] | None = None, max_cost: float | None = None, reps
     its covered / resolved rows (only on `prs` / `samples` "PR:commit8", or only rows `keys`) `reps` times with retain_reviewer(),
     judge, and send each row caught in fewer than all runs back to to_distill. Only resolved rows by default:
     a covered one has no entry behind it, so a rule check cannot catch it, with a try saying how often
-    it was caught and what the runs made of it (distill reads it). A row sent back more than
+    it was caught and what the runs made of it (distill reads it).
     How often it must be caught and how often it goes back depend on its tier ([tiers] retain_need,
     retain_requeues): past its requeues a major+ row goes to a person (needs_human); a minor / nit row stays
     learned, marked "unretained". Rows caught often enough get "retained"."""

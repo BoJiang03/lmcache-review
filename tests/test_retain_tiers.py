@@ -25,6 +25,7 @@ CASES = {31: ("major", 1, 0, "requeued"), 32: ("major", 1, 2, "needs_human"), 33
 
 
 def test_retain_tiers() -> None:
+    """Each tier is retained, requeued, marked unretained or parked as [tiers] says."""
     cfg = Config(data=pathlib.Path(tempfile.mkdtemp(prefix="lmr-data-", dir=TMP)))
     ann = cfg.data / "annotations" / "a2"
     ann.mkdir(parents=True)
@@ -50,6 +51,7 @@ def test_retain_tiers() -> None:
 
 
 def test_vet_tolerates_nit_losses() -> None:
+    """vet moves lost nit points (per point of a multi-point comment) to tolerated, the rest stay lost."""
     from lmreview import vet
     cfg = Config(data=pathlib.Path(tempfile.mkdtemp(prefix="lmr-data-", dir=TMP)))
     ann = cfg.data / "annotations" / "a2"

@@ -271,6 +271,8 @@ def reviewer(book: str | None = None, learn: bool = False) -> str:
     the one learning reviews with ([hybrid] learn: the main review on a cheaper model, `-ms`)."""
     c = config()
     book = book or (vname(head()) if head() else None)
+    if learn and book and get("learn", "production"):  # learn from what production misses (2026-11-26)
+        return f"{prompt_id()}+{book}@{get('retain', 'effort')}" + suffix(True)
     return f"{prompt_id()}" + (f"+{book}" if book else "") + f"@{c['effort']}" + suffix(bool(book), learn)
 
 
@@ -971,7 +973,8 @@ def vet_step(max_cost: float | None = None, reps: int | None = None, everything:
                 + ("; failed comments stay to_distill: `lmreview distill` tries again" if out["failed"] else ""))
 
 
-def confirm_misses(rv: str, new: list[int | str], max_cost: float, cfg: Config | None = None) -> tuple[str, float]:
+def confirm_misses(rv: str, new: list[int | str], max_cost: float, cfg: Config | None = None,
+                   found: list[int | str] | None = None) -> tuple[str, float]:
     """Run reviewer `rv` a second time (repeat #r2) on the samples of the misses `new` (ledger keys a judge
     just filed as to_distill) and judge it, so a miss the reviewer finds in some runs is told from one it
     never finds. Every miss stays to_distill (a rule can make a sometimes-found comment found every time);
@@ -983,6 +986,8 @@ def confirm_misses(rv: str, new: list[int | str], max_cost: float, cfg: Config |
         new: the ledger keys newly filed as to_distill.
         max_cost: cap for the second runs and their judge; 0 prints the plan (cached runs are still used).
         cfg: configuration.
+        found: ledger keys the judge just filed as covered ([learn] production): their samples get the second
+            run too, and a point not found in every run goes to to_distill as flaky (found by chance).
 
     Returns:
         ("confirm: N misses, K flaky, $X" [+ ", U unconfirmed"], cost).
@@ -993,9 +998,10 @@ def confirm_misses(rv: str, new: list[int | str], max_cost: float, cfg: Config |
     cfg = cfg or Config()
     rows = ledger()
     miss = [rows[k] for k in new if k in rows and rows[k]["status"] == "to_distill"]
-    if not miss:
+    hit = [rows[k] for k in found or [] if k in rows and rows[k]["status"] == "covered"]
+    if not miss and not hit:
         return "confirm: 0 misses, 0 flaky, $0.00", 0.0
-    specs = sorted({f"{r['pr']}:{r['commit'][:8]}" for r in miss})
+    specs = sorted({f"{r['pr']}:{r['commit'][:8]}" for r in miss + hit})
     ss, _ = load_gold(cfg)
     by = {f"{p}:{c[:8]}": s for (p, c), s in ss.items()}
     todo = [x for x in specs if x in by and not cached(cfg, rv, run_path(cfg, rv, by[x], 2))]
@@ -1003,7 +1009,7 @@ def confirm_misses(rv: str, new: list[int | str], max_cost: float, cfg: Config |
     note(f"confirm {len(miss)} misses on {len(specs)} samples: second run of {rv} on {len(todo)} "
          f"(est ${est:.1f}, cap ${max_cost:.0f})")
     cost = replay(rv, "train", None, 4, max(0.0, max_cost - len(todo) * EST_COST), specs, cfg=cfg, rep=2)
-    _, jc = judge_runs(cfg, rv, {r["pr"] for r in miss}, "train", max(0.0, max_cost - cost), rep=2)
+    _, jc = judge_runs(cfg, rv, {r["pr"] for r in miss + hit}, "train", max(0.0, max_cost - cost), rep=2)
     cost += jc
     with lock():
         rows = ledger()
@@ -1022,9 +1028,20 @@ def confirm_misses(rv: str, new: list[int | str], max_cost: float, cfg: Config |
             else:
                 r["unconfirmed"] = True
                 unconf += 1
+        chance = 0
+        for k in [r["comment"] for r in hit]:
+            r = rows.get(k)
+            if r is None or r["status"] != "covered":
+                continue
+            h, n = hits(rv, sample(r), k, cfg)
+            r["hits"] = f"{h}/{n}"
+            if n >= 2 and h < n:  # found by chance: production misses it in some runs, so it is learned
+                r.update(status="to_distill", flaky=True)
+                chance += 1
         save_ledger(rows)
-        log("confirm", reviewer=rv, misses=len(miss), flaky=flaky, unconfirmed=unconf, cost=round(cost, 2))
-    line = f"confirm: {len(miss)} misses, {flaky} flaky, ${cost:.2f}" + (f", {unconf} unconfirmed" if unconf else "")
+        log("confirm", reviewer=rv, misses=len(miss), flaky=flaky, unconfirmed=unconf, by_chance=chance, cost=round(cost, 2))
+    line = (f"confirm: {len(miss)} misses, {flaky} flaky, ${cost:.2f}" + (f", {unconf} unconfirmed" if unconf else "")
+            + (f"; {chance} of {len(hit)} finds were by chance (to_distill)" if hit else ""))
     note(line, "warn" if unconf else None)
     return line, cost
 
@@ -1232,8 +1249,10 @@ def round_(prs: list[int | str], review_cost: float | None = None, judge_cost: f
         before = {k for k, r in ledger().items() if r["status"] == "to_distill"}
         out.append(judge("train", nums, judge_cost, rv, cfg))
         new = [k for k, r in ledger().items() if r["status"] == "to_distill" and k not in before]
-        with step("confirm", f"{len(new)} new misses; cap ${confirm_cost:.0f}") as s2:
-            line, s2.cost = confirm_misses(rv, new, confirm_cost, cfg)
+        found = [k for k, r in ledger().items() if r["status"] == "covered" and r.get("reviewer") == rv
+                 and r["pr"] in nums and "hits" not in r] if get("learn", "production") else []
+        with step("confirm", f"{len(new)} new misses, {len(found)} new finds; cap ${confirm_cost:.0f}") as s2:
+            line, s2.cost = confirm_misses(rv, new, confirm_cost, cfg, found=found)
             s2.result = line
         out.append(line)
         nums = set(nums) | requeue_parked(cfg=cfg)  # parked comments the changed workflow may now learn

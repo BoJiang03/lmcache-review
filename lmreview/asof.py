@@ -34,7 +34,7 @@ def as_of(raw: dict, t: str) -> dict:
     """A copy of raw PR `raw` with title, description, reviews and comments as they read at `t`.
 
     Raises:
-        KeyError: if `raw` has no `_edits` (run scripts/backfill_edits.py or `lmreview sync`).
+        KeyError: if `raw` has no `_edits` (`lmreview sync` adds them).
     """
     e = raw["_edits"]
     out = copy.deepcopy(raw)

@@ -121,7 +121,7 @@ they reach it, and `0` prints the plan only.
 | Command | What it does |
 | --- | --- |
 | `lmreview sync [--since T]` | Pull recently updated PRs and rebuild the samples (one per PR and human-reviewed commit). Free. |
-| `lmreview round PR[:commit] ...` | review, judge, confirm new misses with a second run, then distill + vet until the comments settle; retain after judge and vet; compress + vet when the book is over `[compress]` words. A bare PR number means its commits with a missed comment. |
+| `lmreview round PR[:commit] ...` | review, judge, confirm new misses with a second run, then distill + vet (with every comment still to_distill from earlier rounds, on any PR) until the comments settle; retain after judge and vet; compress + vet when the book is over `[compress]` words. A bare PR number means its commits with a missed comment. |
 | `lmreview judge [--prs N ...]` | Judge the current reviewer's runs and file the comments in the ledger. |
 | `lmreview distill [--prs N ...] [--limit N] [--compress]` | `to_distill` comments to a candidate book: attribute, write, consolidate. |
 | `lmreview vet [--reps N] [--all]` | Replay where the candidate differs from the book in use; promote what works as the next version, record what failed. `--all` replays every base entry. |

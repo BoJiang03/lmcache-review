@@ -1220,7 +1220,8 @@ def round_(prs: list[int | str], review_cost: float | None = None, judge_cost: f
            distill_cost: float | None = None, vet_cost: float | None = None, cfg: Config | None = None,
            confirm_cost: float | None = None) -> str:
     """One round on samples `prs` (PR:commit, or PR numbers: see pick_samples): review with the book in use, judge,
-    confirm the new misses with a second run (confirm_misses), then distill + vet until their comments are all
+    confirm the new misses with a second run (confirm_misses), then distill + vet (together with every comment
+    still to_distill from earlier rounds, on any PR) until their comments are all
     resolved / not rulable / needs_human (at most MAX_TRIES); last, compress + vet when the book is over
     [compress] words (compress_if_big)."""
     b = settings()["budget"]["round"]
@@ -1256,6 +1257,10 @@ def round_(prs: list[int | str], review_cost: float | None = None, judge_cost: f
             s2.result = line
         out.append(line)
         nums = set(nums) | requeue_parked(cfg=cfg)  # parked comments the changed workflow may now learn
+        left = {r["pr"] for r in to_distill()} - nums  # still to learn from earlier rounds: learned here too
+        if left:
+            note(f"also distilling the comments left to learn on PR {' '.join(map(str, sorted(left)))}")
+            nums |= left
         retain_on = bool(get("retain", "on"))
         for k in range(MAX_TRIES):
             left = to_distill(prs=nums)

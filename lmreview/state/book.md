@@ -1,8 +1,8 @@
-# Rulebook v0032
+# Rulebook v0033
 
-49 active entries, 2954 words (when + expect; the reviewer sees these, not why or examples). Generated from book.jsonl; do not edit.
+56 active entries, 3638 words (when + expect; the reviewer sees these, not why or examples). Generated from book.jsonl; do not edit.
 
-## Principle (40)
+## Principle (47)
 
 ### cx05k1-005
 
@@ -12,17 +12,17 @@
 
 *Why (record only)*: Grouped code is navigable; cross-tree paths break and hide sharing.
 
-<sub>v2 · area ci-build,mp,platform · 3 comments from 3 PRs</sub>
+<sub>v2 · minor severity · area ci-build,mp,platform · 3 comments from 3 PRs</sub>
 
 ### cx05k1-008
 
-**When** A change splits a batch into groups (by device or backend) and builds results or listener notifications from the per-group passes.
+**When** A change splits a batch into groups (by device, backend, size or another attribute) and builds results or listener notifications from the per-group passes.
 
-**Expect** Ask that outputs keep input order (placed by original index), tested with items interleaved across groups, and that groups run concurrently (a worker per group), not serially.
+**Expect** Where an output is positional, or a named consumer relies on its order, ask that it keep input order (placed by original index), tested with items interleaved across groups. Keyed results and aligned pairs are fine. Where groups do blocking work on independent devices or backends, ask that they run concurrently (a worker per group), not serially.
 
-*Why (record only)*: Group order reorders outputs; serial shards give no parallelism.
+*Why (record only)*: Grouping silently reorders positional outputs and serializes independent I/O. Keyed outputs and in-memory passes are unaffected.
 
-<sub>v2 · area distributed,overall · 2 comments from 1 PRs</sub>
+<sub>v3 · major severity · area distributed,overall · 2 comments from 1 PRs</sub>
 
 ### cx05k1-011
 
@@ -32,17 +32,17 @@
 
 *Why (record only)*: Needless async and polling add complexity, latency and knobs.
 
-<sub>v2 · area mp,overall · 3 comments from 1 PRs</sub>
+<sub>v2 · major severity · area mp,overall · 3 comments from 1 PRs</sub>
 
 ### cx07k1-002
 
-**When** A change adds tests, CI cases or benchmarks narrower than their place or overlapping existing ones: a file for one backend or variant in a general-purpose folder; tests of straightforward functions; CI cases running one path with different models.
+**When** A change adds benchmarks, CI or end-to-end cases that are narrower than their place or overlap existing ones, or adds tests of straightforward functions to a shared test file. Narrow cases include a file for one backend or variant in a general-purpose folder, or cases running one path with different models.
 
-**Expect** Ask to fold them into the existing shared file or case (keeping the most demanding configuration) or remove them, and to keep tests of straightforward functions minimal.
+**Expect** Ask to fold them into the existing shared file or case, keeping the most demanding configuration, or to remove them. Ask to keep tests of straightforward functions minimal. Do not ask to cut, merge or move unit tests of a module's own behavior that sit in their own file.
 
-*Why (record only)*: Narrow or overlapping tests fragment folders and cost CI time.
+*Why (record only)*: Duplicated CI cases and benchmarks cost run time and maintenance. Cheap focused unit-test files do not.
 
-<sub>v3 · area ci-build,examples,overall · 3 comments from 3 PRs</sub>
+<sub>v4 · minor severity · area ci-build,examples,overall · 3 comments from 3 PRs</sub>
 
 ### cx07k1-004
 
@@ -52,7 +52,7 @@
 
 *Why (record only)*: Missed releases leak; doubled releases hit reused handles.
 
-<sub>v2 · area distributed,kernels,mp,overall · 7 comments from 4 PRs</sub>
+<sub>v2 · blocker severity · area distributed,kernels,mp,overall · 7 comments from 4 PRs</sub>
 
 ### cx07k1-005
 
@@ -62,7 +62,7 @@
 
 *Why (record only)*: Unneeded paths add untested code and hide misconfiguration.
 
-<sub>v2 · area ci-build,memory,mp,overall,vllm-integration · 7 comments from 5 PRs</sub>
+<sub>v2 · major severity · area ci-build,memory,mp,overall,vllm-integration · 7 comments from 5 PRs</sub>
 
 ### cx07k1-006
 
@@ -72,7 +72,7 @@
 
 *Why (record only)*: Optional forms hide ambient defaults and spread special-case branches.
 
-<sub>v2 · area distributed,mp,platform · 3 comments from 3 PRs</sub>
+<sub>v2 · minor severity · area distributed,mp,platform · 3 comments from 3 PRs</sub>
 
 ### cx07k1-007
 
@@ -82,7 +82,7 @@
 
 *Why (record only)*: Undetected divergence silently corrupts the consumer's state.
 
-<sub>v2 · area mp,vllm-integration · 2 comments from 2 PRs</sub>
+<sub>v2 · major severity · area mp,vllm-integration · 2 comments from 2 PRs</sub>
 
 ### cx07k1-009
 
@@ -92,7 +92,7 @@
 
 *Why (record only)*: Callers and later readers rely on documented contracts.
 
-<sub>v2 · area core-other,distributed,mp,platform · 5 comments from 3 PRs</sub>
+<sub>v2 · minor severity · area core-other,distributed,mp,platform · 5 comments from 3 PRs</sub>
 
 ### cx07k1-010
 
@@ -102,7 +102,7 @@
 
 *Why (record only)*: Inaccurate names and labels mislead readers and dispatch.
 
-<sub>v2 · area ci-build,core-other,docs,gpu-connector,mp,overall,vllm-integration · 14 comments from 11 PRs</sub>
+<sub>v2 · minor severity · area ci-build,core-other,docs,gpu-connector,mp,overall,vllm-integration · 14 comments from 11 PRs</sub>
 
 ### cx08k1-002
 
@@ -112,7 +112,7 @@
 
 *Why (record only)*: Specializations in shared layers couple and burden every user.
 
-<sub>v2 · area mp,platform,vllm-integration · 9 comments from 5 PRs</sub>
+<sub>v2 · major severity · area mp,platform,vllm-integration · 9 comments from 5 PRs</sub>
 
 ### cx08k1-003
 
@@ -122,7 +122,7 @@
 
 *Why (record only)*: Wrong scope misleads backend implementers and hides untested branches.
 
-<sub>v1 · area distributed,docs · 11 comments from 3 PRs</sub>
+<sub>v1 · minor severity · area distributed,docs · 11 comments from 3 PRs</sub>
 
 ### cx11k1-001
 
@@ -132,7 +132,7 @@
 
 *Why (record only)*: Partial or stale-format entries otherwise load as valid data.
 
-<sub>v2 · area overall,storage · 2 comments from 2 PRs</sub>
+<sub>v2 · major severity · area overall,storage · 2 comments from 2 PRs</sub>
 
 ### v0003c1-006
 
@@ -142,17 +142,17 @@
 
 *Why (record only)*: Trivial single-use helpers add indirection and spread one operation across places without adding reuse.
 
-<sub>v1 · area mp · 2 comments from 1 PRs</sub>
+<sub>v1 · nit severity · area mp · 2 comments from 1 PRs</sub>
 
 ### v0009c5-002
 
-**When** A comment, docstring or message refers outside the file: to PR or plan context (a numbered goal or phase) or to another module or function the code mirrors.
+**When** A comment, docstring or message refers outside the file. It points to PR or plan context (a numbered goal or phase), or it justifies the code by another module or function ('same as', 'matching', 'mirrors').
 
-**Expect** Ask to remove the reference and, if it is missing, to state the local reason in terms of the code instead.
+**Expect** Ask to remove the reference and, if the local reason is missing, to state it in terms of the code. Do not flag a pointer to where a contract this code consumes or emulates is defined, such as the producer of a format it decodes or the native layer a test double stands in for.
 
-*Why (record only)*: Labels from the PR mean nothing to later readers. References to other modules silently go stale when that code changes.
+*Why (record only)*: Readers cannot follow plan context or 'same as X' justifications. A pointer to a contract's owner tells them where the truth lives.
 
-<sub>v3 · area memory,mp · 3 comments from 2 PRs</sub>
+<sub>v4 · nit severity · area memory,mp · 3 comments from 2 PRs</sub>
 
 ### v0009c5-004
 
@@ -162,7 +162,7 @@
 
 *Why (record only)*: A reader cannot reliably rebuild control flow across threads and callbacks from a paragraph. A diagram makes it checkable at a glance.
 
-<sub>v3 · area mp · 1 comments from 1 PRs</sub>
+<sub>v3 · nit severity · area mp · 1 comments from 1 PRs</sub>
 
 ### v0011c1-002
 
@@ -172,7 +172,7 @@
 
 *Why (record only)*: A probe that a slow unrelated handler can stall reports a healthy server as dead and triggers needless downgrade or reaping.
 
-<sub>v3 · area docs · 1 comments from 1 PRs</sub>
+<sub>v3 · major severity · area docs · 1 comments from 1 PRs</sub>
 
 ### v0012c3-001
 
@@ -182,7 +182,7 @@
 
 *Why (record only)*: These failures only appear when a test deliberately drives the code into the window.
 
-<sub>v2 · area mp,overall,vllm-integration · 5 comments from 4 PRs</sub>
+<sub>v2 · major severity · area mp,overall,vllm-integration · 5 comments from 4 PRs</sub>
 
 ### v0012c3-004
 
@@ -192,7 +192,7 @@
 
 *Why (record only)*: Readers need concrete, complete required steps, kept apart from optional depth.
 
-<sub>v3 · area docs · 5 comments from 1 PRs</sub>
+<sub>v3 · major severity · area docs · 5 comments from 1 PRs</sub>
 
 ### v0015c1-001
 
@@ -202,7 +202,7 @@
 
 *Why (record only)*: An implicit or mismatched handler signature works for today's callers but misleads the next one who registers a handler.
 
-<sub>v3 · area mp · 3 comments from 1 PRs</sub>
+<sub>v3 · minor severity · area mp · 3 comments from 1 PRs</sub>
 
 ### v0015c1-003
 
@@ -212,7 +212,7 @@
 
 *Why (record only)*: Keying by an irrelevant dimension adds priority rules and documented ambiguity, and it suggests that entries can differ when they cannot.
 
-<sub>v3 · area mp · 2 comments from 1 PRs</sub>
+<sub>v3 · major severity · area mp · 2 comments from 1 PRs</sub>
 
 ### v0016c1-002
 
@@ -222,7 +222,7 @@
 
 *Why (record only)*: Unconditional work that one branch discards costs time and memory on that path and hides which path depends on the value.
 
-<sub>v2 · area inprocess · 1 comments from 1 PRs</sub>
+<sub>v2 · nit severity · area inprocess · 1 comments from 1 PRs</sub>
 
 ### v0017c2-004
 
@@ -232,7 +232,7 @@
 
 *Why (record only)*: Concurrent use of a non-thread-safe client or socket corrupts messages or crashes intermittently.
 
-<sub>v3 · area mp · 1 comments from 1 PRs</sub>
+<sub>v3 · major severity · area mp · 1 comments from 1 PRs</sub>
 
 ### v0019c1-006
 
@@ -242,7 +242,7 @@
 
 *Why (record only)*: An unlabeled option looks like a supported production setting, and users will enable it in production.
 
-<sub>v2 · area distributed,mp · 2 comments from 1 PRs</sub>
+<sub>v2 · nit severity · area distributed,mp · 2 comments from 1 PRs</sub>
 
 ### v0019c1-008
 
@@ -252,7 +252,7 @@
 
 *Why (record only)*: Acquire/undo sequences are hard to follow and add paths where locks leak, are released twice or are briefly inconsistent.
 
-<sub>v3 · area distributed · 1 comments from 1 PRs</sub>
+<sub>v3 · minor severity · area distributed · 1 comments from 1 PRs</sub>
 
 ### v0019c1-010
 
@@ -262,7 +262,7 @@
 
 *Why (record only)*: Abstractions designed before the code stabilizes lock in the wrong shape and add complexity. Duplicating first and refactoring later is cheaper and safer than rewriting working code.
 
-<sub>v3 · area overall · 4 comments from 1 PRs</sub>
+<sub>v3 · major severity · area overall · 4 comments from 1 PRs</sub>
 
 ### v0020c1-001
 
@@ -272,7 +272,7 @@
 
 *Why (record only)*: A predictable layout lets readers find the public surface first and the helpers in one known place.
 
-<sub>v3 · area distributed,platform · 2 comments from 2 PRs</sub>
+<sub>v3 · nit severity · area distributed,platform · 2 comments from 2 PRs</sub>
 
 ### v0021c1-001
 
@@ -282,7 +282,7 @@
 
 *Why (record only)*: Ragged or damaged wrapping left behind by a rewording makes doc sources inconsistent and harder to read. It also makes later diffs noisy.
 
-<sub>v2 · area docs · 1 comments from 1 PRs</sub>
+<sub>v2 · nit severity · area docs · 1 comments from 1 PRs</sub>
 
 ### v0022c1-001
 
@@ -292,7 +292,7 @@
 
 *Why (record only)*: Guards tied to a different backend silently drop coverage of the code the test exists to check. They also mislead readers about what the test depends on.
 
-<sub>v2 · area tests · 1 comments from 1 PRs</sub>
+<sub>v2 · minor severity · area tests · 1 comments from 1 PRs</sub>
 
 ### v0023c1-002
 
@@ -302,7 +302,7 @@
 
 *Why (record only)*: Features and behavior changes without docs cannot be used, operated or maintained correctly, and existing docs go stale.
 
-<sub>v3 · area distributed,docs,overall · 7 comments from 5 PRs</sub>
+<sub>v3 · minor severity · area distributed,docs,overall · 7 comments from 5 PRs</sub>
 
 ### v0023c1-006
 
@@ -312,17 +312,17 @@
 
 *Why (record only)*: Running a singleton action in every replica starts duplicates, races on ports and shared resources, or wastes work.
 
-<sub>v3 · area vllm-integration · 1 comments from 1 PRs</sub>
+<sub>v3 · major severity · area vllm-integration · 1 comments from 1 PRs</sub>
 
 ### v0023c1-008
 
-**When** A change adds behavior seen only when the real engine runs multi-process or multi-rank (launch, per-rank roles, cross-process setup), covered only by unit tests or mocks, or untested.
+**When** A change adds behavior that exists only when the real engine launches several processes or ranks, such as which process or rank performs an action, or what is spawned or bootstrapped. The behavior is covered only by mocks, or untested.
 
-**Expect** Ask for a case in the existing multi-process end-to-end suite that starts the real engine that way and asserts the feature's outcome.
+**Expect** Ask for a case in the existing multi-process end-to-end suite that launches the real engine that way and asserts the outcome. Do not ask for it when tests can drive the logic in-process by building its inputs (rank-carrying keys, mocked peer replies, stubbed configs), even if other processes produce those inputs in production.
 
-*Why (record only)*: Multi-process interactions such as duplicate launches or wrong roles are invisible to single-process unit tests and mocks.
+*Why (record only)*: Only a real launch shows which process runs what. Logic driven by inputs is covered by cheaper in-process tests.
 
-<sub>v2 · area overall · 1 comments from 1 PRs</sub>
+<sub>v3 · major severity · area overall · 1 comments from 1 PRs</sub>
 
 ### v0023c1-010
 
@@ -332,17 +332,17 @@
 
 *Why (record only)*: A write into a hidden copy silently leaves the real buffer unchanged, and tests with degenerate shapes still pass.
 
-<sub>v3 · area overall,platform · 3 comments from 1 PRs</sub>
+<sub>v3 · blocker severity · area overall,platform · 3 comments from 1 PRs</sub>
 
 ### v0023c1-013
 
-**When** A function returns a tuple or record with a component that echoes a parameter or that no caller uses.
+**When** A diff adds or changes a function whose return type is a tuple or record with a component beyond the main result. One sign is a parameter's type reappearing in the returned tuple.
 
-**Expect** Ask to drop that component and update the return type and unpacking.
+**Expect** Check each extra component against the parameters and the callers. If the component returns a parameter back (even normalized or defaulted), or callers ignore it or already hold it, ask to drop it. Ask to update the return type and every caller's unpacking.
 
-*Why (record only)*: Echoed or unused return values widen the API and mislead readers into thinking the value is transformed.
+*Why (record only)*: Echoed or unused return components complicate every caller.
 
-<sub>v6 · area gpu-connector · 1 comments from 1 PRs</sub>
+<sub>v7 · minor severity · area gpu-connector · 1 comments from 1 PRs</sub>
 
 ### v0023c1-014
 
@@ -352,7 +352,7 @@
 
 *Why (record only)*: Edge-case and error-path fixes regress silently unless a test pins the exact triggering condition.
 
-<sub>v5 · area overall · 1 comments from 1 PRs</sub>
+<sub>v5 · minor severity · area overall · 1 comments from 1 PRs</sub>
 
 ### v0024c1-002
 
@@ -362,7 +362,7 @@
 
 *Why (record only)*: A documented default that works on the reference path becomes a crash on the new branch, which breaks parity for callers that follow the public contract.
 
-<sub>v4 · area overall,platform · 3 comments from 1 PRs</sub>
+<sub>v4 · blocker severity · area overall,platform · 3 comments from 1 PRs</sub>
 
 ### v0026c1-012
 
@@ -372,7 +372,7 @@
 
 *Why (record only)*: Hidden per-call allocations add latency and memory churn, and without a note they are never revisited.
 
-<sub>v2 · area core-other · 1 comments from 1 PRs</sub>
+<sub>v2 · nit severity · area core-other · 1 comments from 1 PRs</sub>
 
 ### v0027c1-002
 
@@ -382,7 +382,7 @@
 
 *Why (record only)*: Long narration buries the one fact a reader needs and goes stale; the team repeatedly asks for it to be removed or reduced to one line.
 
-<sub>v2 · area ci-build,mp,vllm-integration · 8 comments from 2 PRs</sub>
+<sub>v2 · nit severity · area ci-build,mp,vllm-integration · 8 comments from 2 PRs</sub>
 
 ### v0031c1-002
 
@@ -392,7 +392,7 @@
 
 *Why (record only)*: Freeing resources under running work corrupts or crashes in-flight transfers.
 
-<sub>v1 · area mp,vllm-integration · 2 comments from 2 PRs</sub>
+<sub>v1 · blocker severity · area mp,vllm-integration · 2 comments from 2 PRs</sub>
 
 ### v0032c1-001
 
@@ -402,7 +402,85 @@
 
 *Why (record only)*: A reused key can point to a replacement target, so stale work silently runs against the new registration with old events, handles or IDs. Only a test that re-registers inside the window proves that each path is bound.
 
-<sub>v1 · area mp · 3 comments from 1 PRs</sub>
+<sub>v1 · major severity · area mp · 3 comments from 1 PRs</sub>
+
+### v0033c1-001
+
+**When** A change adds or renames a setting or parameter whose name admits more than one quantity, e.g. the threshold that triggers an action versus how much the action handles.
+
+**Expect** Raise it as its own point and spell out both readings. Ask to rename it to the quantity meant, and to add a separate setting when both quantities are needed.
+
+*Why (record only)*: Operators misconfigure a knob whose meaning they have to guess.
+
+<sub>v1 · minor severity · area mp · 1 comments from 1 PRs</sub>
+
+### v0033c1-002
+
+**When** Newly added code computes a derived value (a count, range, window, mask) with logic that an existing function elsewhere already performs on the same inputs, even when that function is outside the diff.
+
+**Expect** Raise it at the new code and name the existing function. Ask to reuse it or to extract one shared helper that both call. If the author defers, ask for TODOs at both sites that reference each other.
+
+*Why (record only)*: Two copies of one computation drift apart.
+
+<sub>v1 · minor severity · area mp · 1 comments from 1 PRs</sub>
+
+### v0033c1-003
+
+**When** A diff deletes or shortens a docstring, a section of one, or a comment, on any function, while the code it describes still behaves that way.
+
+**Expect** Raise a separate point at each deletion, quote the removed text, and ask to keep it. If part of the text became false, ask to correct that part instead of deleting the whole.
+
+*Why (record only)*: Accurate documentation removed in passing is rarely rewritten.
+
+<sub>v1 · minor severity · area core-other,distributed · 3 comments from 1 PRs</sub>
+
+### v0033c1-005
+
+**When** A doc lists APIs that an implementer must provide as bare names, several on one line, or without their arguments.
+
+**Expect** Ask to list each required API on its own line with its full signature, arguments included, grouped under category headings. Propose the grouping.
+
+*Why (record only)*: Implementers need an exact checklist of what to provide, organized by purpose.
+
+<sub>v1 · minor severity · area docs · 1 comments from 1 PRs</sub>
+
+### v0033c1-007
+
+**When** A change adds entries to a long-lived pending or in-flight container (keyed tasks, requests, sizes, handles) whose removal depends on another thread, a callback, or an error path running correctly, so a missed removal would grow it silently for the life of the process.
+
+**Expect** Raise the leak risk as its own point and ask for a way to make a stuck or growing container detectable or impossible — such as observability of its size, a bound or expiry, removal guaranteed on every completion and error path, or a test showing entries are removed when work fails or is abandoned. Point out other containers in the same component that follow the same add-here/remove-elsewhere pattern; covering them may be a follow-up.
+
+*Why (record only)*: Entries removed across threads and paths leak silently unless their count is observable.
+
+<sub>v1 · minor severity · area distributed · 1 comments from 1 PRs</sub>
+
+### v0033c1-008
+
+**When** A change adds or alters how a client recovers from a peer's or server's failure or restart (reconnect, re-register, reload).
+
+**Expect** Even when other doc updates are already requested, ask as a separate point that user docs state:
+- what recovery does not restore and must be rebuilt (state held by the old process, in-flight work);
+- how long detection can take, in terms of its controlling setting.
+
+*Why (record only)*: Users otherwise assume recovery is lossless and immediate.
+
+<sub>v1 · minor severity · area docs · 1 comments from 1 PRs</sub>
+
+### v0033c1-009
+
+**When** A function takes or returns tensors, structured values, or strings or enums with a fixed set of valid values, and its docstring describes them only in prose.
+
+**Expect** Ask the docstring to state, for each argument and the return value:
+- the concrete type;
+- the shape, with named dimensions;
+- the allowed string or enum values;
+- which format or enum value is returned.
+
+This applies to private helpers too.
+
+*Why (record only)*: Callers of shape-manipulating code cannot infer shape and value contracts from prose about the algorithm.
+
+<sub>v1 · minor severity · area gpu-connector · 2 comments from 1 PRs</sub>
 
 ## Knowledge (9)
 
@@ -414,7 +492,7 @@
 
 *Why (record only)*: Reused code is shorter, familiar and maintained once.
 
-<sub>v2 · area distributed,docs,mp,vllm-integration · 5 comments from 3 PRs</sub>
+<sub>v2 · major severity · area distributed,docs,mp,vllm-integration · 5 comments from 3 PRs</sub>
 
 ### v0011c1-003
 
@@ -424,7 +502,7 @@
 
 *Why (record only)*: Only the context knows which sibling, for example which transfer module, is active. Wiring siblings to each other bypasses the ownership tree and couples the modules.
 
-<sub>v3 · area docs · 1 comments from 1 PRs</sub>
+<sub>v3 · major severity · area docs · 1 comments from 1 PRs</sub>
 
 ### v0019c1-009
 
@@ -434,7 +512,7 @@
 
 *Why (record only)*: A second representation of group geometry duplicates the source of truth and drifts from it, and paths that do not use KVLayerGroupsManager lack hybrid-model support.
 
-<sub>v3 · area overall · 3 comments from 1 PRs</sub>
+<sub>v3 · major severity · area overall · 3 comments from 1 PRs</sub>
 
 ### v0023c1-004
 
@@ -444,7 +522,7 @@
 
 *Why (record only)*: Non-MP mode is deprecated. Its code must warn users and be clearly separable from the MP path so it can be removed later; readers of shared bases must be able to tell which methods the MP path depends on.
 
-<sub>v5 · area gpu-connector,mp · 3 comments from 2 PRs</sub>
+<sub>v5 · minor severity · area gpu-connector,mp · 3 comments from 2 PRs</sub>
 
 ### v0023c1-009
 
@@ -454,7 +532,7 @@
 
 *Why (record only)*: Hidden references to GPU KV tensors keep engine memory alive after the engine disconnects.
 
-<sub>v5 · area gpu-connector · 1 comments from 1 PRs</sub>
+<sub>v5 · major severity · area gpu-connector · 1 comments from 1 PRs</sub>
 
 ### v0023c1-012
 
@@ -464,7 +542,7 @@
 
 *Why (record only)*: A stale import of the removed native module breaks module load and every test that imports the module.
 
-<sub>v5 · area distributed · 2 comments from 1 PRs</sub>
+<sub>v5 · blocker severity · area distributed · 2 comments from 1 PRs</sub>
 
 ### v0026c1-004
 
@@ -474,7 +552,7 @@
 
 *Why (record only)*: Qualifying the block instead of its size implies two kinds of blocks that do not exist and confuses the tensor-size vs token-count distinction.
 
-<sub>v2 · area mp · 1 comments from 1 PRs</sub>
+<sub>v2 · minor severity · area mp · 1 comments from 1 PRs</sub>
 
 ### v0026c1-007
 
@@ -484,7 +562,7 @@
 
 *Why (record only)*: This keeps the KV-cache message path focused on cache traffic and uses HTTP for ad-hoc information queries.
 
-<sub>v2 · area mp · 1 comments from 1 PRs</sub>
+<sub>v2 · major severity · area mp · 1 comments from 1 PRs</sub>
 
 ### v0026c1-011
 
@@ -494,7 +572,7 @@
 
 *Why (record only)*: Evicting a prefix chunk makes every later chunk of that sequence unusable, so suffixes must be evicted first.
 
-<sub>v2 · area core-other · 1 comments from 1 PRs</sub>
+<sub>v2 · minor severity · area core-other · 1 comments from 1 PRs</sub>
 
 ## Retired (62)
 

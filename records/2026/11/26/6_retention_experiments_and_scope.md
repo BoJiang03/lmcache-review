@@ -79,3 +79,14 @@ Chose 1 (vet by tier). Losing a nit point (side effect) no longer fails a change
 vet moves it from lost to tolerated (report: TOLERATED lines) and vet_step marks the ledger row "unretained".
 Losing a major+ / minor point still reverts the change. compress is vetted the same way, so this also covers 2
 (merges may not drop a major+ / minor point). 3 (tiers at review time) skipped after E4. 19/19 tests.
+
+## Applied on the real state (user: "1和2 都做"); pushed 1952d75 first
+- Cache: pdba46ca9+v0032@medium-rc runs 1–2 of the 30 pilot+holdout samples copied from data/skill_compare into
+  data/runs + data/scores (same judge j4; blinded finding ids mapped back; no file overwritten). retain: $0.
+- `retain --covered --samples <30>`: 101 points; retained 79 (major+ 27/28, minor 30/46, nit 22/27), requeued 17
+  (major+ 1, minor 16), unretained 5 (nit 0/2).
+- `distill --prs 3210 3630 3869 4004 4211 4520 4548 4687 4729` ($4.55): 17 comments, 14 learnable, 3 not rulable;
+  1 specificity rewrite. `vet` ($10.64): PARTLY KEPT, promoted v0033; resolved 11, failed 3 (1 major+, 2 minor
+  stay to_distill), lost 0, tolerated 0. Total $15.19.
+- v0033: 56 active entries (+7), 4544 words (+765). 6 of the 7 new entries carry split_from (bundle splits).
+- The 11 newly resolved points are not yet retain-checked on v0033 (needs new production runs).

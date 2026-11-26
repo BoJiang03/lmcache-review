@@ -5,15 +5,15 @@
 /* Layout: one reading column; numbers in tables, recall as bars */
 :root{
   --bg:#f7f8fa; --panel:#ffffff; --fg:#1b2230; --muted:#5d6878; --line:#dde2ea;
-  --ours:#2f6fde; --skill:#9a6a1f; --good:#1f8a52; --warn:#b5651d;
+  --ours:#2f6fde; --skill:#9a6a1f; --cc:#7a5bc7; --good:#1f8a52; --warn:#b5651d;
   --display:"Space Grotesk",system-ui,sans-serif; --body:"Inter",system-ui,"PingFang SC","Microsoft YaHei",sans-serif; --mono:"JetBrains Mono",ui-monospace,monospace;
 }
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
   --bg:#12161d; --panel:#1a2029; --fg:#e6eaf0; --muted:#9aa5b5; --line:#2c3440;
-  --ours:#6b9cf2; --skill:#d6a25a; --good:#4cc286; --warn:#e0975a; color-scheme:dark}}
+  --ours:#6b9cf2; --skill:#d6a25a; --cc:#a98ef0; --good:#4cc286; --warn:#e0975a; color-scheme:dark}}
 :root[data-theme="dark"]{
   --bg:#12161d; --panel:#1a2029; --fg:#e6eaf0; --muted:#9aa5b5; --line:#2c3440;
-  --ours:#6b9cf2; --skill:#d6a25a; --good:#4cc286; --warn:#e0975a; color-scheme:dark}
+  --ours:#6b9cf2; --skill:#d6a25a; --cc:#a98ef0; --good:#4cc286; --warn:#e0975a; color-scheme:dark}
 body{background:var(--bg);color:var(--fg);font-family:var(--body);line-height:1.6;
   padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:32px 56px}
 main{max-width:860px;margin:0 auto;display:flex;flex-direction:column;gap:28px}
@@ -34,10 +34,10 @@ td.o{color:var(--ours);font-weight:600} td.s{color:var(--skill)}
 .win{color:var(--good);font-weight:600}
 .bars{display:grid;grid-template-columns:auto 1fr auto;gap:6px 10px;align-items:center;font-variant-numeric:tabular-nums;font-size:.9rem}
 .bar{height:12px;border-radius:3px}
-.b-o{background:var(--ours)} .b-s{background:var(--skill)}
+.b-o{background:var(--ours)} .b-s{background:var(--skill)} .b-c{background:var(--cc)}
 .legend{display:flex;gap:16px;font-size:.85rem;color:var(--muted);margin-bottom:8px}
 .legend span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
-.lo::before{background:var(--ours)} .ls::before{background:var(--skill)}
+.lo::before{background:var(--ours)} .ls::before{background:var(--skill)} .lc::before{background:var(--cc)}
 ul{margin:4px 0 0;padding-left:20px} li{margin:3px 0}
 code{font-family:var(--mono);font-size:.85em}
 .note{color:var(--muted);font-size:.88rem}
@@ -87,24 +87,26 @@ code{font-family:var(--mono);font-size:.85em}
 <li><b>时间</b>：lmreview 和 /code-review 接近，/pr-review 最慢。</li>
 <li><b>对照目标</b>：对 /pr-review，学过的超过、没学过的追平，已经达标。对 /code-review，命中远超，但成本还没追平。</li>
 </ul>
-<p class="note">下面几节是细节。和 /pr-review 的那几节用的是 rule check 为 low 的 <code>p29d23a9f</code>，所以 lmreview 的数和上表略有差别；和 /code-review 的那一节用的是正式配置。</p>
+<p class="note">下面几节是细节。"命中人类评论"和"对比 /code-review"两节用的是正式配置；其余几节（成本和速度、按严重度、漏掉的是什么、人类没提的问题）来自和 /pr-review 的那轮对比，lmreview 用的是 rule check 为 low 的 <code>p29d23a9f</code>，数字和上表略有差别。</p>
 </section>
 
 <section>
 <h2>命中人类评论</h2>
-<p class="sub">lmreview 配置：<code>p29d23a9f+v0032@medium-rc</code>。主审用 Opus medium；rule check 用 low，对照 rulebook v0032 的 49 条规则逐条检查，和主审并行运行。两者之差就是 rule check 带来的额外命中。</p>
-<div class="legend"><span class="lo">lmreview</span><span class="ls">/pr-review</span></div>
+<p class="sub">lmreview 用正式配置 <code>p990f2d2e+v0032@medium-rc</code>：主审用 Opus medium，rule check 用 medium，逐条对照 rulebook v0032 的 49 条规则，和主审并行运行。</p>
+<div class="legend"><span class="lo">lmreview</span><span class="ls">/pr-review</span><span class="lc">/code-review</span></div>
 <div class="bars">
 <div class="grp" style="grid-column:1/-1">学过的（47 个要点）</div>
 <span>lmreview（主审 + rule check）</span><div class="bar b-o" style="width:83%"></div><span>39/47 · 83%</span>
-<span>lmreview（主审，不含 rule check）</span><div class="bar b-o" style="width:68%;opacity:.55"></div><span>32/47 · 68%</span>
+<span>lmreview（主审）</span><div class="bar b-o" style="width:64%;opacity:.55"></div><span>30/47 · 64%</span>
 <span>/pr-review</span><div class="bar b-s" style="width:51%"></div><span>24/47 · 51%</span>
+<span>/code-review</span><div class="bar b-c" style="width:28%"></div><span>13/47 · 28%</span>
 <div class="grp" style="grid-column:1/-1">没学过的（31 个要点）</div>
-<span>lmreview（主审 + rule check）</span><div class="bar b-o" style="width:68%"></div><span>21/31 · 68%</span>
-<span>lmreview（主审，不含 rule check）</span><div class="bar b-o" style="width:68%;opacity:.55"></div><span>21/31 · 68%</span>
+<span>lmreview（主审 + rule check）</span><div class="bar b-o" style="width:71%"></div><span>22/31 · 71%</span>
+<span>lmreview（主审）</span><div class="bar b-o" style="width:65%;opacity:.55"></div><span>20/31 · 65%</span>
 <span>/pr-review</span><div class="bar b-s" style="width:65%"></div><span>20/31 · 65%</span>
+<span>/code-review</span><div class="bar b-c" style="width:42%"></div><span>13/31 · 42%</span>
 </div>
-<p class="note" style="margin-top:10px">只有一方抓到的要点：学过的组 lmreview 15 个（major 5，minor 5，nit 5），/pr-review 0 个；没学过的组 lmreview 2 个（都是 minor），/pr-review 1 个（major）。提问类评论不计入命中。</p>
+<p class="note" style="margin-top:10px">只有一方抓到的要点：lmreview 对 /pr-review，学过的组 lmreview 多抓 15 个（major 5，minor 4，nit 6），没学过的组多抓 2 个（minor），/pr-review 多抓 0 个；lmreview 对 /code-review，学过的组 lmreview 多抓 26 个，没学过的组多抓 9 个，/code-review 多抓 0 个。提问类评论不计入命中。</p>
 </section>
 
 <section>

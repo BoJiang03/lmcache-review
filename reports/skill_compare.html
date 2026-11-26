@@ -90,11 +90,12 @@ code{font-family:var(--mono);font-size:.85em}
 <div class="tw"><table>
 <thead><tr><th>严重度</th><th>学过：lmreview</th><th>学过：skill</th><th>没学过：lmreview</th><th>没学过：skill</th></tr></thead>
 <tbody>
-<tr><td>blocker</td><td class="o">—</td><td class="s">—</td><td class="o">4/5</td><td class="s">4/5</td></tr>
+<tr><td>blocker</td><td class="o">0/0</td><td class="s">0/0</td><td class="o">4/5</td><td class="s">4/5</td></tr>
 <tr><td>major</td><td class="o win">13/14</td><td class="s">8/14</td><td class="o">4/6</td><td class="s">5/6</td></tr>
 <tr><td>minor</td><td class="o win">18/21</td><td class="s">13/21</td><td class="o win">10/14</td><td class="s">8/14</td></tr>
 <tr><td>nit</td><td class="o win">8/12</td><td class="s">3/12</td><td class="o">3/6</td><td class="s">3/6</td></tr>
 </tbody></table></div>
+<p class="note">学过的组里没有 blocker 级的人类评论，所以是 0/0。</p>
 </section>
 
 <section>
@@ -112,12 +113,13 @@ code{font-family:var(--mono);font-size:.85em}
 <section>
 <h2>人类没提的 blocker 和 major</h2>
 <div class="tw"><table>
-<thead><tr><th></th><th>报出的 blocker / major</th><th>其中人类没提的</th><th>判分模型认为成立</th></tr></thead>
+<thead><tr><th></th><th>级别</th><th>报出的条数</th><th>其中人类没提的</th><th>判分模型认为成立</th></tr></thead>
 <tbody>
-<tr><td>lmreview</td><td class="o">11 / 72</td><td class="o">8 / 51</td><td class="o">7 / 49</td></tr>
-<tr><td>skill</td><td class="s">— / 56</td><td class="s">— / 45</td><td class="s">— / 45</td></tr>
+<tr><td>lmreview</td><td>blocker</td><td class="o">11</td><td class="o">8</td><td class="o">7</td></tr>
+<tr><td>lmreview</td><td>major</td><td class="o">72</td><td class="o">51</td><td class="o">49</td></tr>
+<tr><td>skill</td><td>error（当作 major）</td><td class="s">56</td><td class="s">45</td><td class="s">45</td></tr>
 </tbody></table></div>
-<p class="note">skill 只有 error / warning / info 三级，这里把 error 当作 major。"判分模型认为成立"是 AI 自己的判断，不是 gold，还需要人逐条确认。</p>
+<p class="note">skill 只有 error / warning / info 三级，没有 blocker 这一级，所以只列 error 一行，按 major 来比。"判分模型认为成立"是 AI 自己的判断，不是 gold，还需要人逐条确认。</p>
 <p style="margin-top:10px">lmreview 报的深层问题更多，有四个原因：</p>
 <ul>
 <li><b>侧重正确性</b>：prompt 要求报所有真实问题，正确性排第一，发现 bug 还要给出回归测试。blocker/major 中带"崩溃、泄漏、竞态、数据错乱"这类字眼的，lmreview 有 45 条，skill 有 28 条。</li>

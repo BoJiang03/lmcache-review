@@ -53,3 +53,23 @@ Script: jobs tmp union_est.py. Data: pdba46ca9+v0032@medium-rc runs 1–4 (the s
   | nit | 13/19 | 7/8 | 20/27 (74%) |
 - Active v0032 entries by severity: blocker 5, major 20, minor 15, nit 9.
 - Rule check findings invalid share by entry tier (earlier estimate, partial labels): major+ 39%, minor 22%, nit 48%.
+
+## Tier behavior (aa24300), user: "确认这个行为"
+[tiers] in config.toml: distill attempts major+ 3 / minor 2 / nit 1; retain needs every run for major+ / minor,
+one for nit; retain requeues 2 / 1 / 0, then major+ → needs_human, minor / nit stay learned with "unretained".
+tests/test_retain_tiers.py (7 cases); 18/18 tests.
+
+## E4: nit rules held to a higher bar in the rule check (user approved; not adopted)
+Branch nit-bar (0212460): rule_lines marks the 9 entries learned only from nits ", nit"; rulecheck.md: raise
+a nit rule only when the code plainly does what it warns against. Prompt p06adce4f, state copy data/retention/exp6,
+same 12 samples x 2 runs, main review reused from pdba46ca9. Spent $11.74.
+| | base pdba46ca9 | E4 p06adce4f |
+|---|---|---|
+| 2/2 major+ / minor / nit | 6/7, 17/33, 7/14 | 6/7, 16/33, 7/14 |
+| nit caught >= 1/2 | 9/14 | 7/14 |
+| rc findings from nit rules (2 runs) | 23, 57% invalid | 20, 50% invalid |
+| rc findings, all tiers | 111, 37% invalid | 98, 31% invalid |
+| rule check cost / run | $0.34 | $0.19 |
+Nit findings fell by 3 only; the invalid share fell about as much on major+ / minor rules, which the change
+does not touch, so it reads as run-to-run noise. Not adopted. (The rule-check cost gap is not explained by the
+change; not chased.)

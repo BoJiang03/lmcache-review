@@ -38,7 +38,7 @@ import shutil
 from typing import Callable, Iterator
 
 from .config import PROMPTS, RULES, Config
-from .annotate import cid_of, norm
+from .annotate import TIERS, cid_of, entry_severity, norm, severities, tier
 from .settings import get, settings
 from .progress import note, step
 
@@ -54,7 +54,9 @@ run) and "flaky": true when found in some run, or "unconfirmed": true when the s
 status: covered (the reviewer found it without help) | to_distill | resolved (a book entry makes the
 reviewer find it, checked by vet) | not_rulable (distill, two calls agreed: context / not an
 issue / declined by the team) | needs_human (MAX_TRIES distill attempts failed, only the PR author
-objected to it: contested, or the two attribution calls disagreed: unclear)."""
+objected to it: contested, or the two attribution calls disagreed: unclear).
+A row's severity is not stored: it is its point's annotation (annotate.severities), and its tier
+(annotate.tier: major+ / minor / nit) is what status and retain report by."""
 STATUSES = ("covered", "to_distill", "resolved", "not_rulable", "needs_human")
 _VER = re.compile(r"v\d{4}")
 
@@ -136,6 +138,7 @@ def book_markdown(rules: list[dict], name: str) -> str:
     """A readable view of a rulebook for people (book.jsonl stays the source): active entries by kind,
     each with when / expect / why, then one line per retired entry."""
     act = [r for r in rules if r.get("status", "active") == "active"]
+    sev = severities(Config())
     words = sum(len(f"{r.get('when', '')} {r.get('expect', '')}".split()) for r in act)
     L = [f"# Rulebook {name}", "", f"{len(act)} active entries, {words} words (when + expect; the reviewer sees "
          "these, not why or examples). Generated from book.jsonl; do not edit.", ""]
@@ -147,7 +150,7 @@ def book_markdown(rules: list[dict], name: str) -> str:
             L += [f"### {r['id']}", "", f"**When** {r.get('when', '')}", "", f"**Expect** {r.get('expect', '')}", ""]
             if r.get("why"):
                 L += [f"*Why (record only)*: {r['why']}", ""]
-            L += [f"<sub>v{r.get('version', 1)} · area {r.get('area') or 'overall'} · "
+            L += [f"<sub>v{r.get('version', 1)} · {entry_severity(r, sev) or 'no'} severity · area {r.get('area') or 'overall'} · "
                   f"{len(r.get('evidence') or [])} comments from {r.get('n_prs', 0)} PRs</sub>", ""]
     ret = [r for r in rules if r.get("status") == "retired"]
     if ret:
@@ -477,6 +480,13 @@ def status() -> str:
          f"ledger: {len(rows)} comments on {len(samples)} samples: "
          + ", ".join(f"{s} {len(by[s])}" for s in STATUSES),
          f"samples: {len(solved)} solved by the book, {len(open_)} with comments to distill"]
+    sev = severities(Config())
+    for t in TIERS + (None,):
+        rs = [r for r in rows.values() if tier(sev.get(str(r["comment"]))) == t]
+        if rs:
+            L.append(f"  {t or 'no severity'}: {len(rs)}: " + ", ".join(f"{s} {k}" for s in STATUSES
+                                                                      if (k := sum(r['status'] == s for r in rs)))
+                     + f"; retained {sum(1 for r in rs if r.get('retained'))}")
     if n:
         L.append("size (active entries, words, comments explained; fewer words per comment = more general): "
                  + " | ".join(f"{vname(v)}: " + ", ".join(map(str, book_size(load_book(vname(v)))))
@@ -1128,8 +1138,12 @@ def retain_step(prs: set[int] | None = None, max_cost: float | None = None, reps
                 out["requeued"].append(r["comment"])
                 note(f"  not retained #{r['pr']}@{r['commit'][:8]} c{r['comment']} ({h}/{n})", "change")
         save_ledger(rows)
-        log("retain", reviewer=rv, cost=round(cost, 2), **{k: len(v) for k, v in out.items()})
-    line = f"retain {rv}: " + ", ".join(f"{k} {len(v)}" for k, v in out.items()) + f"; ${cost:.2f}"
+        sev = severities(cfg)
+        tiers = {t or "none": f"{sum(tier(sev.get(str(c))) == t for c in out['retained'])}/"
+                              f"{sum(tier(sev.get(str(c))) == t for v in out.values() for c in v)}" for t in TIERS + (None,)}
+        log("retain", reviewer=rv, cost=round(cost, 2), **{k: len(v) for k, v in out.items()}, by_tier=tiers)
+    line = (f"retain {rv}: " + ", ".join(f"{k} {len(v)}" for k, v in out.items()) + f"; ${cost:.2f}"
+            + "; retained by tier: " + ", ".join(f"{t} {v}" for t, v in tiers.items() if not v.endswith("/0")))
     note(line, "warn" if out["requeued"] or out["needs_human"] else "ok")
     return line
 

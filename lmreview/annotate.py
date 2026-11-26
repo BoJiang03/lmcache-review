@@ -146,6 +146,36 @@ def annotate(cfg: Config, sample: dict, gold: list[dict], effort: str) -> dict:
     return a
 
 
+TIERS = ("major+", "minor", "nit")  # how much a point is worth learning; reports and budgets go by tier
+
+
+def severities(cfg: Config) -> dict[str, str]:
+    """{point key as str: severity} for every annotated point that has one (change_request / nit). A
+    comment id also maps to the highest severity of its points, for keys that name the whole comment."""
+    out: dict[str, str] = {}
+    d = cfg.data / "annotations" / ANNOTATOR
+    for f in d.glob("*.json") if d.exists() else []:
+        for cid, ps in json.loads(f.read_text())["comments"].items():
+            sev = [p.get("severity") for p in ps]
+            for k, s in enumerate(sev):
+                if s and len(ps) > 1:
+                    out[f"{cid}:{k}"] = s
+            if any(sev):
+                out[cid] = min((s for s in sev if s), key=SEVERITIES.index)
+    return out
+
+
+def tier(severity: str | None) -> str | None:
+    """The tier of a severity: blocker and major are "major+"; None (a question, praise) has none."""
+    return None if not severity else "major+" if severity in ("blocker", "major") else severity
+
+
+def entry_severity(entry: dict, sev: dict[str, str]) -> str | None:
+    """A rulebook entry's severity: the highest of its evidence points' (None if none is annotated)."""
+    ss = [sev[str(k)] for k in entry.get("evidence") or [] if str(k) in sev]
+    return min(ss, key=SEVERITIES.index) if ss else None
+
+
 def points(a: dict, gold: list[dict]) -> list[dict]:
     """The annotated points of `gold`, in order: {"id": comment index, "point", "key", "text", "type",
     "severity"}."""

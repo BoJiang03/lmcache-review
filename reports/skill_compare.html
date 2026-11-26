@@ -50,6 +50,18 @@ code{font-family:var(--mono);font-size:.85em}
 </header>
 
 <section>
+<h2>比的是哪三个 review</h2>
+<div class="tw"><table>
+<thead><tr><th>名称</th><th>来源</th><th>用的版本</th></tr></thead>
+<tbody>
+<tr><td><b>lmreview</b></td><td style="text-align:left;white-space:normal">我们自己的 reviewer（仓库 <code>BoJiang03/lmcache-review</code>）。主审之外还有 rule check，规则由 rulebook 提供；rulebook 是从 LMCache 维护者的历史评论里学出来的。</td><td style="text-align:left;white-space:normal">对 /pr-review：<code>p29d23a9f+v0032@medium-rc</code>；对 /code-review：<code>p990f2d2e+v0032@medium-rc</code>。rulebook 都是 v0032（49 条规则）。</td></tr>
+<tr><td><b>/pr-review</b></td><td style="text-align:left;white-space:normal">LMCache 仓库自带的 Claude Code skill：<code>.claude/skills/pr-review/SKILL.md</code>，它会读 <code>docs/coding_standards.md</code>。由 LMCache 维护者编写。</td><td style="text-align:left;white-space:normal">LMCache dev 分支 d0959e0（2026-11-09）里的版本：SKILL.md 最后修改于 bed12fc（2026-11-08），coding_standards.md 最后修改于 5b9db86（2026-11-06）。每个样本用的都是这一版，没有用 PR 当时的版本。</td></tr>
+<tr><td><b>/code-review</b></td><td style="text-align:left;white-space:normal">Claude Code 内置的 skill，任何仓库里都能直接用 <code>/code-review</code> 调用，不针对 LMCache。</td><td style="text-align:left;white-space:normal">Claude Code 2.1.332 自带的版本，参数为 <code>/code-review medium</code>。</td></tr>
+</tbody></table></div>
+<p class="note">三方都用 Opus 5.5、medium effort，离线回放历史样本，不联网，用同一个盲评判分器打分。</p>
+</section>
+
+<section>
 <h2>结论</h2>
 <div class="verdict">
 <div><b>学过的 PR：全面超过</b>命中 83% 对 51%；每样本成本 $0.88 对 $0.87，基本持平；时间 90 s 对 118 s。</div>
@@ -169,7 +181,7 @@ code{font-family:var(--mono);font-size:.85em}
 <h2>配置和附带结论</h2>
 <ul>
 <li><b>lmreview</b>：<code>p29d23a9f+v0032@medium-rc</code>。主审 medium，带 /pr-review 的检查清单、设计文档检查、批量读取，只输出 JSON。rule check 用 low，和主审并行，不带工具。之后用一次小的 Sonnet 调用去掉 rule check 里与主审重复的条目。</li>
-<li><b>/pr-review</b>：今天的 <code>.claude/skills/pr-review/SKILL.md</code> 加 <code>docs/coding_standards.md</code>，离线运行，然后用一次调用把 Markdown 报告抽成 JSON。</li>
+<li><b>/pr-review</b>：LMCache dev d0959e0 里的 <code>.claude/skills/pr-review/SKILL.md</code> 加 <code>docs/coding_standards.md</code>，离线运行，然后用一次调用把 Markdown 报告抽成 JSON。</li>
 <li><b>high 换成 medium</b>（6 个样本）：lmreview 命中 70% → 70%，成本降 25%；/pr-review 命中 59% → 49%。</li>
 <li><b>去重</b>：20 个 run 中，rule check 的 72 条 findings 去掉了 25 条，人类评论命中损失 0，每个 PR 约 $0.011。</li>
 </ul>

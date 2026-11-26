@@ -43,6 +43,50 @@ SPENT = 0.0  # USD of every call this process made (a caller takes the differenc
 _spent_lock = __import__("threading").Lock()
 
 
+# Record/replay tape for refactor checks: LMREVIEW_TAPE=<file.jsonl>, LMREVIEW_TAPE_MODE=record|replay.
+# record appends every call's result; replay answers each call from the tape (calls with the same inputs
+# are answered in recorded order) and fails on a call the tape does not hold, so a replay that finishes
+# proves the code sent the model exactly the recorded prompts.
+TAPE = os.environ.get("LMREVIEW_TAPE")
+_tape: dict[str, list[dict]] | None = None
+_tape_lock = __import__("threading").Lock()
+
+
+def _tape_key(prompt: str, effort: str, tools: str, system: str | None, model: str | None) -> str:
+    import hashlib
+    return hashlib.sha256(json.dumps([prompt, effort, tools, system, model]).encode()).hexdigest()
+
+
+def _tape_replay(prompt, effort, tools, system, model) -> dict | None:
+    global _tape, SPENT
+    if os.environ.get("LMREVIEW_TAPE_MODE") != "replay":
+        return None
+    k = _tape_key(prompt, effort, tools, system, model)
+    with _tape_lock:
+        if _tape is None:
+            _tape = {}
+            for line in pathlib.Path(TAPE).open():
+                d = json.loads(line)
+                _tape.setdefault(d["key"], []).append(d["out"])
+        if not _tape.get(k):
+            miss = pathlib.Path(TAPE).with_suffix(".miss.jsonl")
+            with miss.open("a") as f:
+                f.write(json.dumps({"key": k, "caller": _caller(), "effort": effort, "tools": tools,
+                                    "model": model, "prompt": prompt[:4000]}) + "\n")
+            raise RuntimeError(f"tape miss {k[:12]} ({_caller()})")
+        out = _tape[k].pop(0)
+        SPENT += float(out.get("cost") or 0)
+    return {**out, "effort": effort}
+
+
+def _tape_record(prompt, effort, tools, system, model, out: dict) -> None:
+    if os.environ.get("LMREVIEW_TAPE_MODE") != "record":
+        return
+    with _tape_lock, open(TAPE, "a") as f:
+        f.write(json.dumps({"key": _tape_key(prompt, effort, tools, system, model), "caller": _caller(),
+                            "out": out}) + "\n")
+
+
 def run(prompt: str, effort: str, cwd: str | None = None, tools: str = "", timeout: int = 1800,
         system: str | None = None, sandbox: str | None = None, model: str | None = None) -> dict:
     """Run one headless Claude call.
@@ -64,6 +108,10 @@ def run(prompt: str, effort: str, cwd: str | None = None, tools: str = "", timeo
         {"text": final text, "cost": usd, "turns": n, "denials": [blocked tool calls], "usage",
          "model": the model id that did most of the work (see primary_model)}.
     """
+    if TAPE:
+        hit = _tape_replay(prompt, effort, tools, system, model)
+        if hit is not None:
+            return hit
     env = {k: v for k, v in os.environ.items() if k not in _STRIP}
     # Hard sandbox (verified with a probe): only `tools` exist, file tools are confined to cwd,
     # no shell/web/subagents/MCP, and user settings (e.g. defaultMode=auto) are ignored.
@@ -101,6 +149,8 @@ def run(prompt: str, effort: str, cwd: str | None = None, tools: str = "", timeo
                 observe(model or "default", out["model"])
             except OSError as e:  # a bookkeeping failure must not lose a paid result
                 print(f"could not record the model: {e}", file=sys.stderr)
+        if TAPE:
+            _tape_record(prompt, effort, tools, system, model, out)
         return {**out, "effort": effort}
     except BaseException as e:
         err = f"{type(e).__name__}: {e}"[:500]

@@ -39,3 +39,17 @@ Script: jobs tmp union_est.py. Data: pdba46ca9+v0032@medium-rc runs 1–4 (the s
 - 14 hard points with 4 runs (direct): 42% → 50% (rc union) / 52% (full union).
 - Rule check findings: 32% invalid (main 12%). 39 / 193 hits came only from the rule check.
 - Misses are correlated across runs, not coin flips: sampling more buys little. Not worth the cost.
+
+## Severity tiers (a6b513a), user: "按照重要程度来分别解决以及学习…区别对待"
+- Severity comes from the existing a2 annotations (every ledger point and every rule's evidence is annotated;
+  the earlier "25 rules unknown" came from reading only judge score files). Not stored in the ledger.
+- `annotate.severities / tier / entry_severity`; `lmreview status` lists the ledger by tier; book.md shows each
+  entry's severity (highest of its evidence); retain prints and logs retained by tier; retention.py report has by_tier.
+- Retention by tier, pdba46ca9+v0032@medium-rc, 2 runs:
+  | tier | pilot | holdout | together |
+  |---|---|---|---|
+  | major+ | 20/21 | 7/7 | 27/28 (96%) |
+  | minor | 16/25 | 14/21 | 30/46 (65%) |
+  | nit | 13/19 | 7/8 | 20/27 (74%) |
+- Active v0032 entries by severity: blocker 5, major 20, minor 15, nit 9.
+- Rule check findings invalid share by entry tier (earlier estimate, partial labels): major+ 39%, minor 22%, nit 48%.

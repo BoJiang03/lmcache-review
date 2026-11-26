@@ -59,7 +59,8 @@ TAG = REVIEWER.replace("+", "_").replace("@", "_")  # lmreview runs, scores and 
 RC_FROM = os.environ.get("SC_RC_FROM")  # an -rc reviewer whose cached rule check (same prompt, book) is reused
 EFFORT = os.environ.get("SC_SKILL_EFFORT", "high")  # the skill arm's effort
 SKILL_SUB = "" if EFFORT == "high" else f"effort_{EFFORT}"  # other efforts are cached apart
-RES = TAG + (f"__skill_{EFFORT}" if SKILL_SUB else "")  # results: this reviewer against the skill at EFFORT
+BASE_ARM = os.environ.get("SC_BASELINE", "skill")  # what lmreview is compared with: "skill" or "ccreview" (/code-review)
+RES = TAG + (f"__{BASE_ARM}_{EFFORT}" if SKILL_SUB or BASE_ARM != "skill" else "")  # results: TAG against BASE_ARM at EFFORT
 SKILL_TOOLS = "Read,Grep,Glob,Bash,Agent"
 EXCLUDE_PRS = {6212}
 MAX_SIZE = 2500  # additions + deletions
@@ -68,7 +69,7 @@ FIXED_UNLEARNED = {(4729, "57800f07")}  # its comments were never distilled (ano
 OUT = pathlib.Path(__file__).resolve().parent.parent / "data" / "skill_compare"
 SKILL_FILES = (".claude/skills/pr-review/SKILL.md", "docs/coding_standards.md")
 # $ looked ahead before each step, so the cap is not crossed by the next call
-EST = {"skill": 5.0, "extract": 0.2, "lmreview": 1.5, "judge": 1.2}
+EST = {"ccreview": 3.0, "skill": 5.0, "extract": 0.2, "lmreview": 1.5, "judge": 1.2}
 
 SKILL_PROMPT = """Run LMCache's `pr-review` skill on PR #{number}: read `.claude/skills/pr-review/SKILL.md` in
 the working directory and follow its review process and output format, with these offline adaptations.
@@ -289,6 +290,50 @@ def run_skill(cfg: Config, s: dict, budget: Budget) -> dict:
     return run
 
 
+CC_LINE = re.compile(r"^\s*[-*]?\s*`?(?P<path>[\w./-]+\.\w+)`?:(?P<line>\d+)(?:-\d+)?`?\s+[—-]+\s+"
+                     r"(?P<sev>important|pre_existing|pre-existing|nit)\s+[—-]+\s+(?P<text>.+)$", re.M)
+CC_SEV = {"important": "major", "pre_existing": "minor", "pre-existing": "minor", "nit": "nit"}
+
+
+def run_ccreview(cfg: Config, s: dict, budget: Budget) -> dict:
+    """Claude Code's own /code-review on sample `s`, as a developer runs it on local changes: the base
+    commit is HEAD and the PR's changes are uncommitted (staged); no PR text, history or extra context.
+    Its "path:line — severity — text" lines are parsed; if none parse, one tool-less call extracts them."""
+    p = OUT / "ccreview" / f"effort_{EFFORT}" / "runs" / f"{key_of(s)}.json"
+    if p.exists():
+        return json.loads(p.read_text())
+    budget.check("ccreview")
+    t0 = time.time()
+    with sample_workspace(cfg, s, "ccreview") as (wt, base):
+        for extra in ("PR.diff", "PR_HISTORY.md"):
+            (wt / extra).unlink(missing_ok=True)
+        git_head(cfg, wt, s, base)
+        subprocess.run(["git", "-C", str(wt), "reset", "-q", "--soft", base], check=True)
+        r = llm.run(f"/code-review {EFFORT}", EFFORT, cwd=str(wt), tools="Skill,Read,Grep,Glob,Bash,Agent",
+                    sandbox="replay")
+        secs = time.time() - t0
+        trace = transcript_summary(wt)
+    items = [{"path": m["path"], "line": int(m["line"]), "severity": CC_SEV[m["sev"]], "text": m["text"].strip()}
+             for m in CC_LINE.finditer(r["text"])]
+    ext = None
+    if not items and r["text"].strip():
+        budget.check("extract")
+        e = llm.run(EXTRACT_PROMPT.format(report=r["text"]), "low")
+        ext = {"cost": e["cost"], "raw": e["text"]}
+        items = [{"path": x.get("path"), "line": x.get("line"), "severity": SKILL_SEV.get(str(x.get("severity", "")).lower(), "minor"),
+                  "text": f"{x.get('title', '')}: {x.get('body', '')}"} for x in (parse_issues(e["text"]) or [])]
+    findings = [{"id": f"f{i}", "severity": x["severity"], "scope": "line" if x.get("path") else "pr",
+                 "title": x["text"].split(". ")[0][:120], "body": x["text"],
+                 "locations": [{"path": x["path"], "start": x["line"] if isinstance(x.get("line"), int) else None}]
+                 if x.get("path") else []} for i, x in enumerate(items, 1)]
+    run = {"pr": s["pr"], "commit": s["commit"], "base": base, "arm": "ccreview", "findings": findings,
+           "raw": r["text"], "cost": r["cost"], "turns": r["turns"], "denials": r["denials"], "usage": r.get("usage"),
+           "model": r.get("model"), "secs": round(secs, 1), "extraction": ext, "trace": trace,
+           "n_subagents": len(trace["agents"])}
+    save(p, run)
+    return run
+
+
 def parse_issues(text: str) -> list[dict] | None:
     """The issue list at the end of a skill report, or None if there is none parsable."""
     try:
@@ -392,7 +437,7 @@ def metrics(run: dict, sc: dict, arm: str) -> dict:
          "valid_frac": round(v["True"] / n_ai, 2) if n_ai else None,
          "cost_review": round(run.get("cost") or 0, 3), "cost_judge": round(sc.get("cost") or 0, 3),
          "secs_review": run.get("secs"), "found_keys": sorted(pkey(h) for h in found)}
-    if arm == "skill":
+    if arm in ("skill", "ccreview"):
         m["cost_extract"] = round((run.get("extraction") or {}).get("cost") or 0, 3)
         m["n_subagents"] = run.get("n_subagents")
         m["models"] = sorted((run.get("usage") or {}))
@@ -413,15 +458,16 @@ def metrics(run: dict, sc: dict, arm: str) -> dict:
 def compare(cfg: Config, s: dict, budget: Budget) -> dict:
     """Both arms on sample `s`, judged; returns per-arm metrics and the overlap of found points."""
     res: dict = {"pr": s["pr"], "commit": s["commit"][:8]}
-    runs = {"skill": run_skill(cfg, s, budget), "lmreview": run_lmreview(cfg, s, budget)}
+    runs = {BASE_ARM: (run_ccreview if BASE_ARM == "ccreview" else run_skill)(cfg, s, budget),
+            "lmreview": run_lmreview(cfg, s, budget)}
     for arm, run in runs.items():
         if run.get("findings") is None:
             res[arm] = {"error": run.get("error") or "no findings"}
             continue
         res[arm] = metrics(run, judge(cfg, s, arm, run, budget), arm)
     if all("found_keys" in res[a] for a in runs):
-        a, b = set(res["skill"]["found_keys"]), set(res["lmreview"]["found_keys"])
-        res["overlap"] = {"skill_only": len(a - b), "lmreview_only": len(b - a), "both": len(a & b)}
+        a, b = set(res[BASE_ARM]["found_keys"]), set(res["lmreview"]["found_keys"])
+        res["overlap"] = {f"{BASE_ARM}_only": len(a - b), "lmreview_only": len(b - a), "both": len(a & b)}
     return res
 
 
@@ -465,7 +511,7 @@ def summary() -> None:
         if not xs:
             continue
         print(f"\n## {half} ({len(xs)} samples)")
-        for arm in ("skill", "lmreview"):
+        for arm in (BASE_ARM, "lmreview"):
             ms = [r[arm] for r in xs if "found" in r.get(arm, {})]
             if not ms:
                 continue
@@ -480,7 +526,7 @@ def summary() -> None:
             line = (f"{arm:9s} recall {f}/{t} = {f / t:.0%} | " + ", ".join(f"{k} {a}/{b}" for k, (a, b) in sorted(sev.items()))
                     + f" | findings {n}"
                     + f" | review ${sum(m['cost_review'] for m in ms):.2f}"
-                    + (f" (+extract ${sum(m.get('cost_extract', 0) for m in ms):.2f})" if arm == "skill" else "")
+                    + (f" (+extract ${sum(m.get('cost_extract', 0) for m in ms):.2f})" if arm != "lmreview" else "")
                     + f", {sum(m['secs_review'] or 0 for m in ms) / len(ms):.0f} s/sample")
             if arm == "lmreview":
                 line += f" | via rule check only {sum(m['found_via_rulecheck_only'] for m in ms)}"
@@ -489,7 +535,7 @@ def summary() -> None:
             print(line)
         ov = [r["overlap"] for r in xs if "overlap" in r]
         if ov:
-            print("overlap: " + ", ".join(f"{k} {sum(o[k] for o in ov)}" for k in ("skill_only", "lmreview_only", "both")))
+            print("overlap: " + ", ".join(f"{k} {sum(o[k] for o in ov)}" for k in (f"{BASE_ARM}_only", "lmreview_only", "both")))
 
 
 def main() -> None:

@@ -73,3 +73,9 @@ same 12 samples x 2 runs, main review reused from pdba46ca9. Spent $11.74.
 Nit findings fell by 3 only; the invalid share fell about as much on major+ / minor rules, which the change
 does not touch, so it reads as run-to-run noise. Not adopted. (The rule-check cost gap is not explained by the
 change; not chased.)
+
+## vet by tier (c913159), user: "按你建议的来，你自己选123"
+Chose 1 (vet by tier). Losing a nit point (side effect) no longer fails a change: `[tiers] vet_tolerate = ["nit"]`;
+vet moves it from lost to tolerated (report: TOLERATED lines) and vet_step marks the ledger row "unretained".
+Losing a major+ / minor point still reverts the change. compress is vetted the same way, so this also covers 2
+(merges may not drop a major+ / minor point). 3 (tiers at review time) skipped after E4. 19/19 tests.

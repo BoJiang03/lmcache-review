@@ -62,14 +62,32 @@ code{font-family:var(--mono);font-size:.85em}
 </section>
 
 <section>
-<h2>结论</h2>
-<div class="verdict">
-<div><b>学过的 PR：全面超过</b>命中 83% 对 51%；每样本成本 $0.88 对 $0.87，基本持平；时间 90 s 对 118 s。</div>
-<div><b>没学过的 PR：追平</b>命中 68% 对 65%；成本 $1.04 对 $1.18；时间 114 s 对 159 s。</div>
-<div><b>重要问题漏得少</b>major 命中 17/20，/pr-review 是 13/20；两边 blocker 都是 4/5。</div>
-<div><b>对 /code-review：命中远超，成本略高</b>命中 78% 对 33%；每样本成本 $0.96–1.17 对 $0.59–0.78。</div>
-</div>
-<p class="note" style="margin-top:8px">下面前几节都是和 /pr-review 的对比，其中 lmreview 的 rule check 用 low。和 /code-review 的对比单独一节，用的是正式配置，rule check 用 medium。</p>
+<h2>结论：三者对比</h2>
+<p class="sub">lmreview 用正式配置（<code>p990f2d2e+v0032@medium-rc</code>）。成本和时间都按每个样本平均。</p>
+<div class="tw"><table>
+<thead><tr><th></th><th>lmreview</th><th>/pr-review</th><th>/code-review</th></tr></thead>
+<tbody>
+<tr><td colspan="4" style="text-align:left;color:var(--muted)">学过的 10 个 PR（47 个人类要点）</td></tr>
+<tr><td>命中</td><td class="o win">83%</td><td>51%</td><td>28%</td></tr>
+<tr><td>成本</td><td class="o">$0.96</td><td>$0.87</td><td class="win">$0.59</td></tr>
+<tr><td>时间</td><td class="o">90 s</td><td>118 s</td><td class="win">87 s</td></tr>
+<tr><td colspan="4" style="text-align:left;color:var(--muted)">没学过的 10 个 PR（31 个人类要点）</td></tr>
+<tr><td>命中</td><td class="o win">71%</td><td>65%</td><td>42%</td></tr>
+<tr><td>成本</td><td class="o">$1.17</td><td>$1.18</td><td class="win">$0.78</td></tr>
+<tr><td>时间</td><td class="o win">114 s</td><td>159 s</td><td>127 s</td></tr>
+<tr><td colspan="4" style="text-align:left;color:var(--muted)">按严重度命中（20 个 PR 合计）</td></tr>
+<tr><td>blocker</td><td class="o">4/5</td><td>4/5</td><td>4/5</td></tr>
+<tr><td>major</td><td class="o win">18/20</td><td>13/20</td><td>7/20</td></tr>
+<tr><td>minor</td><td class="o win">27/35</td><td>21/35</td><td>12/35</td></tr>
+<tr><td>nit</td><td class="o win">12/18</td><td>6/18</td><td>3/18</td></tr>
+</tbody></table></div>
+<ul style="margin-top:12px">
+<li><b>命中</b>：lmreview 最高，两组都是第一；在学过的 PR 上优势最大（83% 对 51% 和 28%）。三者 blocker 一样，差距在 major 及以下。</li>
+<li><b>成本</b>：/code-review 最便宜，它查得浅。lmreview 和 /pr-review 差不多：学过的组贵 $0.09，没学过的组持平。</li>
+<li><b>时间</b>：lmreview 和 /code-review 接近，/pr-review 最慢。</li>
+<li><b>对照目标</b>：对 /pr-review，学过的超过、没学过的追平，已经达标。对 /code-review，命中远超，但成本还没追平。</li>
+</ul>
+<p class="note">下面几节是细节。和 /pr-review 的那几节用的是 rule check 为 low 的 <code>p29d23a9f</code>，所以 lmreview 的数和上表略有差别；和 /code-review 的那一节用的是正式配置。</p>
 </section>
 
 <section>

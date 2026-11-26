@@ -1,6 +1,6 @@
 """Run a randomized LLM step several times at once, then merge: a generic way to cut run-to-run noise.
 
-Used by the reviewer (`x<n>` reviewers: n reviews, then a merge agent) and by distill (n abstractions
+Used by the reviewer (-rc: the main review and the rule check, side by side) and by distill (n abstractions
 of the same groups, then a merge that picks the level the human comments support).
 """
 

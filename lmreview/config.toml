@@ -48,6 +48,12 @@ precision = false      # precision gate off (2026-11-25): rules grown too wide a
 wide_margin = 1        # precision gate: a changed entry is reverted when, on the samples where it drew refuted
                        # findings, it drew more than this many more than the text it replaces did
 
+[learn]
+# Learn from what production misses (2026-11-26): round reviews with the production reviewer (current prompt and
+# book at [retain] effort, no -ms), and a point counts as found only when every confirm run finds it; one found in
+# some runs goes to distill as flaky. false: the [hybrid] learning reviewer, a point found once is covered.
+production = true
+
 [retain]
 # "Learned" means the production reviewer catches it every time (2026-11-26): `lmreview retain` (and round,
 # after each judge and vet) re-runs the rule check of the current prompt and book (-ro, see state.retain_reviewer)

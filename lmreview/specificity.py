@@ -71,7 +71,24 @@ def lint(entry: dict, comments: dict[str, dict]) -> list[str]:
     for name, src in sorted(evidence_names(entry, comments).items()):
         if re.search(r"(?<![\w./])" + re.escape(name) + r"(?![\w/])", text):
             bad.append(f"names {name!r} ({src})")
+    bad += quoted(text, entry, comments)
     return bad
+
+
+QUOTE_WORDS = 6  # this many words in a row from an evidence comment: the entry quotes that one case
+
+
+def quoted(text: str, entry: dict, comments: dict[str, dict]) -> list[str]:
+    """The evidence comments whose wording "when" / "expect" copy (QUOTE_WORDS words in a row)."""
+    words = lambda t: re.findall(r"[a-z0-9_\[\]]+", (t or "").lower())  # noqa: E731
+    grams = lambda ws: {tuple(ws[i:i + QUOTE_WORDS]) for i in range(len(ws) - QUOTE_WORDS + 1)}  # noqa: E731
+    mine, out = grams(words(text)), []
+    for cid in entry.get("evidence") or []:
+        c = comments.get(str(cid).split(":")[0])
+        hit = c and mine & grams(words(c.get("body")))
+        if hit:
+            out.append(f"quotes comment {cid}: {' '.join(sorted(hit)[0])!r}")
+    return out
 
 
 def load_comments(data: pathlib.Path) -> dict[str, dict]:
@@ -81,7 +98,10 @@ def load_comments(data: pathlib.Path) -> dict[str, dict]:
 JUDGE_PROMPT = """Below is one entry of a code review rulebook. A good entry describes a kind of problem that can
 come up in many changes, so a reviewer can recognize it in code they have never seen. A bad entry is
 really the fix for one place in one change: it names that change's own functions, variables, files or
-values, or tells the author exactly what edit to make there.
+values, or tells the author exactly what edit to make there. Also specific: an "expect" that prescribes
+the one remedy a reviewer proposed for one change (a particular metric, helper or mechanism to add) where
+other fixes would answer the problem as well, or that quotes an example from that change (a shape, a
+value, a name) instead of saying what the example must show.
 
 {kind_note}Judge only the text below (when the entry applies, and what the reviewer should ask for). Answer with one
 JSON object only: {{"verdict": "class" | "specific", "why": "<one short sentence>"}}
@@ -120,7 +140,9 @@ code it has never seen. Rewrite only "when" (the situation the entry applies to)
 reviewer should ask for) so that they:
 - describe the kind of situation and the kind of fix, in the project's general vocabulary;
 - do not name the change's own functions, classes, variables, config keys, files or PR numbers{names};
-- do not spell out the exact edit for one place.
+- do not spell out the exact edit for one place, nor make the one remedy a reviewer proposed (a
+  particular metric, helper or mechanism) the only acceptable fix: ask for what any good fix must do;
+- do not quote an example from the change (a shape, a value, a name): say what an example must show.
 Keep the meaning: on the change this entry came from, a reviewer given the new text must still raise the
 same problem. The specific case stays in "examples", which you do not change.
 

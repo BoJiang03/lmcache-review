@@ -16,6 +16,7 @@ rulecheck_stage_words = 6000
 dedupe_model = "claude-sonnet-5-5"  # -rc side by side: checks which rule-check findings repeat the main review
 rc_merge = false     # -rc: false lists the main review and rule-check findings side by side; true runs one more
                      # merge agent over them (~$0.4 per PR at high; off since 2026-11-25 for cost)
+rulecheck_split_files = 0  # > 0: a PR touching more files gets one rule-check pass per group of about this many files (retention exp, 2026-11-26)
 dedupe_places = false  # true: keep a rule-check finding that points at places the main review did not (retention exp, 2026-11-26)
 rulecheck_effort = "medium"  # back from low (2026-11-26): low was never checked on learning. The tool-less rule check (2026-11-24 pilot: same verdicts as high on 14 samples, all
                              # new rules still fire on their source PRs, ~18% cheaper)

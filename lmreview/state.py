@@ -206,6 +206,8 @@ def prompt_id(save: bool = False) -> str:
         stage += "\0rc_merge=false"
     if get("review", "dedupe_places"):  # likewise only when on
         stage += "\0dedupe_places=true"
+    if get("review", "rulecheck_split_files"):  # likewise only when on
+        stage += f"\0rulecheck_split_files={get('review', 'rulecheck_split_files')}"
     pid = "p" + hashlib.sha256(("\0".join(texts.values()) + stage).encode()).hexdigest()[:8]
     files = {(f"{pid}.{k}.md" if k else f"{pid}.md"): text for k, text in texts.items()}
     files[f"{pid}.params.json"] = json.dumps(_params(), sort_keys=True) + "\n"
@@ -219,8 +221,8 @@ def prompt_id(save: bool = False) -> str:
     return pid
 
 
-PARAMS = ("rulecheck_effort", "rulecheck_stage_words", "rc_merge", "dedupe_places")  # [review] settings hashed into the prompt id
-LEGACY_PARAMS = {"rc_merge": True, "dedupe_places": False}  # how ids saved before a setting existed ran
+PARAMS = ("rulecheck_effort", "rulecheck_stage_words", "rc_merge", "dedupe_places", "rulecheck_split_files")  # [review] settings hashed into the prompt id
+LEGACY_PARAMS = {"rc_merge": True, "dedupe_places": False, "rulecheck_split_files": 0}  # how ids saved before a setting existed ran
 
 
 def _params() -> dict:

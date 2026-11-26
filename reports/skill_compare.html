@@ -1,0 +1,140 @@
+<title>lmreview 对比 pr-review skill</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&family=JetBrains+Mono:wght@400&display=swap">
+<style>
+/* Layout: one reading column; numbers in tables, recall as bars */
+:root{
+  --bg:#f7f8fa; --panel:#ffffff; --fg:#1b2230; --muted:#5d6878; --line:#dde2ea;
+  --ours:#2f6fde; --skill:#9a6a1f; --good:#1f8a52; --warn:#b5651d;
+  --display:"Space Grotesk",system-ui,sans-serif; --body:"Inter",system-ui,"PingFang SC","Microsoft YaHei",sans-serif; --mono:"JetBrains Mono",ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#12161d; --panel:#1a2029; --fg:#e6eaf0; --muted:#9aa5b5; --line:#2c3440;
+  --ours:#6b9cf2; --skill:#d6a25a; --good:#4cc286; --warn:#e0975a; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#12161d; --panel:#1a2029; --fg:#e6eaf0; --muted:#9aa5b5; --line:#2c3440;
+  --ours:#6b9cf2; --skill:#d6a25a; --good:#4cc286; --warn:#e0975a; color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:32px 56px}
+main{max-width:860px;margin:0 auto;display:flex;flex-direction:column;gap:28px}
+h1{font-family:var(--display);font-size:1.9rem;margin:0;text-wrap:balance}
+h2{font-family:var(--display);font-size:1.2rem;margin:0 0 10px;text-wrap:balance}
+p{margin:0 0 8px}
+.sub{color:var(--muted)}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;min-width:0}
+.verdict{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.verdict div{border-left:3px solid var(--good);padding:4px 12px}
+.verdict b{display:block;font-family:var(--display);font-size:1.05rem}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:.93rem}
+th,td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+thead th{color:var(--muted);font-weight:500;font-size:.82rem;text-transform:uppercase;letter-spacing:.04em}
+td.o{color:var(--ours);font-weight:600} td.s{color:var(--skill)}
+.win{color:var(--good);font-weight:600}
+.bars{display:grid;grid-template-columns:auto 1fr auto;gap:6px 10px;align-items:center;font-variant-numeric:tabular-nums;font-size:.9rem}
+.bar{height:12px;border-radius:3px}
+.b-o{background:var(--ours)} .b-s{background:var(--skill)}
+.legend{display:flex;gap:16px;font-size:.85rem;color:var(--muted);margin-bottom:8px}
+.legend span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.lo::before{background:var(--ours)} .ls::before{background:var(--skill)}
+ul{margin:4px 0 0;padding-left:20px} li{margin:3px 0}
+code{font-family:var(--mono);font-size:.85em}
+.note{color:var(--muted);font-size:.88rem}
+.grp{font-family:var(--display);font-size:.95rem;margin:12px 0 6px;color:var(--muted)}
+</style>
+<main>
+<header>
+<h1>lmreview 对比 LMCache pr-review skill</h1>
+<p class="sub">20 个历史 PR 样本：学过的 10 个，没学过的 10 个。两边都用 Opus 5.5 medium，同一个盲评判分器。2026-11-26。</p>
+</header>
+
+<section>
+<h2>结论</h2>
+<div class="verdict">
+<div><b>学过的 PR：全面超过</b>命中 83% 对 51%；每样本成本 $0.88 对 $0.87，基本持平；时间 90 s 对 118 s。</div>
+<div><b>没学过的 PR：追平</b>命中 68% 对 65%；成本 $1.04 对 $1.18；时间 114 s 对 159 s。</div>
+<div><b>重要问题漏得少</b>major 命中 17/20，skill 是 13/20；两边 blocker 都是 4/5。</div>
+</div>
+</section>
+
+<section>
+<h2>命中人类评论</h2>
+<div class="legend"><span class="lo">lmreview</span><span class="ls">skill</span></div>
+<div class="bars">
+<div class="grp" style="grid-column:1/-1">学过的（47 个要点）</div>
+<span>lmreview</span><div class="bar b-o" style="width:83%"></div><span>39/47 · 83%</span>
+<span>　主审单独</span><div class="bar b-o" style="width:68%;opacity:.55"></div><span>32/47 · 68%</span>
+<span>skill</span><div class="bar b-s" style="width:51%"></div><span>24/47 · 51%</span>
+<div class="grp" style="grid-column:1/-1">没学过的（31 个要点）</div>
+<span>lmreview</span><div class="bar b-o" style="width:68%"></div><span>21/31 · 68%</span>
+<span>　主审单独</span><div class="bar b-o" style="width:68%;opacity:.55"></div><span>21/31 · 68%</span>
+<span>skill</span><div class="bar b-s" style="width:65%"></div><span>20/31 · 65%</span>
+</div>
+<p class="note" style="margin-top:10px">只有一方抓到的要点：学过的组 lmreview 15 个（major 5，minor 5，nit 5），skill 0 个；没学过的组 lmreview 2 个（都是 minor），skill 1 个（major）。提问类评论不计入命中。</p>
+</section>
+
+<section>
+<h2>成本和速度（每个样本平均）</h2>
+<div class="tw"><table>
+<thead><tr><th></th><th>lmreview 成本</th><th>skill 成本</th><th>lmreview 时间</th><th>skill 时间</th></tr></thead>
+<tbody>
+<tr><td>学过的</td><td class="o">$0.88</td><td class="s">$0.87</td><td class="o win">90 s</td><td class="s">118 s</td></tr>
+<tr><td>没学过的</td><td class="o win">$1.04</td><td class="s">$1.18</td><td class="o win">114 s</td><td class="s">159 s</td></tr>
+</tbody></table></div>
+<p class="note">skill 的成本包括把 Markdown 报告抽成 JSON 的那次调用。lmreview 的成本包括主审和 rule check，两者并行运行。</p>
+</section>
+
+<section>
+<h2>按严重度看命中</h2>
+<div class="tw"><table>
+<thead><tr><th>严重度</th><th>学过：lmreview</th><th>学过：skill</th><th>没学过：lmreview</th><th>没学过：skill</th></tr></thead>
+<tbody>
+<tr><td>blocker</td><td class="o">—</td><td class="s">—</td><td class="o">4/5</td><td class="s">4/5</td></tr>
+<tr><td>major</td><td class="o win">13/14</td><td class="s">8/14</td><td class="o">4/6</td><td class="s">5/6</td></tr>
+<tr><td>minor</td><td class="o win">18/21</td><td class="s">13/21</td><td class="o win">10/14</td><td class="s">8/14</td></tr>
+<tr><td>nit</td><td class="o win">8/12</td><td class="s">3/12</td><td class="o">3/6</td><td class="s">3/6</td></tr>
+</tbody></table></div>
+</section>
+
+<section>
+<h2>lmreview 漏掉的是什么</h2>
+<p>漏掉 18 个要点，另有 11 条提问（提问不是 AI 该回答的）。</p>
+<ul>
+<li><b>blocker 1</b>：rebase 到 dev 之后接口签名不匹配，导致 mypy 报错。这需要知道当时的 base 分支状态，离线回放拿不到。</li>
+<li><b>major 3</b>：<code>reserve_write</code> 和 <code>reserve_read</code> 之间 key 可能被驱逐的竞态；lookup 状态代码要更模块化；异步 L2 读锁导致的 flaky 测试。</li>
+<li><b>minor 7</b>：大多是需要项目背景的取舍，比如拆成单独的 PR、把函数挪到单独文件、两个监控指标重叠、删掉的 docstring 里有一句该保留、单测里不要 import vllm。</li>
+<li><b>nit 7</b>：口味型意见，比如改名（<code>num_groups</code> → <code>num_object_groups</code>）、辅助函数放到类末尾、import 放顶部、撤回不必要的改名。</li>
+</ul>
+<p class="note">这些漏掉的评论会进入学习流程，变成规则。学过的组命中更高，就是这么来的。</p>
+</section>
+
+<section>
+<h2>人类没提的 blocker 和 major</h2>
+<div class="tw"><table>
+<thead><tr><th></th><th>报出的 blocker / major</th><th>其中人类没提的</th><th>判分模型认为成立</th></tr></thead>
+<tbody>
+<tr><td>lmreview</td><td class="o">11 / 72</td><td class="o">8 / 51</td><td class="o">7 / 49</td></tr>
+<tr><td>skill</td><td class="s">— / 56</td><td class="s">— / 45</td><td class="s">— / 45</td></tr>
+</tbody></table></div>
+<p class="note">skill 只有 error / warning / info 三级，这里把 error 当作 major。"判分模型认为成立"是 AI 自己的判断，不是 gold，还需要人逐条确认。</p>
+<p style="margin-top:10px">lmreview 报的深层问题更多，有四个原因：</p>
+<ul>
+<li><b>侧重正确性</b>：prompt 要求报所有真实问题，正确性排第一，发现 bug 还要给出回归测试。blocker/major 中带"崩溃、泄漏、竞态、数据错乱"这类字眼的，lmreview 有 45 条，skill 有 28 条。</li>
+<li><b>跟进之前的 review</b>：之前评论过、这一版还没修好的问题会再报一次。lmreview 有 9 条属于这一类，skill 0 条。</li>
+<li><b>可以查 vLLM 源码</b>：用来核对 PR 对 vLLM 行为的假设。提到 vLLM 的条目，lmreview 22 条，skill 11 条。</li>
+<li><b>级别划分</b>：blocker/major 只留给行为错误。规范类问题两边都是 12 条。</li>
+</ul>
+</section>
+
+<section>
+<h2>配置和附带结论</h2>
+<ul>
+<li><b>lmreview</b>：<code>p29d23a9f+v0032@medium-rc</code>。主审 medium，带 skill 的检查清单、设计文档检查、批量读取，只输出 JSON。rule check 用 low，和主审并行，不带工具。之后用一次小的 Sonnet 调用去掉 rule check 里与主审重复的条目。</li>
+<li><b>skill</b>：今天的 <code>.claude/skills/pr-review/SKILL.md</code> 加 <code>docs/coding_standards.md</code>，离线运行，然后用一次调用把 Markdown 报告抽成 JSON。</li>
+<li><b>high 换成 medium</b>（6 个样本）：lmreview 命中 70% → 70%，成本降 25%；skill 命中 59% → 49%。</li>
+<li><b>去重</b>：20 个 run 中，rule check 的 72 条 findings 去掉了 25 条，人类评论命中损失 0，每个 PR 约 $0.011。</li>
+</ul>
+<p class="note" style="margin-top:8px">局限：每组只有 10 个样本；没学过的组都是较新的 PR（#5000 以后），学过的组是 #3200–#4700，所以两组之间的差异还混有时间因素；#3869 一个样本就占学过组 17 个要点；判分是 AI 盲评。数据在 <code>data/skill_compare/</code>，脚本是 <code>scripts/skill_compare.py</code>。</p>
+</section>
+</main>

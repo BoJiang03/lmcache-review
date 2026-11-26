@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Review outputs</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&family=JetBrains+Mono:wght@400&display=swap">
+<style>
+:root{
+  --bg:#f7f8fa; --panel:#ffffff; --fg:#1b2230; --muted:#5d6878; --line:#dde2ea;
+  --ours:#2f6fde; --skill:#9a6a1f; --ak:#17817c; --cc:#7a5bc7; --good:#1f8a52; --bad:#c0392b;
+  --display:"Space Grotesk",system-ui,sans-serif; --body:"Inter",system-ui,"PingFang SC","Microsoft YaHei",sans-serif; --mono:"JetBrains Mono",ui-monospace,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#12161d; --panel:#1a2029; --fg:#e6eaf0; --muted:#9aa5b5; --line:#2c3440;
+  --ours:#6b9cf2; --skill:#d6a25a; --ak:#4cc6c0; --cc:#a98ef0; --good:#4cc286; --bad:#ef6b5b; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#12161d; --panel:#1a2029; --fg:#e6eaf0; --muted:#9aa5b5; --line:#2c3440;
+  --ours:#6b9cf2; --skill:#d6a25a; --ak:#4cc6c0; --cc:#a98ef0; --good:#4cc286; --bad:#ef6b5b; color-scheme:dark}
+*{box-sizing:border-box}
+html{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--body);font-size:14px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:28px 56px}
+main{max-width:900px;margin:0 auto;display:flex;flex-direction:column;gap:20px}
+h1{font-family:var(--display);font-size:1.6rem;margin:0}
+h2{font-family:var(--display);font-size:1.15rem;margin:0 0 10px}
+p{margin:0 0 8px}
+a{color:var(--ours)}
+.sub,.note{color:var(--muted)} .note{font-size:.88rem}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;min-width:0}
+.top{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
+select,button{font:inherit;font-size:.9rem;padding:5px 10px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--fg)}
+button{cursor:pointer}
+select{max-width:100%}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.9rem}
+th,td{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top;text-align:center}
+th:first-child,td:first-child{text-align:left}
+thead th{color:var(--muted);font-weight:500;font-size:.8rem}
+td.t{min-width:18em}
+.y{color:var(--good);font-weight:600} .n{color:var(--muted)}
+.tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.tabs button[aria-pressed="true"]{border-color:var(--fg);font-weight:600}
+.tabs button::before{content:"";display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;background:var(--c)}
+.f{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:10px;min-width:0}
+.f h3{font-size:.95rem;margin:0 0 4px;font-family:var(--body);font-weight:600}
+.meta{display:flex;flex-wrap:wrap;gap:6px 12px;font-size:.8rem;color:var(--muted);margin-bottom:6px}
+.sev{font-family:var(--mono);font-size:.75rem;padding:1px 6px;border-radius:4px;border:1px solid var(--line)}
+.body{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.88rem}
+.v{font-size:.85rem;margin-top:6px} .v.ok b{color:var(--good)} .v.no b{color:var(--bad)}
+.hit{font-size:.85rem;margin-top:4px;color:var(--good)}
+code,.mono{font-family:var(--mono);font-size:.82em;overflow-wrap:anywhere}
+details summary{cursor:pointer;color:var(--muted)}
+pre.rep{white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--mono);font-size:.78rem;background:var(--bg);padding:10px;border-radius:6px;max-height:600px;overflow:auto}
+</style>
+</head>
+<body>
+<main>
+<div class="top">
+  <h1 data-en="Review outputs" data-zh="各方 review 产出">Review outputs</h1>
+  <button id="lang" type="button">中文</button>
+</div>
+<p class="sub" data-en="Everything the four reviewers produced on the 20 samples, with the blind judge's verdicts. Pick a PR; the link keeps the choice (#pr-3210)." data-zh="四方在 20 个样本上产出的全部 findings，以及盲评判分器的判定。选一个 PR；链接会带上选择（#pr-3210）。"></p>
+<section>
+  <div class="top"><select id="pick" aria-label="PR"></select><span id="pmeta" class="sub"></span></div>
+</section>
+<section>
+  <h2 data-en="Human review points" data-zh="人类评论要点"></h2>
+  <p class="note" data-en="Points of type change_request and nit count toward recall; questions are shown but not counted. ✓ = that reviewer had a finding the judge matched to the point." data-zh="change_request 和 nit 类型计入命中；提问只展示，不计入。✓ = 该 reviewer 有一条 finding 被判分器匹配到这个要点。"></p>
+  <div class="tw"><table><thead id="hh"></thead><tbody id="hb"></tbody></table></div>
+</section>
+<section>
+  <h2 data-en="Findings" data-zh="Findings"></h2>
+  <div class="tabs" id="tabs"></div>
+  <div id="arm"></div>
+</section>
+<p class="note" data-en="Source: data/skill_compare/ in BoJiang03/lmcache-review (not in git). lmreview = p990f2d2e+v0032@medium-rc; finding ids 1.* come from the main review, 2.* from the rule check. For the other three, severities come from one extraction call over their Markdown report (shown under the findings); cost includes that call." data-zh="数据来自 BoJiang03/lmcache-review 的 data/skill_compare/（不在 git 里）。lmreview = p990f2d2e+v0032@medium-rc；finding id 1.* 来自主审，2.* 来自 rule check。另外三方的级别来自对其 Markdown 报告的一次抽取（报告原文在 findings 下面）；成本包含这次抽取。"></p>
+</main>
+<script>
+(function(){
+var ARMS=[["lmreview","lmreview","--ours"],["pr-review","/pr-review","--skill"],["anthropic-skills:pr-review","/anthropic-skills:pr-review","--ak"],["code-review","/code-review","--cc"]];
+var lang="en",data=[],cur=0,arm="lmreview";
+try{lang=localStorage.getItem("lang")||"en"}catch(e){}
+function T(en,zh){return lang==="en"?en:zh}
+function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
+function applyLang(){
+  document.documentElement.lang=lang==="en"?"en":"zh-CN";
+  document.getElementById("lang").textContent=lang==="en"?"中文":"English";
+  document.querySelectorAll("[data-en]").forEach(function(el){el.textContent=el.getAttribute("data-"+lang)});
+}
+function counted(h){return h.type==="change_request"||h.type==="nit"}
+function render(){
+  var s=data[cur]; if(!s)return;
+  var pk=document.getElementById("pick"); pk.innerHTML=data.map(function(x,i){return '<option value="'+i+'"'+(i===cur?" selected":"")+'>#'+x.pr+" · "+esc(x.title)+"</option>"}).join("");
+  var pts=s.human.filter(counted);
+  document.getElementById("pmeta").innerHTML='<a href="https://github.com/LMCache/LMCache/pull/'+s.pr+'" target="_blank" rel="noopener">#'+s.pr+'</a> · '+T(s.group,s.group==="learned"?"学过":"没学过")+" · commit <span class=mono>"+esc(s.commit)+"</span> · "+pts.length+T(" points"," 个要点");
+  document.getElementById("hh").innerHTML="<tr><th>"+T("Point","要点")+"</th><th>"+T("Severity","级别")+"</th>"+ARMS.map(function(a){return"<th>"+a[1]+"</th>"}).join("")+"</tr>";
+  document.getElementById("hb").innerHTML=s.human.map(function(h){
+    var c=counted(h);
+    return '<tr'+(c?"":' style="opacity:.6"')+'><td class="t">'+esc(h.text)+(c?"":' <span class="note">('+esc(h.type)+')</span>')+"</td><td>"+esc(h.severity||"")+"</td>"+
+      ARMS.map(function(a){var m=h.hit[a[0]]||[];return m.length?'<td class="y" title="'+esc(m.join(", "))+'">✓</td>':'<td class="n">·</td>'}).join("")+"</tr>"}).join("");
+  document.getElementById("tabs").innerHTML=ARMS.map(function(a){var A=s.arms[a[0]];return '<button type="button" style="--c:var('+a[2]+')" data-arm="'+a[0]+'" aria-pressed="'+(a[0]===arm)+'">'+a[1]+" ("+A.findings.length+")</button>"}).join("");
+  var A=s.arms[arm], byKey={}; s.human.forEach(function(h){byKey[h.key]=h});
+  var html='<p class="note">'+T("Cost","成本")+" $"+A.cost.toFixed(2)+" · "+T("time","时间")+" "+Math.round(A.secs||0)+" s · "+A.findings.length+" findings · "+
+    T("judged valid ","判为成立 ")+A.findings.filter(function(f){return f.valid===true}).length+"</p>";
+  html+=A.findings.map(function(f){
+    var meta=['<span class="sev">'+esc(f.severity)+(f.original_severity?" ← "+esc(f.original_severity):"")+"</span>","<span class=mono>"+esc(f.id)+"</span>"];
+    if(f.stage)meta.push(esc(f.stage)+(f.rule?" · "+esc(f.rule):""));
+    if(f.path)meta.push("<span class=mono>"+esc(f.path)+(f.line?":"+f.line:"")+"</span>");
+    var v=f.valid===true?'<div class="v ok"><b>✓ '+T("valid","成立")+"</b> — "+esc(f.why)+"</div>":f.valid===false?'<div class="v no"><b>✗ '+T("not valid","不成立")+"</b> — "+esc(f.why)+"</div>":'<div class="v"><b>? '+esc(f.valid)+"</b> — "+esc(f.why)+"</div>";
+    var hit=f.matches.length?'<div class="hit">'+T("Matches human point: ","命中人类要点：")+f.matches.map(function(k){return"“"+esc((byKey[k]||{}).text||k)+"”"}).join("; ")+"</div>":"";
+    return '<div class="f"><h3>'+esc(f.title)+'</h3><div class="meta">'+meta.join("")+'</div><div class="body">'+esc(f.body)+"</div>"+v+hit+"</div>"}).join("");
+  if(A.report)html+="<details><summary>"+T("Original Markdown report","原始 Markdown 报告")+"</summary><pre class=rep>"+esc(A.report)+"</pre></details>";
+  document.getElementById("arm").innerHTML=html;
+}
+function fromHash(){var m=/^#pr-(\d+)$/.exec(location.hash);if(m){for(var i=0;i<data.length;i++)if(String(data[i].pr)===m[1])cur=i}}
+document.getElementById("lang").addEventListener("click",function(){lang=lang==="en"?"zh":"en";try{localStorage.setItem("lang",lang)}catch(e){}applyLang();render()});
+document.getElementById("pick").addEventListener("change",function(e){cur=+e.target.value;location.hash="pr-"+data[cur].pr;render()});
+document.getElementById("tabs").addEventListener("click",function(e){var b=e.target.closest("button");if(b){arm=b.getAttribute("data-arm");render()}});
+window.addEventListener("hashchange",function(){fromHash();render()});
+applyLang();
+fetch("reviews.json").then(function(r){return r.json()}).then(function(d){data=d;fromHash();render()})
+  .catch(function(){document.getElementById("arm").textContent=T("Could not load reviews.json.","reviews.json 加载失败。")});
+})();
+</script>
+</body>
+</html>

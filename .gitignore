@@ -4,3 +4,4 @@ __pycache__/
 build/
 *.egg-info/
 __pycache__/
+reports/skill_compare_files/reviews.json

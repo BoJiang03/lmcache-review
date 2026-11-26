@@ -2034,7 +2034,7 @@ def attribute(cs: list[dict], effort: str, cfg: Config, workers: int, max_cost: 
 
     One call alone neither learns a comment (a rule written from a comment that only confirmed the code)
     nor drops it. A comment is learned only when both calls say "learnable"; where they disagree it is
-    "unclear" (no third call: kept apart for a person); with no second answer (cost cap, garbled) the
+    "unclear" (no third call: state.distill_step parks it as needs_human, for a person); with no second answer (cost cap, garbled) the
     comment stays open as "unconfirmed" and a later attempt asks again.
 
     Args:

@@ -35,7 +35,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 OUT = ROOT / "data" / "retention"
 SC = ROOT / "data" / "skill_compare"
-STATE = ROOT / "lmreview" / "state"
+STATE = pathlib.Path(os.environ.get("LMREVIEW_STATE") or ROOT / "lmreview" / "state")
 PILOT_FIXED = ("3869-39e1696b",)  # the 42-file PR where rules exist but did not fire
 
 
@@ -370,9 +370,30 @@ def report(set_name: str, reviewer: str, reps: list[int], book_entries: list[dic
             "runs": n_runs, "cost_per_run": round(sum(cost) / len(cost), 3) if cost else None, "detail": pts}
 
 
+def target(set_name: str, reviewer: str, baseline: str, reps: list[int], voted: bool = False) -> dict:
+    """The target metric (2026-11-26): main = points the baseline reviewer did not find in every run and the
+    ledger still holds as learnable (not not_rulable / needs_human); retention = share of them `reviewer` finds in
+    every run. Guard = points the baseline found in every run; kept = share `reviewer` still finds in every run."""
+    full = len(reps)
+    b = {(p["sample"], str(p["comment"])): p for p in report(set_name, baseline, reps, voted=voted)["detail"]}
+    n = {(p["sample"], str(p["comment"])): p for p in report(set_name, reviewer, reps, voted=voted)["detail"]}
+    st = {str(r["comment"]): r["status"] for r in ledger()}
+    main = [k for k, p in b.items() if p["n"] == full and p["hits"] < full and st.get(k[1]) not in ("not_rulable", "needs_human")]
+    guard = [k for k, p in b.items() if p["n"] == full and p["hits"] == full]
+    dropped = [k for k, p in b.items() if p["n"] == full and p["hits"] < full and k not in main]
+    ok = lambda ks: sum(1 for k in ks if k in n and n[k]["n"] == full and n[k]["hits"] == full)  # noqa: E731
+    return {"set": set_name, "reviewer": reviewer, "baseline": baseline, "reps": reps,
+            "main": f"{ok(main)}/{len(main)}", "main_rate": round(ok(main) / len(main), 3) if main else None,
+            "guard": f"{ok(guard)}/{len(guard)}", "guard_rate": round(ok(guard) / len(guard), 3) if guard else None,
+            "left_out_not_learnable": len(dropped),
+            "main_missed": sorted(f"{s}:{c}" for s, c in main if not (n.get((s, c)) and n[(s, c)]["hits"] == full)),
+            "guard_lost": sorted(f"{s}:{c}" for s, c in guard if not (n.get((s, c)) and n[(s, c)]["hits"] == full))}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["select", "run", "report", "remerge", "isolate", "vote"])
+    ap.add_argument("cmd", choices=["select", "run", "report", "remerge", "isolate", "vote", "target"])
+    ap.add_argument("--baseline", help="target: the reviewer before learning")
     ap.add_argument("--voted", action="store_true", help="report: count a miss the vote turned into a hit")
     ap.add_argument("--base", help="remerge: the reviewer whose stored runs are re-deduped")
     ap.add_argument("--places", action="store_true", help="remerge: place-aware dedupe")
@@ -401,6 +422,8 @@ def main() -> None:
         remerge(a.set, a.base, a.cap, a.places)
     elif a.cmd == "run":
         run(a.set, a.cap, a.workers, a.only)
+    elif a.cmd == "target":
+        print(json.dumps(target(a.set, a.reviewer, a.baseline, a.reps, a.voted), indent=1))
     elif a.cmd == "vote":
         vote(a.set, a.reviewer, a.reps, a.cap, a.workers)
     else:

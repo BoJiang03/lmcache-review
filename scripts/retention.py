@@ -124,7 +124,7 @@ def sample_of(key: str) -> dict:
     raise KeyError(key)
 
 
-def run(set_name: str, cap: float, workers: int) -> None:
+def run(set_name: str, cap: float, workers: int, only: list[str] | None = None) -> None:
     """The lmreview arm of skill_compare on the set's samples (cached runs are reused), judged."""
     sys.path.insert(0, str(ROOT / "scripts"))
     os.environ.update(GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
@@ -148,7 +148,7 @@ def run(set_name: str, cap: float, workers: int) -> None:
             return f"{key}: error {e!r}"
         return f"{key}: ok (spent ${budget.spent:.2f})"
     with ThreadPoolExecutor(workers) as ex:
-        for msg in ex.map(one, sets[set_name]):
+        for msg in ex.map(one, [k for k in sets[set_name] if not only or k in only]):
             print(msg, flush=True)
     print(f"spent this process: ${budget.spent:.2f}")
 
@@ -229,6 +229,63 @@ def isolate(set_name: str, base: str, cap: float, book_ver: str | None = None) -
         print(f"{key} {sorted(rules)}: ok (spent ${budget.spent:.2f})", flush=True)
 
 
+
+def _hit(sc_: dict, row: dict) -> bool:
+    cid, _, point = str(row["comment"]).partition(":")
+    return any(h.get("matched_ai") for h in sc_["human"]
+               if str(h.get("key")) == str(row["comment"]) or (not point and str(h.get("key")).split(":")[0] == cid))
+
+
+def vote(set_name: str, reviewer: str, reps: list[int], cap: float, workers: int) -> None:
+    """Judge-noise control: every learned point a run missed is judged again (the same blinded run, the same
+    judge); a second miss settles it, else a third judge decides (2 of 3). Hits are not re-judged, so the vote
+    leans toward hits: compare reviewers only with the same vote applied. Votes go to <tag>/votes.json."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    sys.path.insert(0, str(ROOT))
+    from lmreview.config import Config
+    from lmreview.score import load_gold, score_one
+    from lmreview.settings import get
+    cfg, sets, ls = Config(), json.loads((OUT / "sets.json").read_text()), learned_samples()
+    ss, cm = load_gold(cfg)
+    spent = [0.0]
+    for k in reps:
+        d = SC / "lmreview" / tag_dir(reviewer, k)
+        vp = d / "votes.json"
+        votes = json.loads(vp.read_text()) if vp.exists() else {}
+
+        def one(key: str) -> None:
+            sp, bp = d / "scores" / f"{key}.json", d / "blind" / f"{key}.json"
+            if not (sp.exists() and bp.exists()):
+                return
+            sc1, judged = json.loads(sp.read_text()), json.loads(bp.read_text())["judged"]
+            miss = [r for r in ls[key] if not _hit(sc1, r)]
+            if not miss or all(key + "|" + str(r["comment"]) in votes for r in miss):
+                return
+            s = sample_of(key)
+            s = ss[(s["pr"], s["commit"])]
+            got = []
+            for j in (2, 3):
+                if spent[0] >= cap:
+                    return
+                sc = score_one(cfg, judged, s, [cm[i] for i in s["gold_ids"]], d / f"scores_v{j}" / f"{key}.json",
+                               str(get("judge", "effort")))
+                spent[0] += sc.get("cost") or 0
+                got.append(sc)
+                if j == 2 and not any(_hit(sc, r) for r in miss):
+                    break  # every miss missed again: settled
+            for r in miss:
+                hs = [_hit(x, r) for x in got]
+                votes[key + "|" + str(r["comment"])] = bool(hs[0] and len(hs) > 1 and hs[1])  # hit only with 2 of 3
+            turned = sum(votes[key + "|" + str(r["comment"])] for r in miss)
+            print(f"{tag_dir(reviewer, k)} {key}: {len(miss)} misses re-judged {len(got)}x; "
+                  f"{turned} turned hit (${spent[0]:.2f})", flush=True)
+        with ThreadPoolExecutor(workers) as ex:
+            list(ex.map(one, sets[set_name]))
+        vp.write_text(json.dumps(votes, indent=1))
+    print(f"vote spent ${spent[0]:.2f}")
+
+
 def rules_of(row: dict, entries: list[dict]) -> set[str]:
     """Active book entries that carry a resolved ledger row: an entry whose tests corrected the comment,
     or the end of the replaced_by chain of the entry that resolved it."""
@@ -255,7 +312,8 @@ def tag_dir(reviewer: str, rep: int) -> str:
     return reviewer.replace("+", "_").replace("@", "_") + (f"#r{rep}" if rep > 1 else "")
 
 
-def report(set_name: str, reviewer: str, reps: list[int], book_entries: list[dict] | None = None) -> dict:
+def report(set_name: str, reviewer: str, reps: list[int], book_entries: list[dict] | None = None,
+           voted: bool = False) -> dict:
     """Per point: hits over the repeats; misses classified a/b/c/x; cost per run. Free."""
     sets = json.loads((OUT / "sets.json").read_text())
     ls, entries = learned_samples(), book_entries or book()
@@ -273,17 +331,18 @@ def report(set_name: str, reviewer: str, reps: list[int], book_entries: list[dic
             run_, sc_, mp = json.loads(rp.read_text()), json.loads(sp.read_text()), json.loads(bp.read_text())["map"]
             cost.append(run_.get("cost") or 0)
             n_runs += 1
-            per_rep.append((run_, sc_, mp))
+            vp = SC / "lmreview" / d / "votes.json"
+            per_rep.append((run_, sc_, mp, json.loads(vp.read_text()) if voted and vp.exists() else {}))
         for row in rows:
             cid, _, point = str(row["comment"]).partition(":")
             hits, classes = 0, []
             for got in per_rep:
                 if got is None:
                     continue
-                run_, sc_, mp = got
+                run_, sc_, mp, vt = got
                 hs = [h for h in sc_["human"]  # a key is "<comment id>" or "<comment id>:<point>"
                       if str(h.get("key")) == str(row["comment"]) or (not point and str(h.get("key")).split(":")[0] == cid)]
-                hit = any(h.get("matched_ai") for h in hs)
+                hit = any(h.get("matched_ai") for h in hs) or bool(vt.get(key + "|" + str(row["comment"])))
                 hits += hit
                 if hit:
                     continue
@@ -313,7 +372,8 @@ def report(set_name: str, reviewer: str, reps: list[int], book_entries: list[dic
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["select", "run", "report", "remerge", "isolate"])
+    ap.add_argument("cmd", choices=["select", "run", "report", "remerge", "isolate", "vote"])
+    ap.add_argument("--voted", action="store_true", help="report: count a miss the vote turned into a hit")
     ap.add_argument("--base", help="remerge: the reviewer whose stored runs are re-deduped")
     ap.add_argument("--places", action="store_true", help="remerge: place-aware dedupe")
     ap.add_argument("--book", help="isolate: check the entries that resolved the points, from this older book (e.g. v0027)")
@@ -323,6 +383,7 @@ def main() -> None:
     ap.add_argument("--reviewer", default=os.environ.get("SC_REVIEWER", "p990f2d2e+v0032@medium-rc"))
     ap.add_argument("--reps", type=int, nargs="+", default=[1, 2])
     ap.add_argument("--detail", action="store_true")
+    ap.add_argument("--only", nargs="+", help="run: only these sample keys of the set")
     a = ap.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
     if a.cmd == "select":
@@ -339,9 +400,11 @@ def main() -> None:
     elif a.cmd == "remerge":
         remerge(a.set, a.base, a.cap, a.places)
     elif a.cmd == "run":
-        run(a.set, a.cap, a.workers)
+        run(a.set, a.cap, a.workers, a.only)
+    elif a.cmd == "vote":
+        vote(a.set, a.reviewer, a.reps, a.cap, a.workers)
     else:
-        r = report(a.set, a.reviewer, a.reps)
+        r = report(a.set, a.reviewer, a.reps, voted=a.voted)
         if not a.detail:
             r.pop("detail")
         print(json.dumps(r, indent=1))

@@ -336,16 +336,46 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
         if "{shared}" in t:  # the PR and its context go in the system prompt, the same for the picking stage and
             # the check, so the check reads them from the cache the pick wrote instead of paying for them again
             rsys = ((system or "") + "\n\n" + SHARED_HEAD.format(**pr_meta(raw)) + ctx).strip()
-        check, pick = rule_stage(version, use, ctx, raw, rce, rsys)
-        p = t.format(rules="\n".join(rule_lines(check, rule_examples(version), rule_why(version))), context=ctx, shared="", **pr_meta(raw))
-        r = _parsed(llm.run(p, rce, cwd=str(wt), tools="", system=rsys), rulecheck=True)
-        if pick:  # rules left out in stage 1 get a verdict too: not applicable
-            left = [x["id"] for x in use if x not in check]
-            r["verdicts"] = list(r.get("verdicts") or []) + [
-                {"rule": i, "applies": False, "violated": False, "why": "not picked from its when-line"} for i in left]
-            r.update(cost=r["cost"] + pick["cost"], usage=llm.add_usage(r.get("usage"), pick.get("usage")),
-                     stage={"picked": [x["id"] for x in check], "left": left, "cost": pick["cost"]})
-        return r
+        def one(rules_: list[dict], focus: str = "") -> dict:
+            check, pick = rule_stage(version, rules_, ctx, raw, rce, rsys)
+            p = t.format(rules=focus + "\n".join(rule_lines(check, rule_examples(version), rule_why(version))), context=ctx, shared="", **pr_meta(raw))
+            r = _parsed(llm.run(p, rce, cwd=str(wt), tools="", system=rsys), rulecheck=True)
+            if pick:  # rules left out in stage 1 get a verdict too: not applicable
+                left = [x["id"] for x in rules_ if x not in check]
+                r["verdicts"] = list(r.get("verdicts") or []) + [
+                    {"rule": i, "applies": False, "violated": False, "why": "not picked from its when-line"} for i in left]
+                r.update(cost=r["cost"] + pick["cost"], usage=llm.add_usage(r.get("usage"), pick.get("usage")),
+                         stage={"picked": [x["id"] for x in check], "left": left, "cost": pick["cost"]})
+            return r
+
+        split = int(prompt_params(version).get("rulecheck_split_files") or 0)
+        paths = changed_paths(wt)
+        if not split or len(paths) <= split:
+            return one(use)
+        # a large change: one pass per group of files, so a rule broken in many files is checked in each of
+        # them (2026-11-26: on a 42-file PR the rule check raised rules on some files and missed the rest)
+        k = -(-len(paths) // split)
+        size = -(-len(paths) // k)
+        groups = [paths[i:i + size] for i in range(0, len(paths), size)]
+        parts = []
+        for gi, g in enumerate(groups, 1):
+            gu = applicable(use, g)
+            if not gu:
+                continue
+            focus = (f"THIS PASS ({gi} of {len(groups)}): check only the changes to these files; the rest of the diff is "
+                     f"context, other passes check it: {', '.join(g)}\n\n")
+            parts.append((gi, one(gu, focus)))
+        if not parts:
+            return one(use)
+        ok = [(gi, r) for gi, r in parts if r["findings"] is not None]
+        out = dict(parts[0][1])
+        out.update(findings=None if not ok else [{**f, "id": f"g{gi}.{f.get('id') or n}"} for gi, r in ok
+                                                 for n, f in enumerate(r["findings"], 1)],
+                   verdicts=[v for _, r in parts for v in r.get("verdicts") or []],
+                   cost=sum(r["cost"] for _, r in parts), usage=llm.add_usage(*(r.get("usage") for _, r in parts)),
+                   raw="\n\n".join(f"[pass {gi}]\n{r.get('raw') or ''}" for gi, r in parts),
+                   error=None if ok else parts[0][1].get("error"), split=[g for g in groups])
+        return out
 
     def merge(ok: list[dict]) -> dict:  # one more agent run on the same workspace: it may read code
         src = {f"{i}.{f.get('id') or k}": (i, f) for i, x in enumerate(ok, 1)

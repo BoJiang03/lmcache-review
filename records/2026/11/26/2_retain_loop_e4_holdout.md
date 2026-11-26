@@ -36,3 +36,15 @@
 - Remaining pilot misses are c-class on #3869 (42 files) and points attribution now calls not_issue / context
   (5 pilot, 4 holdout moved to not_rulable — check these are not the loop hiding misses).
 - Apply to the real state: `lmreview retain` on the real ledger costs ≈ $0.4 × 2 per sample (rule check only).
+
+## Follow-up (2026-11-26 PT ~00:30–01:30): judge vote + split rule check
+- Judge vote (retention.py vote; misses re-judged, 2 of 3): pilot v0032 and v0034, $5.98. 0 of the misses turned
+  hit: the judge repeats its verdict on the same run. Retention unchanged (75.4% → 86.2%).
+  Withdrawn: "holdout drop is judge noise". The noise is in the review runs (rule check + dedupe differ run to
+  run even with the main review reused), not in the judge.
+- Split rule check for large PRs (`[review] rulecheck_split_files`, prompt p6282fa8a when 20), $12.2:
+  pilot #3869 (42 files, 16 points) 2/2 12 → 13; holdout #3630/#4729/#3359 (7 points) 3 → 3, hits 7 → 6.
+  Rule-check cost on those PRs ×1.5–2.5 (#3869 $0.42 → $1.08 per run). No clear gain: setting left at 0 (off).
+- attribute instability: 9 of 30 re-attributed points (all once judged learnable) were re-judged not_rulable
+  (E3 4/16, E4 1/8, holdout 4/6); 3 of them look wrong (#3869 groupby, #3869 keep docstring, #3210 device_path).
+- Spend ≈ $189 of $200.

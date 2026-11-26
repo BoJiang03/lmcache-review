@@ -57,6 +57,8 @@ from lmreview.workspace import cached_pr, sample_workspace  # noqa: E402
 
 REVIEWER = os.environ.get("SC_REVIEWER", "p29f48666+v0032@high-rc")  # default: the formal review, all Opus
 TAG = REVIEWER.replace("+", "_").replace("@", "_")  # lmreview runs, scores and results are kept per reviewer
+REP = int(os.environ.get("SC_REP", "1"))  # repeat k > 1 of the same reviewer is kept apart: TAG + "#r<k>"
+TAG += f"#r{REP}" if REP > 1 else ""
 MAIN_FROM = os.environ.get("SC_MAIN_FROM")  # an -rc reviewer with the same main prompt whose cached main review is reused
 RC_FROM = os.environ.get("SC_RC_FROM")  # an -rc reviewer whose cached rule check (same prompt, book) is reused
 EFFORT = os.environ.get("SC_SKILL_EFFORT", "high")  # the skill arm's effort
@@ -388,8 +390,9 @@ def run_lmreview(cfg: Config, s: dict, budget: Budget) -> dict:
         return json.loads(p.read_text())
     budget.check("lmreview")
     t0 = time.time()
-    donor = RC_FROM and OUT / "lmreview" / "runs" / RC_FROM.replace("+", "_").replace("@", "_") / f"{key_of(s)}.json"
-    mdonor = MAIN_FROM and OUT / "lmreview" / "runs" / MAIN_FROM.replace("+", "_").replace("@", "_") / f"{key_of(s)}.json"
+    rk = f"#r{REP}" if REP > 1 else ""  # a donor's repeat k feeds this reviewer's repeat k
+    donor = RC_FROM and OUT / "lmreview" / "runs" / (RC_FROM.replace("+", "_").replace("@", "_") + rk) / f"{key_of(s)}.json"
+    mdonor = MAIN_FROM and OUT / "lmreview" / "runs" / (MAIN_FROM.replace("+", "_").replace("@", "_") + rk) / f"{key_of(s)}.json"
     if mdonor and mdonor.exists():  # same main prompt, other rule check: reuse the main review, run the rule check only
         d = json.loads(mdonor.read_text())
         m = next(x for x in d["runs"] if x.get("kind") != "rulecheck")

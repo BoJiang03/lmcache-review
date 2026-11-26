@@ -197,6 +197,19 @@ def rules_section(rules: list[dict], paths: list[str], examples: bool = False, w
             + "\n".join(lines) + "\n")
 
 
+def _primary_path(f: dict) -> str | None:
+    locs = [x for x in f.get("locations") or [] if x.get("role") == "primary"] or list(f.get("locations") or [])
+    return locs[0].get("path") if locs else None
+
+
+def drop_repeats(main: list[dict], rulecheck: list[dict]) -> list[dict]:
+    """The rule check's findings without those the main review already raised: same rule and same primary
+    file as a main finding (the main review sees the rulebook too). Free; on 2026-11-25's 26 compare runs it
+    dropped 26 findings and no matched human point."""
+    seen = {(f.get("rule"), _primary_path(f)) for f in main if f.get("rule")}
+    return [f for f in rulecheck if (f.get("rule"), _primary_path(f)) not in seen]
+
+
 def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, live: bool = False,
                  only: set[str] | None = None) -> dict:
     """Run `reviewer` (see parse_reviewer) in workspace `wt` for PR `raw`; `live`: a PR reviewed now
@@ -247,9 +260,12 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
             r["findings"] = [{**f, "rule": None, "rules": []} for f in r["findings"]]
         return r
 
-    def side_by_side(ok: list[dict]) -> dict:  # -ms: no merge call, ids made unique as "<run>.<id>"
+    def side_by_side(ok: list[dict]) -> dict:  # -ms / rc_merge off: no merge call, ids made unique as "<run>.<id>"
+        main = [f for x in ok if x.get("kind") != "rulecheck" for f in x["findings"]]
         fs = [{**f, "id": f"{i}.{f.get('id') or k}", "support": 1}
-              for i, x in enumerate(ok, 1) for k, f in enumerate(x["findings"], 1)]
+              for i, x in enumerate(ok, 1)
+              for k, f in enumerate(drop_repeats(main, x["findings"]) if x.get("kind") == "rulecheck"
+                                    else x["findings"], 1)]
         return {"findings": fs, "error": None, "raw": "", "cost": 0.0, "turns": 0, "denials": [], "usage": {}}
 
     def rulecheck() -> dict:

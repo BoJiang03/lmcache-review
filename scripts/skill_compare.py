@@ -57,6 +57,7 @@ from lmreview.workspace import cached_pr, sample_workspace  # noqa: E402
 
 REVIEWER = os.environ.get("SC_REVIEWER", "p29f48666+v0032@high-rc")  # default: the formal review, all Opus
 TAG = REVIEWER.replace("+", "_").replace("@", "_")  # lmreview runs, scores and results are kept per reviewer
+TAG += os.environ.get("SC_TAG", "")  # runs made against a state copy (LMREVIEW_STATE) keep apart from the real book of that name
 REP = int(os.environ.get("SC_REP", "1"))  # repeat k > 1 of the same reviewer is kept apart: TAG + "#r<k>"
 TAG += f"#r{REP}" if REP > 1 else ""
 MAIN_FROM = os.environ.get("SC_MAIN_FROM")  # an -rc reviewer with the same main prompt whose cached main review is reused

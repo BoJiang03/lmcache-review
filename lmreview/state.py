@@ -204,6 +204,8 @@ def prompt_id(save: bool = False) -> str:
     stage = f"\0stage={get('review', 'rulecheck_stage_words')}\0rce={get('review', 'rulecheck_effort')}"
     if not get("review", "rc_merge"):  # only when off, so ids named before the setting stay the same
         stage += "\0rc_merge=false"
+    if get("review", "dedupe_places"):  # likewise only when on
+        stage += "\0dedupe_places=true"
     pid = "p" + hashlib.sha256(("\0".join(texts.values()) + stage).encode()).hexdigest()[:8]
     files = {(f"{pid}.{k}.md" if k else f"{pid}.md"): text for k, text in texts.items()}
     files[f"{pid}.params.json"] = json.dumps(_params(), sort_keys=True) + "\n"
@@ -217,8 +219,8 @@ def prompt_id(save: bool = False) -> str:
     return pid
 
 
-PARAMS = ("rulecheck_effort", "rulecheck_stage_words", "rc_merge")  # [review] settings hashed into the prompt id
-LEGACY_PARAMS = {"rc_merge": True}  # how ids saved before a setting existed ran
+PARAMS = ("rulecheck_effort", "rulecheck_stage_words", "rc_merge", "dedupe_places")  # [review] settings hashed into the prompt id
+LEGACY_PARAMS = {"rc_merge": True, "dedupe_places": False}  # how ids saved before a setting existed ran
 
 
 def _params() -> dict:
@@ -1025,6 +1027,123 @@ def confirm_misses(rv: str, new: list[int | str], max_cost: float, cfg: Config |
     return line, cost
 
 
+def retain_reviewer() -> str:
+    """The reviewer `retain` checks with: the current prompt and book, rule check only (-ro). On the 2026-11-26
+    pilot the production rule check raised the entry behind 49 of 53 caught resolved points (the main review
+    got credit for 26 of them only because the dedupe kept its copy), so the rule check alone, at about half
+    the cost of a full review, says whether the book is applied. Its runs are judged against every human point of
+    the sample (judge_runs), as production runs are, not only against the point asked about as vet does."""
+    return f"{prompt_id()}+{vname(head())}@{get('retain', 'effort')}-ro" + ("-sh" if config()["shell"] else "")
+
+
+def entries_of(r: dict, rules: list[dict]) -> list[str]:
+    """Active entries that carry a learned row: one whose tests or evidence name the comment, and the end of
+    the replaced_by chain of the entry that resolved it."""
+    cid = str(cid_of(r["comment"]))
+    by = {e["id"]: e for e in rules}
+    active = [e for e in rules if e.get("status", "active") == "active"]
+    out = [e["id"] for e in active if any(cid == str(cid_of(x)) for x in e.get("evidence") or [])
+           or any(cid in map(str, t.get("comments") or []) for t in e.get("tests") or [])]
+    cur, seen = (r.get("resolved_by") or {}).get("entry"), set()
+    while cur and cur not in seen:
+        seen.add(cur)
+        if (by.get(cur) or {}).get("status", "active") == "active" and cur in by:
+            out.append(cur)
+            break
+        cur = ((by.get(cur) or {}).get("retired") or {}).get("replaced_by")
+    return list(dict.fromkeys(out))
+
+
+def _retain_why(rv: str, r: dict, es: list[str], cfg: Config) -> str:
+    """What the production runs made of a point they did not catch every time: whether the entry fired,
+    and what its findings said, so the next write knows what to change."""
+    from .runs import rep_dirs
+    from .schema import cites
+    name = f"{r['pr']}-{r['commit'][:8]}.json"
+    said, fired_runs, n = [], 0, 0
+    for _, d in rep_dirs(cfg, rv):
+        f = d / name
+        if not f.exists():
+            continue
+        n += 1
+        fs = [x for x in json.loads(f.read_text()).get("findings") or [] if cites(x) & set(es)]
+        fired_runs += bool(fs)
+        said += [" ".join(f"{x.get('title') or ''}: {x.get('body') or ''}".split())[:200] for x in fs]
+    if not es:
+        return "no entry carries it: the main review found it by chance"
+    if not fired_runs:
+        return f"the rule check did not raise {', '.join(es)} on this change in any of {n} runs"
+    return (f"{', '.join(es)} fired in {fired_runs} of {n} runs, but its findings did not make this point; they said: "
+            + " | ".join(dict.fromkeys(said))[:500])
+
+
+def retain_step(prs: set[int] | None = None, max_cost: float | None = None, reps: int | None = None,
+                keys: set | None = None, cfg: Config | None = None, samples: set[str] | None = None,
+                statuses: tuple[str, ...] = ("resolved",), reviewer: str | None = None) -> str:
+    """Check that what the ledger calls learned is caught every time in production: review the samples of
+    its covered / resolved rows (only on `prs` / `samples` "PR:commit8", or only rows `keys`) `reps` times with retain_reviewer(),
+    judge, and send each row caught in fewer than all runs back to to_distill. Only resolved rows by default:
+    a covered one has no entry behind it, so a rule check cannot catch it, with a try saying how often
+    it was caught and what the runs made of it (distill reads it). A row sent back more than
+    [distill] max_requeues times goes to a person (needs_human). Rows caught every time get "retained"."""
+    from .replay import replay
+    from .runs import hits
+    from .score import judge_runs
+    cfg = cfg or Config()
+    reps = reps or int(get("retain", "reps"))
+    max_cost = get("budget", "retain") if max_cost is None else max_cost
+    rv = reviewer or retain_reviewer()  # another reviewer of the same prompt and book (e.g. full -rc runs on disk)
+    rows = ledger()
+    todo = [r for r in rows.values() if r["status"] in statuses and (not prs or r["pr"] in prs)
+            and (keys is None or r["comment"] in keys) and (not samples or f"{r['pr']}:{r['commit'][:8]}" in samples)]
+    if not todo:
+        return "retain: nothing learned on these samples"
+    specs = sorted({f"{r['pr']}:{r['commit'][:8]}" for r in todo})
+    nums = {r["pr"] for r in todo}
+    note(f"▶ retain: {len(todo)} learned points on {len(specs)} samples, {reps} runs of {rv}; cap ${max_cost:.0f}")
+    cost = 0.0
+    for k in range(1, reps + 1):
+        cost += replay(rv, "train", None, 4, max(0.0, max_cost - cost), specs, cfg=cfg, rep=k, learned=True)
+    if max_cost <= 0:
+        return f"retain: plan only (cached runs: see above); {len(todo)} learned points"
+    for k in range(1, reps + 1):
+        cost += judge_runs(cfg, rv, nums, "train", max(0.0, max_cost - cost), rep=k)[1]
+    book = load_book(vname(head()))
+    out = {"retained": [], "requeued": [], "needs_human": [], "unknown": []}
+    with lock():
+        rows = ledger()
+        for r0 in todo:
+            r = rows.get(r0["comment"])
+            if not r or r["status"] not in ("covered", "resolved"):
+                continue
+            h, n = hits(rv, sample(r), r["comment"], cfg)
+            if n < reps:
+                out["unknown"].append(r["comment"])
+                continue
+            if h == n:
+                r["retained"] = {"reviewer": rv, "hits": f"{h}/{n}", "date": _now()[:10]}
+                out["retained"].append(r["comment"])
+                continue
+            es = entries_of(r, book) if r["status"] == "resolved" else []
+            why = f"learned ({r['status']}) but caught in {h} of {n} production runs of {rv}: " + _retain_why(rv, r, es, cfg)
+            r.setdefault("tries", []).append({"book": vname(head()), "entries": es, "result": "not retained",
+                                              "why": why, "date": _now()[:10]})
+            r.pop("retained", None)
+            if r.get("requeues", 0) >= MAX_REQUEUES:
+                r.update(status="needs_human", parked={"by": "retain", "prompt": distill_prompt_id(), "date": _now()[:10]})
+                out["needs_human"].append(r["comment"])
+            else:  # the not-retained try is information for distill, not a failed attempt: requeued_at is after it
+                r.update(status="to_distill", requeues=r.get("requeues", 0) + 1, requeued_at=len(r["tries"]),
+                         requeued={"date": _now()[:10], "book": vname(head()), "why": why[:300]})
+                out["requeued"].append(r["comment"])
+                note(f"  not retained #{r['pr']}@{r['commit'][:8]} c{r['comment']} ({h}/{n})", "change")
+        save_ledger(rows)
+        log("retain", reviewer=rv, cost=round(cost, 2), **{k: len(v) for k, v in out.items()})
+    line = f"retain {rv}: " + ", ".join(f"{k} {len(v)}" for k, v in out.items()) + f"; ${cost:.2f}"
+    note(line, "warn" if out["requeued"] or out["needs_human"] else "ok")
+    return line
+
+
 def pick_samples(prs: list[int | str], cfg: Config | None = None) -> list[str]:
     """Expand a round's sample specs: "PR:commit" stays as it is; a bare PR number becomes the commits of
     that PR where some judged run on disk (any reviewer) missed a change request / nit that is not in the
@@ -1116,6 +1235,7 @@ def round_(prs: list[int | str], review_cost: float | None = None, judge_cost: f
             s2.result = line
         out.append(line)
         nums = set(nums) | requeue_parked(cfg=cfg)  # parked comments the changed workflow may now learn
+        retain_on = bool(get("retain", "on"))
         for k in range(MAX_TRIES):
             left = to_distill(prs=nums)
             if not left:
@@ -1128,7 +1248,11 @@ def round_(prs: list[int | str], review_cost: float | None = None, judge_cost: f
                     out.append(distill_step(nums, max_cost=distill_cost, cfg=cfg, induce=induce))
                 if not candidate():
                     break
+                was = {k for k, r in ledger().items() if r["status"] == "resolved"}
                 out.append(vet_step(vet_cost, cfg=cfg).split("\n\n")[-1])
+                fresh = {k for k, r in ledger().items() if r["status"] == "resolved"} - was
+                if retain_on and fresh and not candidate():  # resolved counts only if production catches it every time
+                    out.append(retain_step(nums, b["retain"], keys=fresh, cfg=cfg))
                 if candidate():  # INCOMPLETE
                     note("vet INCOMPLETE (cost cap): candidate kept; rerun `lmreview vet` with a higher --max-cost")
                     break

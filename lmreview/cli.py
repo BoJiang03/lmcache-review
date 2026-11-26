@@ -69,6 +69,13 @@ def main(argv: list[str] | None = None) -> None:
     j = sub.add_parser("judge", help="judge the current reviewer's runs and file the comments in the ledger (paid, cached)")
     j.add_argument("--prs", type=int, nargs="+")
     j.add_argument("--max-cost", type=float, default=get("budget", "judge"))
+    rt = sub.add_parser("retain", help="re-review the samples of covered / resolved points with the production reviewer "
+                        "([retain] reps runs) and send points not caught every time back to to_distill (paid, cached)")
+    rt.add_argument("--prs", type=int, nargs="+")
+    rt.add_argument("--samples", nargs="+", help="PR:commit8 (default: every sample of a learned point)")
+    rt.add_argument("--reps", type=int, default=get("retain", "reps"))
+    rt.add_argument("--reviewer", help="check with this reviewer's runs instead (same prompt and book; default: the rule check, -ro)")
+    rt.add_argument("--max-cost", type=float, default=get("budget", "retain"))
     o = sub.add_parser("round", help="review + judge + distill + vet on these samples, then compress + vet when the book is over [compress] words (paid)")
     o.add_argument("prs", nargs="+", help="PR numbers or PR:commit")
     o.add_argument("--review-cost", type=float, default=get("budget", "round")["review"])
@@ -137,7 +144,7 @@ def main(argv: list[str] | None = None) -> None:
     g.add_argument("--suffix", default="", help="appended to the replay reviewer, e.g. -rc for the rule check")
 
     a = ap.parse_args(argv)
-    if a.cmd in ("judge", "round", "regress", "eval") or (a.cmd in ("review", "distill", "vet", "compress") and not (
+    if a.cmd in ("judge", "round", "regress", "eval", "retain") or (a.cmd in ("review", "distill", "vet", "compress") and not (
             a.cmd == "review" and a.pr) and getattr(a, "max_cost", 1) > 0):
         from .config import Config
         from .progress import note, tee
@@ -188,6 +195,9 @@ def main(argv: list[str] | None = None) -> None:
             print(state.discard())
         else:
             print(f"book in use: {state.vname(state.init(a.book, a.note))}")
+    elif a.cmd == "retain":
+        from .state import retain_step
+        print(retain_step(set(a.prs or []) or None, a.max_cost, a.reps, samples=set(a.samples or []) or None, reviewer=a.reviewer))
     elif a.cmd == "compress":
         from .state import compress_step
         print(compress_step(a.max_cost, stage=a.stage, repair=a.repair))

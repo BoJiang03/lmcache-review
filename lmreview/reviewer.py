@@ -202,6 +202,8 @@ def _primary_path(f: dict) -> str | None:
     return locs[0].get("path") if locs else None
 
 
+PLACE_SLACK = 15  # lines: a rule-check place this close to a main-review place is the same place
+
 SAME_PROMPT = """Below are pairs of code review findings on the same file, citing the same team rule. For
 each pair, answer whether B raises the same problem as A (so B can be dropped as a repeat), or a
 different problem that only falls under the same rule. Answer with one ```json block:
@@ -210,20 +212,35 @@ different problem that only falls under the same rule. Answer with one ```json b
 {pairs}"""
 
 
-def drop_repeats(main: list[dict], rulecheck: list[dict], confirm: bool = True) -> tuple[list[dict], float]:
+def _places(f: dict) -> list[tuple[str, int]]:
+    return [(loc.get("path"), int(loc.get("start") or 0)) for loc in f.get("locations") or [] if loc.get("path")]
+
+
+def _covered(b: dict, fs: list[dict], slack: int = PLACE_SLACK) -> bool:
+    """Every place finding `b` points at is within `slack` lines of a place one of `fs` points at."""
+    ps = [p for f in fs for p in _places(f)]
+    return all(any(path == q and abs(line - n) <= slack for q, n in ps) for path, line in _places(b))
+
+
+def drop_repeats(main: list[dict], rulecheck: list[dict], confirm: bool = True,
+                 places: bool | None = None) -> tuple[list[dict], float]:
     """The rule check's findings without those the main review already raised (the main review sees the
-    rulebook too). Candidates: same rule and same primary file as a main finding. With `confirm`, one
-    small tool-less call ([review] dedupe_model, low effort) checks the candidates and keeps those that
-    raise a different problem under a broad rule; on failure every candidate is kept.
+    rulebook too). Candidates: same rule and same primary file as a main finding; with `places` (default:
+    [review] dedupe_places), only when every place the rule-check finding points at is also near a place
+    those main findings point at, so a rule broken in more places than the main review named keeps them.
+    With `confirm`, one small tool-less call ([review] dedupe_model, low effort) checks the candidates
+    and keeps those that raise a different problem under a broad rule; on failure every candidate is kept.
 
     Returns:
         (the rule-check findings kept, the call's cost).
     """
+    places = bool(get("review", "dedupe_places")) if places is None else places
     by_key: dict = {}
     for f in main:
         if f.get("rule"):
             by_key.setdefault((f.get("rule"), _primary_path(f)), []).append(f)
-    cand = [(k, f) for k, f in enumerate(rulecheck) if (f.get("rule"), _primary_path(f)) in by_key]
+    cand = [(k, f) for k, f in enumerate(rulecheck) if (f.get("rule"), _primary_path(f)) in by_key
+            and (not places or _covered(f, by_key[(f.get("rule"), _primary_path(f))]))]
     if not cand:
         return list(rulecheck), 0.0
     drop, cost = {k for k, _ in cand}, 0.0
@@ -297,7 +314,7 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
         cost, kept = 0.0, {}
         for i, x in enumerate(ok):
             if x.get("kind") == "rulecheck":
-                kept[i], c = drop_repeats(main, x["findings"])
+                kept[i], c = drop_repeats(main, x["findings"], places=bool(prompt_params(version).get("dedupe_places")))
                 cost += c
         fs = [{**f, "id": f"{i}.{f.get('id') or k}", "support": 1}
               for i, x in enumerate(ok, 1) for k, f in enumerate(kept.get(i - 1, x["findings"]), 1)]

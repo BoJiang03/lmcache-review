@@ -16,6 +16,7 @@ rulecheck_stage_words = 6000
 dedupe_model = "claude-sonnet-5-5"  # -rc side by side: checks which rule-check findings repeat the main review
 rc_merge = false     # -rc: false lists the main review and rule-check findings side by side; true runs one more
                      # merge agent over them (~$0.4 per PR at high; off since 2026-11-25 for cost)
+dedupe_places = false  # true: keep a rule-check finding that points at places the main review did not (retention exp, 2026-11-26)
 rulecheck_effort = "medium"  # back from low (2026-11-26): low was never checked on learning. The tool-less rule check (2026-11-24 pilot: same verdicts as high on 14 samples, all
                              # new rules still fire on their source PRs, ~18% cheaper)
 
@@ -32,6 +33,7 @@ consolidate_drafts = 3 # tidy the whole book: drafts run in parallel; a change n
 induce = false         # step 5: principles over standalone entries (their parents earned nothing)
 min_signal_prs = 2     # revise / retire on failure signals alone: they must come from this many PRs
 max_tries = 2          # distill attempts per comment before it goes to a person (needs_human)
+specificity = true     # written / changed entries pass specificity.py (identifier lint + a model check); one rewrite, else dropped / reverted
 max_requeues = 2       # times a parked (needs_human) comment gets another chance when the workflow changed (state.requeue_parked)
 
 [vet]
@@ -41,6 +43,15 @@ precision = false      # precision gate off (2026-11-25): rules grown too wide a
                        # launch; vet gates recall only. true: revert changed entries drawing more refuted findings
 wide_margin = 1        # precision gate: a changed entry is reverted when, on the samples where it drew refuted
                        # findings, it drew more than this many more than the text it replaces did
+
+[retain]
+# "Learned" means the production reviewer catches it every time (2026-11-26): `lmreview retain` (and round,
+# after each judge and vet) re-runs the rule check of the current prompt and book (-ro, see state.retain_reviewer)
+# on the samples of covered / resolved points `reps` times, judges against every point, and sends a point
+# caught in fewer than all runs back to to_distill.
+on = true
+effort = "medium"      # the production reviewer's effort (p...+<book>@medium-rc)
+reps = 2
 
 [hybrid]
 # Learning (round, and judge / distill reading its runs) reviews with the reviewer in use plus -ms: the main
@@ -74,6 +85,7 @@ judge = 10.0
 distill = 5.0
 vet = 30.0
 regress = 10.0
+retain = 30.0           # `lmreview retain`: production re-reviews (2 per sample) and their judge
 compress = 3.0          # `lmreview compress`: drafts and final texts (vet is separate)
 
 [budget.round]
@@ -82,6 +94,7 @@ review = 30.0
 judge = 10.0
 confirm = 10.0       # a second review (and judge) of the samples with new misses, before distill (state.confirm_misses)
 distill = 5.0
+retain = 20.0        # production re-reviews of what a round learned (state.retain_step)
 vet = 30.0
 
 # Paths. "" = automatic: a checkout uses its data/ dir, an installed copy ~/.cache/lmreview/.

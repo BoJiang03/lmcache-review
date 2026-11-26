@@ -77,9 +77,10 @@ def replay_one(cfg: Config, s: dict, reviewer: str, rep: int = 1) -> tuple[str, 
 
 def replay(reviewer: str = DEFAULT_REVIEWER, split: str = "test", limit: int | None = 10, workers: int = 4,
            max_cost: float = 15.0, prs: list | None = None, area: str | None = None,
-           cfg: Config | None = None, rep: int = 1) -> float:
+           cfg: Config | None = None, rep: int = 1, learned: bool = False) -> float:
     """Run `reviewer` over samples of `split` not run yet, stopping at `max_cost`; `rep` > 1: as that
-    repeat (<reviewer>#r<rep>). Returns $ spent."""
+    repeat (<reviewer>#r<rep>); `learned`: also the samples its rulebook came from (state.retain checks that
+    the book is applied there; anywhere else they would be a leak). Returns $ spent."""
     cfg = cfg or Config()
     rules = parse_reviewer(reviewer)[1]
     if rules:
@@ -87,7 +88,7 @@ def replay(reviewer: str = DEFAULT_REVIEWER, split: str = "test", limit: int | N
     ss = load_samples(cfg, split, limit, prs, area)
     ev = rule_evidence(reviewer)
     leak = [s for s in ss if ev & set(s["gold_ids"])]
-    if leak:  # its rulebook was distilled from these samples' own human comments
+    if leak and not learned:  # its rulebook was distilled from these samples' own human comments
         note(f"skipping {len(leak)} samples whose comments the rulebook came from: "
               + ", ".join(f"#{s['pr']}-{s['commit'][:8]}" for s in leak))
         ss = [s for s in ss if s not in leak]

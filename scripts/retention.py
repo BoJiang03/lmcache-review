@@ -153,6 +153,82 @@ def run(set_name: str, cap: float, workers: int) -> None:
     print(f"spent this process: ${budget.spent:.2f}")
 
 
+def remerge(set_name: str, base: str, cap: float, places: bool) -> None:
+    """Rebuild repeat SC_REP of reviewer SC_REVIEWER from `base`'s stored main review and rule check with
+    another dedupe (no review call; one dedupe call per sample), then judge it."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import skill_compare as sc
+
+    from lmreview.config import Config
+    from lmreview.reviewer import drop_repeats
+    sets = json.loads((OUT / "sets.json").read_text())
+    cfg, budget = Config(), sc.Budget(cap)
+    for key in sets[set_name]:
+        src = SC / "lmreview" / "runs" / tag_dir(base, sc.REP) / f"{key}.json"
+        dst = SC / "lmreview" / "runs" / sc.TAG / f"{key}.json"
+        if not src.exists():
+            print(f"{key}: no base run")
+            continue
+        if not dst.exists():
+            r = json.loads(src.read_text())
+            m = next(x for x in r["runs"] if x.get("kind") != "rulecheck")
+            rc = next(x for x in r["runs"] if x.get("kind") == "rulecheck")
+            kept, dcost = drop_repeats(m["findings"] or [], rc["findings"] or [], places=places)
+            fs = None if m["findings"] is None else (
+                [{**f, "id": f"1.{f.get('id') or k}", "support": 1} for k, f in enumerate(m["findings"], 1)]
+                + [{**f, "id": f"2.{f.get('id') or k}", "support": 1} for k, f in enumerate(kept, 1)])
+            cost = (m.get("cost") or 0) + (rc.get("cost") or 0) + dcost
+            sc.save(dst, {**r, "findings": fs, "cost": cost, "dedupe_cost": dcost, "reviewer": sc.REVIEWER,
+                          "remerged_from": base})
+            pass  # llm.SPENT already counts the dedupe call
+        r = json.loads(dst.read_text())
+        sc.judge(cfg, sample_of(key), "lmreview", r, budget)
+        print(f"{key}: ok (spent ${budget.spent:.2f})", flush=True)
+
+
+def isolate(set_name: str, base: str, cap: float, book_ver: str | None = None) -> None:
+    """Diagnostic: on samples where `base` missed a resolved point, rerun only the rule check limited to
+    the missed points' rules (as vet tests a rule), merged with `base`'s stored main review of the same
+    repeat, judged as repeat SC_REP of SC_REVIEWER. Shows whether a rule checked on its own still fires."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    os.environ.update(GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
+    import skill_compare as sc
+
+    from lmreview.config import Config
+    from lmreview.reviewer import drop_repeats, reviewer_context, run_reviewer
+    from lmreview.workspace import cached_pr, sample_workspace
+    cfg, budget = Config(), sc.Budget(cap)
+    rep = report(set_name, base, [1, 2])
+    want: dict[str, set] = C.defaultdict(set)
+    rows = {(f"{r['pr']}-{r['commit'][:8]}", str(r["comment"])): r for r in ledger()}
+    for p in rep["detail"]:
+        if p["status"] == "resolved" and p["hits"] < p["n"]:
+            if book_ver:  # the entry that resolved it, as that older book had it
+                want[p["sample"]].add((rows[(p["sample"], str(p["comment"]))].get("resolved_by") or {}).get("entry"))
+            else:
+                want[p["sample"]].update(p["rules"])
+    for key, rules in sorted(want.items()):
+        src = SC / "lmreview" / "runs" / tag_dir(base, sc.REP) / f"{key}.json"
+        dst = SC / "lmreview" / "runs" / sc.TAG / f"{key}.json"
+        s = sample_of(key)
+        if not dst.exists():
+            budget.check("lmreview")
+            r = json.loads(src.read_text())
+            m = next(x for x in r["runs"] if x.get("kind") != "rulecheck")
+            ro = base.removesuffix("-rc") + "-ro"
+            if book_ver:
+                ro = ro.replace("+" + ro.split("+")[1].split("@")[0] + "@", f"+{book_ver}@")
+            with sample_workspace(cfg, s, "review", reviewer_context(ro)) as (wt, _):
+                rc = run_reviewer(wt, cached_pr(cfg, s["pr"], s["time"]), ro, only=set(rules))
+            kept, dcost = drop_repeats(m["findings"] or [], rc["findings"] or [])
+            fs = ([{**f, "id": f"1.{f.get('id') or k}", "support": 1} for k, f in enumerate(m["findings"] or [], 1)]
+                  + [{**f, "id": f"2.{f.get('id') or k}", "support": 1} for k, f in enumerate(kept, 1)])
+            sc.save(dst, {**r, "findings": fs, "cost": (m.get("cost") or 0) + rc["cost"] + dcost, "isolated": sorted(rules),
+                          "runs": [m, {**rc, "kind": "rulecheck"}]})
+        sc.judge(cfg, s, "lmreview", json.loads(dst.read_text()), budget)
+        print(f"{key} {sorted(rules)}: ok (spent ${budget.spent:.2f})", flush=True)
+
+
 def rules_of(row: dict, entries: list[dict]) -> set[str]:
     """Active book entries that carry a resolved ledger row: an entry whose tests corrected the comment,
     or the end of the replaced_by chain of the entry that resolved it."""
@@ -237,7 +313,10 @@ def report(set_name: str, reviewer: str, reps: list[int], book_entries: list[dic
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["select", "run", "report"])
+    ap.add_argument("cmd", choices=["select", "run", "report", "remerge", "isolate"])
+    ap.add_argument("--base", help="remerge: the reviewer whose stored runs are re-deduped")
+    ap.add_argument("--places", action="store_true", help="remerge: place-aware dedupe")
+    ap.add_argument("--book", help="isolate: check the entries that resolved the points, from this older book (e.g. v0027)")
     ap.add_argument("--set", default="pilot")
     ap.add_argument("--cap", type=float, default=25.0)
     ap.add_argument("--workers", type=int, default=4)
@@ -255,6 +334,10 @@ def main() -> None:
         sets = select()
         p.write_text(json.dumps(sets, indent=1))
         print(json.dumps(sets, indent=1))
+    elif a.cmd == "isolate":
+        isolate(a.set, a.base, a.cap, a.book)
+    elif a.cmd == "remerge":
+        remerge(a.set, a.base, a.cap, a.places)
     elif a.cmd == "run":
         run(a.set, a.cap, a.workers)
     else:

@@ -1528,6 +1528,12 @@ def compress(out: str, base: str, cfg: Config | None = None, effort: str = "high
                                   final_prompt=FINAL_COMPRESS, union=True, detail=detail, forced=forced)
     note(f"      proposed: {dict(C.Counter(ch['op'] for ch in changes)) or 'nothing'}")
     rules = [r for r in rules if r["id"] in {x["id"] for x in base_rules} or r.get("status", "active") == "active"]
+    if get("distill", "specificity"):  # merged texts too must describe a kind of problem (specificity.py)
+        from .specificity import enforce, load_comments
+        rules, more, c_sp = enforce(rules, base_rules, load_comments(cfg.data), effort)
+        spend[0] += c_sp
+        changes += more
+        note(f"      specificity: {dict(C.Counter(ch['op'] for ch in more)) or 'all pass'} (${c_sp:.2f})")
     diff = rule_diff(base_rules, rules)
     for level, line in diff:
         note("  " + line, level)
@@ -2183,6 +2189,12 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
         note(f"      induce: {dict(C.Counter(ch['op'] for ch in more)) or 'no change'}")
     rules, more = drop_unearned(rules, {r["id"] for r in base_rules})
     changes += more
+    if get("distill", "specificity"):  # an entry must describe a kind of problem, not how to fix one PR
+        from .specificity import enforce, load_comments
+        rules, more, c_sp = enforce(rules, base_rules, load_comments(cfg.data), effort)
+        spend[0] += c_sp
+        changes += more
+        note(f"      specificity: {dict(C.Counter(ch['op'] for ch in more)) or 'all pass'} (${c_sp:.2f})")
     spent = spend[0]
     diff = rule_diff(base_rules, rules)
     note(f"rule changes ({sum(l.startswith('+') for _, l in diff)} new, {sum(l.startswith('~') for _, l in diff)} revised, "

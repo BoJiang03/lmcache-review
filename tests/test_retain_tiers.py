@@ -49,6 +49,23 @@ def test_retain_tiers() -> None:
     assert "major+ 1/3" in line and "nit 1/2" in line, line
 
 
+def test_vet_tolerates_nit_losses() -> None:
+    from lmreview import vet
+    cfg = Config(data=pathlib.Path(tempfile.mkdtemp(prefix="lmr-data-", dir=TMP)))
+    ann = cfg.data / "annotations" / "a2"
+    ann.mkdir(parents=True)
+    ann.joinpath("8-dddddddd.json").write_text(json.dumps({"comments": {
+        "61": [{"text": "t", "type": "nit", "severity": "nit"}],
+        "62": [{"text": "t", "type": "change_request", "severity": "major"}],
+        "63": [{"text": "a", "type": "change_request", "severity": "nit"},
+               {"text": "b", "type": "change_request", "severity": "minor"}]}}))
+    J = {"lost": [("e1", 61), ("e2", 62), ("e3", "63:0"), ("e3", "63:1")]}
+    vet._tolerate(J, cfg)
+    assert J["tolerated"] == [("e1", 61), ("e3", "63:0")], J
+    assert J["lost"] == [("e2", 62), ("e3", "63:1")], J
+
+
 if __name__ == "__main__":
     test_retain_tiers()
+    test_vet_tolerates_nit_losses()
     print("ok")

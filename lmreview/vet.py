@@ -50,7 +50,7 @@ from types import SimpleNamespace
 
 from . import runs
 from .config import Config
-from .annotate import cid_of, norm
+from .annotate import cid_of, norm, severities, tier
 from .settings import get
 from .progress import note
 from .regress import EST_RO, EST_RUN, FIELDS, cite_ids, replay, run_tag
@@ -164,7 +164,16 @@ def vet(book: str, base: str, prompt: str, effort: str, suffix: str, reps: int =
         note(x.lstrip("- "))
     r = _first_pass(p, reps, max_cost, cfg)
     _sequential(p, r, max_cost, cfg)
+    _tolerate(r.J, cfg)
     return _report(p, r, L, out, cfg)
+
+
+def _tolerate(J: dict, cfg: Config) -> None:
+    """A side-effect loss of a point in a [tiers] vet_tolerate tier (nit) does not fail the change: it moves
+    from J["lost"] to J["tolerated"], and state.vet_step marks its ledger row "unretained"."""
+    sev, ok = severities(cfg), set(get("tiers", "vet_tolerate"))
+    J["tolerated"] = [(i, e) for i, e in J["lost"] if tier(sev.get(str(e))) in ok]
+    J["lost"] = [x for x in J["lost"] if x not in J["tolerated"]]
 
 
 def _plan(book: str, base: str, prompt: str, effort: str, suffix: str, reps: int, everything: bool,
@@ -480,7 +489,8 @@ def _report(p: SimpleNamespace, r: SimpleNamespace, L: list[str], out: dict | No
         L += ["## 2b. Revisions: the invalid findings that triggered them", ""]
         L += [f"- {i} #{t}: base {B.get(fk(i, t), {}).get('invalid')} invalid citing finding(s), "
               f"new {Nw.get(fk(i, t), {}).get('invalid')}" for i, t in fixes] + [""]
-    L += ["## 3. Side effects", "", f"kept {J['kept']}, lost {len(J['lost'])}, missed by both {J['both_miss']}, "
+    L += ["## 3. Side effects", "", f"kept {J['kept']}, lost {len(J['lost'])}, lost but tolerated (tier) "
+          f"{len(J.get('tolerated') or [])}, missed by both {J['both_miss']}, "
           f"not run {J['s_unknown']}"]
     def nb(i: str, e) -> str:
         """NEW and BASE counts of a side case, when the sequential check ran."""
@@ -488,6 +498,8 @@ def _report(p: SimpleNamespace, r: SimpleNamespace, L: list[str], out: dict | No
         return (f"NEW {x[0]}/{x[1]}" + (f", BASE {y[0]}/{y[1]}" if y else "") + "; ") if x else ""
     L += [f"- LOST {i}{' (retired)' if i in retired else ''} #{tgt(e)} c{e} ({nb(i, e)}{cm[e]['author']}: "
           f"{cm[e]['body'][:100]!r})" for i, e in J["lost"]]
+    L += [f"- TOLERATED {i} #{tgt(e)} c{e} ({nb(i, e)}{cm[e]['author']}: {cm[e]['body'][:100]!r})"
+          for i, e in J.get("tolerated") or []]
     L += [f"- NOT RUN ({side}) {i} #{tgt(e)} c{e}" + (f" ({nb(i, e).rstrip('; ')})" if nb(i, e) else "")
           for i, e, side in J.get("s_which") or []]
     L += [f"- kept after disagreeing runs: {i} #{tgt(e)} c{e} ({nb(i, e).rstrip('; ')})" for i, e in side
@@ -498,7 +510,8 @@ def _report(p: SimpleNamespace, r: SimpleNamespace, L: list[str], out: dict | No
     unk = sum(runs.unknown_model(cfg, f"{prompt}+{b}@{effort}{suffix}" + run_tag(p.only), sorted(p.samples)) for b in (book, base))
     L = L[:2] + [f"**{verdict}** · cost ${c_b + c_n + c_r + c_s:.2f}", ""] \
         + ([f"- {unk} run(s) of unknown model (made before runs recorded their model)", ""] if unk else []) + L[2:]
-    note(f"{verdict}: entries working {len(J['works'])}/{n_eff}, lost {len(J['lost'])}, "
+    note(f"{verdict}: entries working {len(J['works'])}/{n_eff}, lost {len(J['lost'])} "
+         f"(+{len(J.get('tolerated') or [])} tolerated), "
          f"revisions not fixed {len(J['not_fixed'])}" + (f"; dropped or reverted: {', '.join(bad)}" if bad else "")
          + f"; ${c_b + c_n + c_r + c_s:.2f}; report reports/vet_{book}.md",
          {"ALL KEPT": "ok", "PARTLY KEPT": "ok", "NONE KEPT": "err"}.get(verdict, "warn"))

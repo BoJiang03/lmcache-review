@@ -95,7 +95,8 @@ review ─> judge ─┬─> covered        (the reviewer found it)
 Severity tiers (`[tiers]`, from the point's annotation): major+ / minor / nit get 3 / 2 / 1 distill attempts.
 retain counts a major+ or minor point learned when every run catches it, a nit when one does; a missed point
 goes back to distill 2 / 1 / 0 times, then a major+ one goes to a person and a minor / nit one stays
-learned, marked `unretained`. `lmreview status` and retain report by tier.
+learned, marked `unretained`. vet does not fail a change for losing a nit point (`vet_tolerate`); the
+row is marked `unretained` instead. `lmreview status` and retain report by tier.
 ```
 
 ### Reviewer names

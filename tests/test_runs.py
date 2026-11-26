@@ -15,7 +15,7 @@ from lmreview import llm, runs  # noqa: E402
 from lmreview.config import Config  # noqa: E402
 from lmreview.score import JUDGE  # noqa: E402
 
-R = "p1234abcd+v0001@high-ms"
+R = "p1234abcd+v0001@high-rc"
 SAMPLE = {"pr": 7, "commit": "abcdef0123456789"}
 
 
@@ -73,7 +73,7 @@ def test_models() -> None:
     path = runs.models_path(cfg)
     llm.observe("default", "claude-opus-5-5", path)
     llm.observe("claude-sonnet-5-5", "claude-sonnet-5-5", path)
-    put(cfg, 1, [], None, model="claude-opus-5-5,claude-sonnet-5-5")
+    put(cfg, 1, [], None, model="claude-opus-5-5")
     f = runs.run_dir(cfg, R, 1) / runs.sample_file(SAMPLE)
     assert runs.cached(cfg, R, f)
     put(cfg, 2, [], None, model=None)                    # older run: unknown model, still reused

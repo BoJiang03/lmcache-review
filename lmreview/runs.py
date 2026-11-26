@@ -77,11 +77,9 @@ def run_models(r: dict) -> str:
 
 def expected_models(cfg: Config, reviewer: str) -> set[str] | None:
     """The model ids the calls of `reviewer` resolve to now (from models.json); None if not known yet."""
-    from .reviewer import cheap_main_of, ruleonly_of
-    from .settings import get
     p = models_path(cfg)
     seen = json.loads(p.read_text()) if p.exists() else {}
-    slots = ["default"] + ([str(get("hybrid", "main_model"))] if cheap_main_of(reviewer) and not ruleonly_of(reviewer) else [])
+    slots = ["default"]
     if any(s not in seen for s in slots):
         return None
     return {seen[s] for s in slots}

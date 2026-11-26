@@ -66,7 +66,7 @@ reviewer find it, checked by vet) | not_rulable (distill, two calls agreed: cont
 issue / declined by the team) | needs_human ([tiers] max_tries distill attempts failed, only the PR author
 objected to it: contested, or the two attribution calls disagreed: unclear).
 retain adds "retained" ({"reviewer", "hits", "date"}) to a row caught often enough, or "unretained" to a
-minor / nit row past its retain requeues. A row's severity is not stored: it is its point's annotation (annotate.severities), and its tier
+minor / nit row past its retain requeues (vet adds it to a nit row a new book stops catching: [tiers] vet_tolerate). A row's severity is not stored: it is its point's annotation (annotate.severities), and its tier
 (annotate.tier: major+ / minor / nit) is what status and retain report by."""
 STATUSES = ("covered", "to_distill", "resolved", "not_rulable", "needs_human")
 _VER = re.compile(r"v\d{4}")
@@ -945,6 +945,11 @@ def vet_step(max_cost: float | None = None, reps: int | None = None, everything:
                 out["needs_human"].append(i)
             else:
                 out["failed"].append(i)
+        for _, e in J.get("tolerated") or []:  # a nit the new book no longer catches: stays learned, marked
+            r = rows.get(norm(e))
+            if r and r["status"] in ("covered", "resolved"):
+                r["unretained"] = {"by": "vet", "book": vname(n), "date": _now()[:10]}
+                r.pop("retained", None)
         save_ledger(rows)
         clear_candidate()
         log("vet", name=c["name"], verdict=res["verdict"], cost=round(res["cost"], 2), version=n,

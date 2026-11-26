@@ -35,6 +35,7 @@ max_tries = { "major+" = 3, minor = 2, nit = 1 }        # distill attempts befor
 retain_need = { "major+" = 0, minor = 0, nit = 1 }      # retain runs that must catch it; 0 = every run
 retain_requeues = { "major+" = 2, minor = 1, nit = 0 }  # times retain sends a missed point back to distill; then
                                                         # major+ goes to a person, minor / nit stay learned, marked "unretained"
+vet_tolerate = ["nit"]                                  # vet does not fail a change for losing a point of these tiers
 
 [vet]
 side_per_entry = 2     # side effects: source comments replayed per affected entry

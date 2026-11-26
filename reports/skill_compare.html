@@ -92,15 +92,16 @@ code{font-family:var(--mono);font-size:.85em}
 
 <section>
 <h2>命中人类评论</h2>
+<p class="sub">lmreview 配置：<code>p29d23a9f+v0032@medium-rc</code>。主审用 Opus medium；rule check 用 low，对照 rulebook v0032 的 49 条规则逐条检查，和主审并行运行。"只算主审"指去掉 rule check 报出的 findings，只看主审自己报的部分命中了多少，用来衡量 rulebook 带来的额外收益。</p>
 <div class="legend"><span class="lo">lmreview</span><span class="ls">/pr-review</span></div>
 <div class="bars">
 <div class="grp" style="grid-column:1/-1">学过的（47 个要点）</div>
-<span>lmreview</span><div class="bar b-o" style="width:83%"></div><span>39/47 · 83%</span>
-<span>　主审单独</span><div class="bar b-o" style="width:68%;opacity:.55"></div><span>32/47 · 68%</span>
+<span>lmreview（主审 + rule check）</span><div class="bar b-o" style="width:83%"></div><span>39/47 · 83%</span>
+<span>lmreview 只算主审</span><div class="bar b-o" style="width:68%;opacity:.55"></div><span>32/47 · 68%</span>
 <span>/pr-review</span><div class="bar b-s" style="width:51%"></div><span>24/47 · 51%</span>
 <div class="grp" style="grid-column:1/-1">没学过的（31 个要点）</div>
-<span>lmreview</span><div class="bar b-o" style="width:68%"></div><span>21/31 · 68%</span>
-<span>　主审单独</span><div class="bar b-o" style="width:68%;opacity:.55"></div><span>21/31 · 68%</span>
+<span>lmreview（主审 + rule check）</span><div class="bar b-o" style="width:68%"></div><span>21/31 · 68%</span>
+<span>lmreview 只算主审</span><div class="bar b-o" style="width:68%;opacity:.55"></div><span>21/31 · 68%</span>
 <span>/pr-review</span><div class="bar b-s" style="width:65%"></div><span>20/31 · 65%</span>
 </div>
 <p class="note" style="margin-top:10px">只有一方抓到的要点：学过的组 lmreview 15 个（major 5，minor 5，nit 5），/pr-review 0 个；没学过的组 lmreview 2 个（都是 minor），/pr-review 1 个（major）。提问类评论不计入命中。</p>

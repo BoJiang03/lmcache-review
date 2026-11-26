@@ -75,7 +75,7 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
         cached = is_cached(cfg, rv, d / name, rerun_failed=True)
         if not cached:
             with lock:  # cached runs are always read; a new one waits until it fits with those running
-                while spent[0] < max_cost and reserved[0] and spent[0] + reserved[0] + est > max_cost:
+                while spent[0] < max_cost and reserved[0] > 1e-6 and spent[0] + reserved[0] + est > max_cost:
                     lock.wait()
                 if spent[0] >= max_cost:
                     return (rv, target, k, None), 0.0
@@ -88,7 +88,7 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
                 save_run(cfg, d / name, {"pr": key[0], "commit": key[1], "base": base, **r, "model": run_models(r)})
             finally:  # always release the reservation, or the runs waiting for budget wait forever
                 with lock:
-                    reserved[0] -= est
+                    reserved[0] = max(0.0, reserved[0] - est)  # float residue would read as a running review
                     spent[0] += cost
                     lock.notify_all()
             mine += cost

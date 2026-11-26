@@ -153,7 +153,7 @@ def run(set_name: str, cap: float, workers: int, only: list[str] | None = None) 
     print(f"spent this process: ${budget.spent:.2f}")
 
 
-def remerge(set_name: str, base: str, cap: float, places: bool) -> None:
+def remerge(set_name: str, base: str, cap: float) -> None:
     """Rebuild repeat SC_REP of reviewer SC_REVIEWER from `base`'s stored main review and rule check with
     another dedupe (no review call; one dedupe call per sample), then judge it."""
     sys.path.insert(0, str(ROOT / "scripts"))
@@ -173,7 +173,7 @@ def remerge(set_name: str, base: str, cap: float, places: bool) -> None:
             r = json.loads(src.read_text())
             m = next(x for x in r["runs"] if x.get("kind") != "rulecheck")
             rc = next(x for x in r["runs"] if x.get("kind") == "rulecheck")
-            kept, dcost = drop_repeats(m["findings"] or [], rc["findings"] or [], places=places)
+            kept, dcost = drop_repeats(m["findings"] or [], rc["findings"] or [])
             fs = None if m["findings"] is None else (
                 [{**f, "id": f"1.{f.get('id') or k}", "support": 1} for k, f in enumerate(m["findings"], 1)]
                 + [{**f, "id": f"2.{f.get('id') or k}", "support": 1} for k, f in enumerate(kept, 1)])
@@ -396,7 +396,6 @@ def main() -> None:
     ap.add_argument("--baseline", help="target: the reviewer before learning")
     ap.add_argument("--voted", action="store_true", help="report: count a miss the vote turned into a hit")
     ap.add_argument("--base", help="remerge: the reviewer whose stored runs are re-deduped")
-    ap.add_argument("--places", action="store_true", help="remerge: place-aware dedupe")
     ap.add_argument("--book", help="isolate: check the entries that resolved the points, from this older book (e.g. v0027)")
     ap.add_argument("--set", default="pilot")
     ap.add_argument("--cap", type=float, default=25.0)
@@ -419,7 +418,7 @@ def main() -> None:
     elif a.cmd == "isolate":
         isolate(a.set, a.base, a.cap, a.book)
     elif a.cmd == "remerge":
-        remerge(a.set, a.base, a.cap, a.places)
+        remerge(a.set, a.base, a.cap)
     elif a.cmd == "run":
         run(a.set, a.cap, a.workers, a.only)
     elif a.cmd == "target":

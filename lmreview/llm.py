@@ -102,6 +102,7 @@ def run(prompt: str, effort: str, cwd: str | None = None, tools: str = "", timeo
             account e-mail reminder; those are the same with or without `system`.
         sandbox: required when `tools` has Bash: "replay" or "live" (see sandbox_settings). The call
             fails rather than run a shell unsandboxed (Claude Code only warns when it cannot sandbox).
+            The reviewer never has a shell; scripts/skill_compare.py runs its baseline arms with one.
         model: the model id; None = Claude Code's default.
 
     Returns:

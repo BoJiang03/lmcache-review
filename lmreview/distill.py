@@ -18,7 +18,6 @@ the PR got later commits are dropped.
      from step 2) is verified by blind parallel calls: it must act differently on the case that
      motivated it, or (a merge) act exactly as the entries it replaces; a rephrasing or an unasked-for
      difference is undone. vet then replays every source of a merged entry
-  5. induce (off by default): place standalone entries under principles (attach, or a new parent)
 Output: rules/<out>.jsonl, rules/<out>.md (readable), <data>/distill/<out>/{attribution,changes}.json.
 Whether the result is kept is `lmreview vet`'s call (vet.py).
 Never reads test/new samples.
@@ -1107,7 +1106,6 @@ that case lost rather than bend the entry to one pull request.
 
 
 TRIM_BASE, TRIM_PER = 50, 10  # trim_budget: words for one proven sample, and for each further one
-TRIM_WHY = True  # unused since 2026-11-25: trim never touches "why" (a record; the reviewer is not shown it)
 
 
 def trim_budget(r: dict) -> int:
@@ -1165,24 +1163,18 @@ def _trim_entry_text(r: dict, cm: dict, fb: dict | None) -> str:
         lines += [f"  lost [{x['comment']}]: {x.get('body', '')[:200]!r}; rule check: " + (
             f"applies={x['check'].get('applies')}, violated={x['check'].get('violated')}: {x['check'].get('why')}"
             if x.get("check") else "no verdict") for x in fb.get("lost") or []]
-        if fb.get("wide"):
-            lines.append(f"  TOO WIDE: findings citing the short text were judged wrong {fb['wide'].get('new')} times "
-                         f"(the original: {fb['wide'].get('old')}) on the same samples, e.g.:")
-            lines += [f"    - {f.get('title')!r}: judged wrong because {f.get('why')}" for f in fb["wide"].get("findings") or []]
     return "\n".join(lines)
 
 
 def trim(out: str, base: str, cfg: Config | None = None, effort: str = "high", max_cost: float = 3.0,
          min_words: int = 100, batch: int = 9, only: set[str] | None = None, feedback: dict | None = None,
-         workers: int = 3, over_budget: int | None = None) -> tuple[str, int]:
+         workers: int = 3) -> tuple[str, int]:
     """Rewrite the long entries of rulebook `base` shorter, in place, as rulebook `out` (TRIM).
 
     Args:
         min_words: entries whose when + expect has more words are trimmed (unless `only` is given).
         batch: entries per call; entries are batched by kind and paths, so related ones share a call.
         only: trim exactly these ids (the repair step: those vet put back).
-        over_budget: instead of `min_words`, trim the entries whose when + expect is more than this many
-            words over their trim_budget (a second pass over a trimmed and merged book).
         feedback: id -> {"text": the failed short text, "lost": [{comment, body, check}]} for `only`.
 
     Returns:
@@ -1196,7 +1188,6 @@ def trim(out: str, base: str, cfg: Config | None = None, effort: str = "high", m
     screen_cost = screen_clarity(list(act.values()), effort, cfg) if only is None else 0.0
     wc = lambda r: len((str(r.get("when")) + " " + str(r.get("expect"))).split())  # noqa: E731
     sel = [r for r in act.values() if (r["id"] in only if only is not None else
-                                       wc(r) > trim_budget(r) + over_budget if over_budget is not None else
                                        wc(r) > min_words or bool(trim_flags(r)))]
     sel.sort(key=lambda r: (r.get("kind") or "", ",".join(r.get("paths") or []), r["id"]))
     batches = [sel[i:i + batch] for i in range(0, len(sel), batch)]
@@ -1479,10 +1470,6 @@ def _book_for_compress(rules: list[dict], cm: dict, record: dict, feedback: list
                  f"situation; if it applied but found nothing violated, the \"expect\" dropped the condition that "
                  f"case needs (restore it from the original entry)."
                  if f.get("text") and not f.get("texts") else "")
-              + "".join(f"\n  TOO WIDE: findings citing {x.get('entry')} were judged wrong {x.get('new')} times (the "
-                        f"entries it replaced: {x.get('old')}) on the same samples; narrow the \"when\" so these are "
-                        f"left out: " + "; ".join(f"{y.get('title')!r} ({y.get('why')})" for y in x.get("findings") or [])
-                        for x in f.get("wide") or [])
               for f in feedback]
     return "\n".join(out) + ("\n\nUndone earlier:\n" + "\n".join(undone) if undone else "")
 
@@ -1769,100 +1756,6 @@ def _undo(rules: list[dict], kind: str, r: dict, olds: list[dict], target: str |
     return [x for x in rules if x["id"] != r["id"]]
 
 
-INDUCE = """Below is an LMCache review rulebook. Its principles each group several rules ("members") under
-one operational check. The other entries stand alone. A reviewer does not carry dozens of one-off
-rules; they carry a few principles and apply them with knowledge of the codebase.
-
-Place the standalone entries:
-- "attach": a standalone entry whose violation the check of an EXISTING principle would have caught
-  goes under that principle. Attach only when the same question asked of the diff exposes it.
-- "principles": two or more standalone entries that one NEW check would have caught together get a
-  new principle. It must be applicable to any PR and must not be a platitude ("write clean code"); give
-  it an operational check, a concrete question to ask of the diff whose answer exposes a violation.
-  Read the reviewers' own words in the evidence, not just the rule text.
-- Everything else stays standalone; do not force it. Nothing is rewritten or removed.
-
-""" + GENERAL + """
-
-Principles:
-{principles}
-
-Standalone entries:
-{standalone}
-
-Answer with one JSON block only:
-```json
-{{"attach": [{{"rule": "id", "principle": "id"}}],
- "principles": [{{"name": "short name", "when": "...", "expect": "...", "check": "the question to ask of the diff",
-   "why": "one line", "members": ["ids"]}}]}}
-```"""
-
-
-def induce(rules: list[dict], cm: dict, effort: str, cfg: Config, spend: list[float], max_cost: float,
-           out: str) -> tuple[list[dict], list[dict]]:
-    """Step 6 of distill: place standalone entries under principles, append-only.
-
-    One call over the whole book: a standalone entry may be attached to an existing principle (its
-    `principle` link and the principle's `members` grow; no text changes), and standalone entries that
-    one new check covers get a new parent principle (evidence and tests inherited, as in
-    update_rulebook). Over the cost cap it does nothing.
-
-    Returns:
-        (the rulebook, change records).
-    """
-    act = [r for r in rules if r.get("status", "active") == "active"]
-    ps = [r for r in act if r.get("members")]
-    lone = [r for r in act if not r.get("members") and not r.get("principle")]
-    if len(lone) < 2 or spend[0] >= max_cost:
-        return rules, []
-
-    def show(r: dict) -> str:
-        ev = " | ".join(" ".join(cm[e]["body"].split())[:160] for e in (r.get("evidence") or [])[:2] if e in cm)
-        return f"[{r['id']}] When {r.get('when')}: {r.get('expect')}" + (f"\n  comments: {ev}" if ev else "")
-
-    try:
-        res, c = _ask(INDUCE.format(principles="\n".join(map(show, ps)) or "(none)",
-                                    standalone="\n".join(map(show, lone))), effort, cfg)
-    except Exception as e:  # a failed induction leaves the book as it is
-        print(f"induce failed: {e}")
-        return rules, []
-    spend[0] += c
-    if not isinstance(res, dict):
-        return rules, []
-    by = {r["id"]: r for r in rules}
-    pids, lids = {r["id"] for r in ps}, {r["id"] for r in lone}
-    changes, placed = [], set()
-    for a in res.get("attach") or []:
-        r, p = a.get("rule"), a.get("principle")
-        if r in lids and p in pids and r not in placed:
-            by[r]["principle"] = p
-            by[p]["members"] = [*by[p]["members"], r]
-            placed.add(r)
-            changes.append({"op": "induce-attach", "rules": [p], "members": [r], "concern": by[p].get("name") or p})
-    used, i = set(by), 0
-    for p in res.get("principles") or []:
-        mem = [m for m in p.get("members") or [] if m in lids and m not in placed]
-        if len(mem) < 2 or not p.get("when") or not p.get("expect"):
-            continue
-        i += 1
-        while f"{out}-P{i}" in used:
-            i += 1
-        pid = f"{out}-P{i}"
-        used.add(pid)
-        ms = [by[m] for m in mem]
-        rules.append({"id": pid, "version": 1, "status": "active", "kind": "principle", "name": p.get("name"),
-                      "when": p["when"], "expect": p["expect"] + (f" Check: {p['check']}" if p.get("check") else ""),
-                      "why": p.get("why"), "examples": [f"{m['id']}: {m['when'][:160]}" for m in ms][:4],
-                      "paths": [], "members": mem,
-                      "evidence": _uniq([e for m in ms for e in m.get("evidence") or []]),
-                      "tests": [{**t, "from": m["id"]} for m in ms for t in m.get("tests") or []]})
-        for m in ms:
-            m["principle"] = pid
-        placed |= set(mem)
-        changes.append({"op": "induce-parent", "new": [pid], "members": mem, "concern": p.get("name") or ""})
-    return rules, changes
-
-
 def _size(r: dict) -> int:
     """Length of an entry in words as the reviewer sees it (when, expect): the cost side of compression. The
     "why" is kept as a record but not shown (prompt `<!-- rules: nowhy -->`), so it is not counted."""
@@ -2086,7 +1979,7 @@ def attribute(cs: list[dict], effort: str, cfg: Config, workers: int, max_cost: 
 def distill(out: str, base: str | None = None, misses_of: str | None = None, area: str | None = None,
             limit: int | None = None, effort: str = "high", workers: int = 4, max_cost: float = 5.0,
             reuse: str | None = None, cfg: Config | None = None,
-            n: int = 3, do_induce: bool = False, prs: list[int] | None = None,
+            n: int = 3, prs: list[int] | None = None,
             comments: list[int] | None = None, notes: dict[int, str] | None = None, tidy: bool = False) -> str:
     """Build rules/<out>.jsonl; returns a short summary. `max_cost` 0 = plan only (prints the estimate).
 
@@ -2100,8 +1993,7 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     (evidence, generalize, merge, add; revise/retire only on failure signals, an opposite finding or a
     retry); (3) update the book; (4) consolidate the whole book (parallel drafts, voted; skipped when
     write changed nothing, unless `tidy`: the base book was consolidated when it was written);
-    (5) induce principles over the standalone entries (`do_induce`, off by
-    default); then drop every new entry without an evidence comment of its own. Whether the
+    then drop every new entry without an evidence comment of its own. Whether the
     result is kept is `lmreview vet`'s call.
 
     `comments`: learn exactly these comments (the ledger's to_distill, see state.py) instead of the misses
@@ -2131,8 +2023,7 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     n_cand = int(len(cs) * 0.7)  # pilot: ~75% learnable
     est = (0 if reuse else 2 * len(batches) * EST["attribute"]) \
         + (n_cand // WRITE_BATCH + 1) * EST["write"] * (n + 1 if n > 1 else 1) \
-        + EST["consolidate"] * (CONSOLIDATE_DRAFTS + 1) \
-        + (EST["write"] if do_induce else 0)  # n drafts + merge; consolidate drafts + final; one induce call
+        + EST["consolidate"] * (CONSOLIDATE_DRAFTS + 1)  # n drafts + merge; consolidate drafts + final
     note(f"distill {out}: {len(cs)} comments" + (f" missed by {misses_of}" if misses_of else "")
          + f", {len(batches)} attribution batches; est ${est:.1f}, cap ${max_cost:.1f}")
     if max_cost <= 0:
@@ -2185,11 +2076,6 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
         note(f"      consolidate: {dict(C.Counter(ch['op'] for ch in more)) or 'no change'}")
     else:  # the base book was consolidated when it was written; nothing changed since
         note("[3/4] consolidate: skipped, write changed nothing")
-    if do_induce:
-        note(f"[4/4] induce principles over standalone entries (${spend[0]:.2f} so far)")
-        rules, more = induce(rules, cm, effort, cfg, spend, max_cost, out)
-        changes += more
-        note(f"      induce: {dict(C.Counter(ch['op'] for ch in more)) or 'no change'}")
     rules, more = drop_unearned(rules, {r["id"] for r in base_rules})
     changes += more
     if get("distill", "specificity"):  # an entry must describe a kind of problem, not how to fix one PR

@@ -16,12 +16,11 @@ from .budget import capped_map
 from .progress import note
 from .config import Config
 from .runs import cached, run_dir, run_models, save_run
-from .reviewer import DEFAULT_REVIEWER, cheap_main_of, load_rules, rulecheck_of, parse_reviewer, reviewer_context, rule_evidence, run_reviewer
+from .reviewer import DEFAULT_REVIEWER, load_rules, rulecheck_of, parse_reviewer, reviewer_context, rule_evidence, run_reviewer
 from .workspace import cached_pr, sample_workspace
 
 EST_COST = 1.2  # $/sample for a high-effort review, from earlier runs; used only for the estimate
 EST_RC = 3.3    # with the rule check and vLLM context (v0c+pk8/pk9@high-rc: $3.0-3.5)
-EST_MS = 0.4    # learning reviewer -ms (Sonnet main, tool-less rule check): $0.30/sample in round batch 4
 
 
 def est_cost(reviewer: str) -> float:
@@ -31,9 +30,9 @@ def est_cost(reviewer: str) -> float:
         reviewer: a reviewer name (see reviewer.parse_reviewer).
 
     Returns:
-        Dollars per sample: EST_MS for -ms, EST_RC for -rc, else EST_COST.
+        Dollars per sample: EST_RC for -rc, else EST_COST.
     """
-    return EST_MS if cheap_main_of(reviewer) else EST_RC if rulecheck_of(reviewer) else EST_COST
+    return EST_RC if rulecheck_of(reviewer) else EST_COST
 
 
 def _picked(s: dict, prs: list) -> bool:

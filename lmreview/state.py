@@ -17,8 +17,8 @@ ground truth. Layout (lmreview/state/, versioned in git):
     log.jsonl              one line per step: review / judge / distill / vet / promote / rollback
 
 Configuration lives in git, edited by people: the prompts (lmreview/prompts/reviewer.md, rulecheck.md,
-merge.md) and lmreview/config.toml (see settings.py). Runs and scores stay in <data>/runs and
-<data>/scores (not in git), under the reviewer name `p<sha8>+vNNNN@<effort>[x<n>][-rc][-sh]`, so a new
+rulepick.md) and lmreview/config.toml (see settings.py). Runs and scores stay in <data>/runs and
+<data>/scores (not in git), under the reviewer name `p<sha8>+vNNNN@<effort>-rc`, so a new
 prompt, book or review setting never mixes with old runs. Each version's meta records the settings
 that made it.
 """
@@ -179,35 +179,26 @@ def rollback(to: int) -> int:
 # ---- the reviewer ---------------------------------------------------------------------------------
 
 def config() -> dict:
-    """The [review] settings (config.toml): effort, rulecheck, parallel, shell."""
+    """The [review] settings (config.toml): effort and the rule check's."""
     return dict(settings()["review"])
 
 
-def suffix(book: bool = True, learn: bool = False) -> str:
-    """The reviewer-name suffix the [review] settings ask for after @<effort>: [x<n>][-rc][-ms][-sh]
-    (no rule check without a book; -ms only for learning with a book, when [hybrid] learn is on: with no rule
-    check the cheaper main review alone loses too much)."""
-    c = config()
-    return ((f"x{c['parallel']}" if c["parallel"] > 1 else "") + ("-rc" if c["rulecheck"] and book else "")
-            + ("-ms" if learn and book and get("hybrid", "learn") else "") + ("-sh" if c["shell"] else ""))
+def suffix(book: bool = True) -> str:
+    """The reviewer-name suffix after @<effort>: -rc with a book (no rule check without one)."""
+    return "-rc" if book else ""
 
 
-PARTS = ("rulecheck", "merge", "rulepick")  # the other agents' prompts, versioned with reviewer.md
+PARTS = ("rulecheck", "rulepick")  # the other agents' prompts, versioned with reviewer.md
 
 
 def prompt_id(save: bool = False) -> str:
-    """`p<sha8>` of lmreview/prompts/reviewer.md, rulecheck.md and merge.md together, so editing any of
+    """`p<sha8>` of lmreview/prompts/reviewer.md, rulecheck.md and rulepick.md together, so editing any of
     them gives the reviewer a new name. With `save` (before a run uses it), their texts are kept in
-    state/prompts/ (<id>.md, <id>.rulecheck.md, <id>.merge.md) so old runs stay reproducible."""
+    state/prompts/ (<id>.md, <id>.rulecheck.md, <id>.rulepick.md, <id>.params.json) so old runs stay
+    reproducible."""
     texts = {"": (PROMPTS / "reviewer.md").read_text(), **{k: (PROMPTS / f"{k}.md").read_text() for k in PARTS}}
     # the staging threshold and the rule check's effort change its verdicts, so they are part of the name too
     stage = f"\0stage={get('review', 'rulecheck_stage_words')}\0rce={get('review', 'rulecheck_effort')}"
-    if not get("review", "rc_merge"):  # only when off, so ids named before the setting stay the same
-        stage += "\0rc_merge=false"
-    if get("review", "dedupe_places"):  # likewise only when on
-        stage += "\0dedupe_places=true"
-    if get("review", "rulecheck_split_files"):  # likewise only when on
-        stage += f"\0rulecheck_split_files={get('review', 'rulecheck_split_files')}"
     pid = "p" + hashlib.sha256(("\0".join(texts.values()) + stage).encode()).hexdigest()[:8]
     files = {(f"{pid}.{k}.md" if k else f"{pid}.md"): text for k, text in texts.items()}
     files[f"{pid}.params.json"] = json.dumps(_params(), sort_keys=True) + "\n"
@@ -221,8 +212,7 @@ def prompt_id(save: bool = False) -> str:
     return pid
 
 
-PARAMS = ("rulecheck_effort", "rulecheck_stage_words", "rc_merge", "dedupe_places", "rulecheck_split_files")  # [review] settings hashed into the prompt id
-LEGACY_PARAMS = {"rc_merge": True, "dedupe_places": False, "rulecheck_split_files": 0}  # how ids saved before a setting existed ran
+PARAMS = ("rulecheck_effort", "rulecheck_stage_words")  # [review] settings hashed into the prompt id
 
 
 def _params() -> dict:
@@ -242,11 +232,11 @@ def prompt_params(version: str) -> dict:
         {setting: value} for every name in PARAMS.
     """
     p = STATE / "prompts" / f"{version}.params.json"
-    return {**_params(), **LEGACY_PARAMS, **json.loads(p.read_text())} if p.exists() else _params()
+    return {**_params(), **json.loads(p.read_text())} if p.exists() else _params()
 
 
 def part_path(version: str, part: str) -> pathlib.Path:
-    """The `part` prompt ("rulecheck" or "merge") of prompt version `version`: kept in state/prompts for a
+    """The `part` prompt ("rulecheck" or "rulepick") of prompt version `version`: kept in state/prompts for a
     p<sha8> version; the current file for the current version and for the older named prompts (v0b, ...)."""
     p = STATE / "prompts" / f"{version}.{part}.md"
     if p.exists() or not re.fullmatch(r"p[0-9a-f]{8}", version) or version == prompt_id():
@@ -266,14 +256,12 @@ def prompt_path(version: str) -> pathlib.Path:
     return PROMPTS / f"reviewer_{version}.md"
 
 
-def reviewer(book: str | None = None, learn: bool = False) -> str:
-    """The reviewer name of the current prompt and config with `book` (default: the book in use); `learn`:
-    the one learning reviews with ([hybrid] learn: the main review on a cheaper model, `-ms`)."""
+def reviewer(book: str | None = None) -> str:
+    """The reviewer name of the current prompt and config with `book` (default: the book in use). Learning
+    (round, judge, distill) reviews with it too: it learns from what production misses (2026-11-26)."""
     c = config()
     book = book or (vname(head()) if head() else None)
-    if learn and book and get("learn", "production"):  # learn from what production misses (2026-11-26)
-        return f"{prompt_id()}+{book}@{c['effort']}" + suffix(True)
-    return f"{prompt_id()}" + (f"+{book}" if book else "") + f"@{c['effort']}" + suffix(bool(book), learn)
+    return f"{prompt_id()}" + (f"+{book}" if book else "") + f"@{c['effort']}" + suffix(bool(book))
 
 
 # ---- the ledger -------------------------------------------------------------------------------------
@@ -443,7 +431,7 @@ def judge(split: str = "train", prs: set[int] | None = None, max_cost: float = 1
     from .score import judge_runs
     if split != "train":  # the ledger feeds distill, which must never learn from test / new
         raise ValueError("judge files comments for distill: only the train split")
-    cfg, rv = cfg or Config(), rv or reviewer(learn=True)
+    cfg, rv = cfg or Config(), rv or reviewer()
     with lock(), step("judge", f"runs of {rv} on {split}" + (f", PRs {sorted(prs)}" if prs else "")
                       + f"; cap ${max_cost:.0f}") as st:
         judged, cost = judge_runs(cfg, rv, prs, split, max_cost)
@@ -551,8 +539,7 @@ def discard() -> str:
 # ---- the steps -----------------------------------------------------------------------------------
 
 def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: str | None = None, workers: int = 4,
-                 max_cost: float | None = None, cfg: Config | None = None, induce: bool | None = None,
-                 compress: bool = False) -> str:
+                 max_cost: float | None = None, cfg: Config | None = None, compress: bool = False) -> str:
     """Distill the ledger's to_distill comments (only on `prs`, if given) into a candidate built on the
     book in use. Earlier failed attempts are passed on, so the next one is written differently.
     Comments distill finds not learnable (context, not an issue, declined) become not_rulable."""
@@ -560,7 +547,6 @@ def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: 
     cfg = cfg or Config()
     d = settings()["distill"]
     effort = effort or d["effort"]
-    induce = d["induce"] if induce is None else induce
     max_cost = get("budget", "distill") if max_cost is None else max_cost
     with lock():
         if not head():
@@ -580,10 +566,9 @@ def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: 
         _write(STATE / "candidate" / "meta.json", json.dumps(
             {"name": name, "parent": parent, "comments": ids, "created": _now()}, indent=1) + "\n")
         try:
-            msg = distill(name, vname(parent), reviewer(learn=True), effort=effort, workers=workers,
+            msg = distill(name, vname(parent), reviewer(), effort=effort, workers=workers,
                           max_cost=max_cost, cfg=cfg, comments=ids, prs=sorted({r["pr"] for r in todo}) or None,
-                          notes={r["comment"]: tries_note(r) for r in todo if r.get("tries")}, do_induce=induce,
-                          tidy=compress)
+                          notes={r["comment"]: tries_note(r) for r in todo if r.get("tries")}, tidy=compress)
         except BaseException:
             clear_candidate()
             raise
@@ -652,7 +637,7 @@ def compress_if_big(vet_cost: float, cfg: Config | None = None) -> list[str]:
         note(f"book {vname(head())}: {w} words, over {cap}, but compress already ran on this version")
         return []
     out = []
-    for stage in COMPRESS_STAGES:  # e.g. trim, merge, trim2; each one full, then repairs of what vet undid
+    for stage in COMPRESS_STAGES:  # e.g. trim, merge; each one full, then repairs of what vet undid
         for k in range(COMPRESS_TRIES):
             repair = k > 0
             note(f"book {vname(head())}: {book_words()} words: compress {stage}"
@@ -679,9 +664,8 @@ def compress_step(max_cost: float | None = None, cfg: Config | None = None, stag
     their entries' proven cases.
 
     Args:
-        stage: "merge" (distill.compress: merge or regroup entries), "trim" (distill.trim: each long entry
-            rewritten shorter in place) or "trim2" (trim again with the tighter [compress] trim2 budget and
-            no "why", every entry over its budget).
+        stage: "merge" (distill.compress: merge or regroup entries) or "trim" (distill.trim: each long entry
+            rewritten shorter in place).
         repair: rewrite only what vet undid on the last candidate of this stage, shown with the rule check's
             reasons (compress.jsonl), instead of a full pass.
     """
@@ -713,19 +697,16 @@ def compress_step(max_cost: float | None = None, cfg: Config | None = None, stag
                                   + (fb_last if repair else []),
                                   repair=repair, n=int(get("compress", "drafts")))
             else:
-                two = stage == "trim2"
-                D.TRIM_BASE, D.TRIM_PER = (int(x) for x in get("compress", "trim2_budget" if two else "trim_budget"))
-                D.TRIM_WHY = not two
-                fb = {x["entry"]: {"text": x["text"], "lost": x["lost"], "wide": x.get("wide")} for x in fb_last} if repair else None
+                D.TRIM_BASE, D.TRIM_PER = (int(x) for x in get("compress", "trim_budget"))
+                fb = {x["entry"]: {"text": x["text"], "lost": x["lost"]} for x in fb_last} if repair else None
                 msg, k = D.trim(name, vname(parent), cfg, effort=effort, max_cost=max_cost,
                                 min_words=int(get("compress", "trim_words")), only=set(fb) if fb else None,
-                                feedback=fb, over_budget=0 if two and not fb else None)
+                                feedback=fb)
         except BaseException:
             clear_candidate()
             raise
         finally:
             D.TRIM_BASE, D.TRIM_PER = (int(x) for x in get("compress", "trim_budget"))
-            D.TRIM_WHY = True
         st.cost = llm.SPENT - spent0
         log("compress", name=name, parent=parent, stage=stage, repair=repair, retired=k, cost=round(st.cost, 2),
             summary=msg)
@@ -785,16 +766,9 @@ def compress_undone(name: str, parent_ids: set[str], cand: list[dict], J: dict,
             ck = check(ret.get("replaced_by") or t, e)
             lost.setdefault(t, []).append({"entry": old, "comment": e, "body": body, "by": ret.get("replaced_by"),
                                            **({"check": ck} if ck else {})})
-    wide: dict[str, list[dict]] = {}  # new entries vet undid as too wide (refuted findings citing them)
-    for x in J.get("too_wide") or []:
-        t = by.get(x, {}).get("regroup") or x
-        if t in groups:
-            wide.setdefault(t, []).append({"entry": x, **(J.get("wide") or {}).get(x, {})})
-            lost.setdefault(t, [])
     rows = [{"group": sorted(groups[t] + ([t] if t in parent_ids else [])),
              "op": "absorb" if t in parent_ids else "regroup" if by.get(t, {}).get("regroup") else "merge",
              "into": t, "candidate": name, "lost": v, "date": _now()[:10],
-             **({"wide": wide[t]} if t in wide else {}),
              **({"text": {k: by[t].get(k) for k in ("when", "expect", "examples")}} if t in by else {}),
              **({"texts": [{"id": i, "from": by[i].get("replaces", []) + by[i].get("replaces_new", []),
                             **{k: by[i].get(k) for k in ("when", "expect", "examples")}} for i in members[t]]}
@@ -818,19 +792,15 @@ def trim_undone(name: str, cand: list[dict], J: dict, cfg: Config) -> tuple[dict
             lost.setdefault(i, []).append({"comment": str(e), "check": vet_verdict(name, i, e, cfg, where),
                                            "body": " ".join(str((gcm.get(cid_of(e)) or gcm.get(e) or {})
                                                                 .get("body", "")).split())[:200]})
-    for i in J.get("too_wide") or []:
-        if i in trimmed:
-            lost.setdefault(i, [])
     rows = [{"entry": i, "op": "trim", "candidate": name, "date": _now()[:10], "lost": v,
-             "text": {k: trimmed[i].get(k) for k in ("when", "expect", "why")},
-             **({"wide": (J.get("wide") or {}).get(i)} if i in (J.get("too_wide") or []) else {})}
+             "text": {k: trimmed[i].get(k) for k in ("when", "expect", "why")}}
             for i, v in lost.items()]
     return {i: [i] for i in trimmed}, rows
 
 
 def _record_compress(c: dict, cand: list[dict], J: dict, cfg: Config) -> str:
     """After vet of a compress candidate: file the groups vet undid (compress_undone) for the next compress,
-    and count refuted findings citing the new entries in vet's runs (precision: recorded, not a gate).
+    and count refuted findings citing the new entries in vet's runs (recorded, not a gate).
     Returns a one-line summary."""
     from .schema import cites
     from .score import refuted
@@ -885,7 +855,7 @@ def vet_step(max_cost: float | None = None, reps: int | None = None, everything:
         res: dict = {}
         note(f"▶ vet {c['name']} against {vname(c['parent'])} ({len(c['comments'])} comments); cap ${max_cost:.0f}")
         conf = config()
-        report = vet(c["name"], vname(c["parent"]), prompt_id(), conf["effort"], "-ro" + ("-sh" if conf["shell"] else ""),
+        report = vet(c["name"], vname(c["parent"]), prompt_id(), conf["effort"], "-ro",
                      reps=reps, max_cost=max_cost, everything=everything, cfg=cfg, out=res,
                      targets=set(c["comments"]))
         if max_cost <= 0 or not res:
@@ -987,7 +957,7 @@ def confirm_misses(rv: str, new: list[int | str], max_cost: float, cfg: Config |
         new: the ledger keys newly filed as to_distill.
         max_cost: cap for the second runs and their judge; 0 prints the plan (cached runs are still used).
         cfg: configuration.
-        found: ledger keys the judge just filed as covered ([learn] production): their samples get the second
+        found: ledger keys the judge just filed as covered: their samples get the second
             run too, and a point not found in every run goes to to_distill as flaky (found by chance).
 
     Returns:
@@ -1056,7 +1026,7 @@ def retain_reviewer() -> str:
     got credit for 26 of them only because the dedupe kept its copy), so the rule check alone, at about half
     the cost of a full review, says whether the book is applied. Its runs are judged against every human point of
     the sample (judge_runs), as production runs are, not only against the point asked about as vet does."""
-    return f"{prompt_id()}+{vname(head())}@{config()['effort']}-ro" + ("-sh" if config()["shell"] else "")
+    return f"{prompt_id()}+{vname(head())}@{config()['effort']}-ro"
 
 
 def entries_of(r: dict, rules: list[dict]) -> list[str]:
@@ -1210,20 +1180,18 @@ def pick_samples(prs: list[int | str], cfg: Config | None = None) -> list[str]:
 
 def round_(prs: list[int | str], review_cost: float | None = None, judge_cost: float | None = None,
            distill_cost: float | None = None, vet_cost: float | None = None, cfg: Config | None = None,
-           induce: bool | None = None, confirm_cost: float | None = None) -> str:
-    """One round on samples `prs` (PR:commit, or PR numbers: see pick_samples): select the new samples worth
-    reviewing (selection.py; samples named PR:commit are kept as given), review with the book in use, judge,
+           confirm_cost: float | None = None) -> str:
+    """One round on samples `prs` (PR:commit, or PR numbers: see pick_samples): review with the book in use, judge,
     confirm the new misses with a second run (confirm_misses), then distill + vet until their comments are all
     resolved / not rulable / needs_human (at most MAX_TRIES); last, compress + vet when the book is over
     [compress] words (compress_if_big)."""
     b = settings()["budget"]["round"]
-    explicit = {str(p) for p in prs if ":" in str(p)}  # samples named by hand are not filtered
     review_cost, judge_cost, distill_cost, vet_cost, confirm_cost = (
         b[k] if v is None else v for k, v in (("review", review_cost), ("judge", judge_cost),
                                              ("distill", distill_cost), ("vet", vet_cost),
                                              ("confirm", confirm_cost)))
     from .replay import replay
-    rv = reviewer(learn=True)
+    rv = reviewer()
     prs = pick_samples(prs, cfg)
     out = []
     from . import llm
@@ -1231,30 +1199,20 @@ def round_(prs: list[int | str], review_cost: float | None = None, judge_cost: f
     with step("round", f"{len(prs)} sample spec(s) {' '.join(map(str, prs))}; book {vname(head())}; caps review "
               f"${review_cost:.0f}, judge ${judge_cost:.0f}, confirm ${confirm_cost:.0f}, distill ${distill_cost:.0f}, vet ${vet_cost:.0f} "
               f"(per attempt, at most {MAX_TRIES})") as st:
-        sel_cost = 0.0
-        if get("select", "on"):
-            with step("select", "new samples worth reviewing") as s0:
-                from .selection import select
-                # annotating counts toward the review cap too: a round with no review budget annotates nothing
-                kept, s0.cost = select([p for p in prs if p not in explicit], rv,
-                                       min(float(b["select"]), review_cost), cfg or Config())
-                prs = [p for p in prs if p in explicit or p in kept]
-            sel_cost = s0.cost
-            st.cost += sel_cost
         if not prs:  # an empty list would mean every train sample to replay and judge
             note("select kept no samples: nothing to review", "warn")
             st.result = f"book {vname(head())}"
             return "\n".join(out + ["nothing selected", "", status()])
         nums = {int(str(p).split(":")[0]) for p in prs}
         with step("review", rv) as s1:
-            s1.cost = replay(rv, "train", None, 4, max(0.0, review_cost - sel_cost), prs, cfg=cfg)
+            s1.cost = replay(rv, "train", None, 4, max(0.0, review_cost), prs, cfg=cfg)
         st.cost += s1.cost
         out.append(f"review {rv}: ${s1.cost:.2f}")
         before = {k for k, r in ledger().items() if r["status"] == "to_distill"}
         out.append(judge("train", nums, judge_cost, rv, cfg))
         new = [k for k, r in ledger().items() if r["status"] == "to_distill" and k not in before]
         found = [k for k, r in ledger().items() if r["status"] == "covered" and r.get("reviewer") == rv
-                 and r["pr"] in nums and "hits" not in r] if get("learn", "production") else []
+                 and r["pr"] in nums and "hits" not in r]
         with step("confirm", f"{len(new)} new misses, {len(found)} new finds; cap ${confirm_cost:.0f}") as s2:
             line, s2.cost = confirm_misses(rv, new, confirm_cost, cfg, found=found)
             s2.result = line
@@ -1270,7 +1228,7 @@ def round_(prs: list[int | str], review_cost: float | None = None, judge_cost: f
                 if candidate():  # left by an INCOMPLETE vet: finish vetting it before distilling again
                     note(f"candidate {candidate()['name']} is waiting: vet it first")
                 else:
-                    out.append(distill_step(nums, max_cost=distill_cost, cfg=cfg, induce=induce))
+                    out.append(distill_step(nums, max_cost=distill_cost, cfg=cfg))
                 if not candidate():
                     break
                 was = {k for k, r in ledger().items() if r["status"] == "resolved"}
@@ -1284,6 +1242,6 @@ def round_(prs: list[int | str], review_cost: float | None = None, judge_cost: f
         if not candidate():
             out += compress_if_big(vet_cost, cfg)
         st.result = f"book {vname(head())}"
-        st.cost = llm.SPENT - spent0  # every paid call of the round: select, review, judge, distill, vet, compress
+        st.cost = llm.SPENT - spent0  # every paid call of the round: review, judge, distill, vet, compress
         out.append(f"round total: ${st.cost:.2f}")
     return "\n".join(out + ["", status()])

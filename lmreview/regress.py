@@ -95,9 +95,8 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
     """Layer 2: re-review each case's target with `book` (the prompt and effort of the test's rule
     reviewer, plus `suffix`, e.g. "-rc") `reps` times; runs are cached under data/runs, so a rerun costs nothing.
 
-    With a rule-only reviewer (suffix "-ro") the judge is targeted: it sees only the comments the cases
-    of a target ask about (all of them where a case checks a revision's invalid findings, or always with
-    [vet] judge_all), and a run with no findings is scored without a judge call.
+    With a rule-only reviewer (suffix "-ro") the judge sees every point of the sample, as production runs
+    are judged, and a run with no findings is scored without a judge call.
 
     `only` (rule-only reviewers): the rule check sees only these rule ids of `book`; such runs are cached
     apart, under the reviewer name plus "#o<hash of the ids>".
@@ -109,13 +108,6 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
     spent, lock = [0.0], threading.Condition()  # notified when a running review ends
     reserved, est = [0.0], EST_RO if suffix.startswith("-ro") else EST_RUN * (2 if suffix else 1)  # expected cost of the reviews running now
     tag = run_tag(only)
-    need: dict[str, set] = {}  # target -> comments its cases ask about (None: every comment)
-    judge_all = bool(get("vet", "judge_all"))  # judge against every point, as production runs are judged
-    for _, t in cases:
-        if judge_all:
-            need[t["target"]] = None
-        elif need.get(t["target"], set()) is not None:
-            need[t["target"]] = None if not t["comments"] else need.get(t["target"], set()) | {cid_of(c) for c in t["comments"]}
 
     def reviewer_of(t: dict) -> str:
         version, _, effort = parse_reviewer(t["with"].split("#")[0])
@@ -163,14 +155,8 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
             with lock:
                 spent[0] += ann["cost"]
             mine += ann["cost"]
-            want = need[target]
-            if want is None and sp.exists() and set(json.loads(sp.read_text())["gold_ids"]) != set(s["gold_ids"]):
-                sp.unlink()  # judged for some comments only: a revision check needs them all
-            if want is not None:
-                if sp.exists() and not want <= set(json.loads(sp.read_text())["gold_ids"]):
-                    want |= set(json.loads(sp.read_text())["gold_ids"])  # judged for fewer comments: judge again
-                    sp.unlink()
-                gold = [c for c in gold if c["id"] in want]
+            if sp.exists() and set(json.loads(sp.read_text())["gold_ids"]) != set(s["gold_ids"]):
+                sp.unlink()  # judged for some comments only: judge against them all
             if not run["findings"]:  # nothing to match: every point missed, no judge call
                 sc = {"human": [p | {"matched_ai": []} for p in points(ann, gold)], "ai": [],
                       "gold_ids": [c["id"] for c in gold]}

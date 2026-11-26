@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Callable
-
 import fnmatch
 import json
 import os
@@ -31,17 +29,13 @@ def _default_reviewer() -> str:
 DEFAULT_REVIEWER = os.environ.get("LMREVIEW_REVIEWER") or _default_reviewer()
 
 
-_NAME = re.compile(r"([\w.-]+?)(?:\+([\w.-]+?))?(?:@([a-z]+))?(?:x(\d+))?(-r[co])?(-ms)?(-sh)?")
-SHELL_NOTE = ("\n\nYou also have a shell (Bash), sandboxed: use it to check behavior instead of guessing, e.g. run "
-              "a short Python snippet against the code or a test that needs no GPU. The network may be unavailable "
-              "and you can only write inside the working directory; do not change the repository's files.\n")
+# -ms (a retired experiment) is still accepted: older ledger rows name reviewers with it
+_NAME = re.compile(r"([\w.-]+?)(?:\+([\w.-]+?))?(?:@([a-z]+))?(-r[co])?(-ms)?")
 
 
 def parse_reviewer(name: str) -> tuple[str, str | None, str]:
-    """A reviewer is named `<prompt>[+<rules>][@<effort>][x<n>][-rc|-ro][-ms][-sh]`, e.g. `v0b+r1@high` or
-    `v0b+r1@highx3` (x3: three runs in parallel, then one merge run; see parallel_of; -rc: see
-    rulecheck_of; -ro: see ruleonly_of; -ms: see cheap_main_of; -sh: the agents also get a sandboxed
-    shell, see shell_of).
+    """A reviewer is named `<prompt>[+<rules>][@<effort>][-rc|-ro]`, e.g. `p990f2d2e+v0032@medium-rc`
+    (-rc: see rulecheck_of; -ro: see ruleonly_of).
 
     A "#<tag>" suffix (a repeat run of the same reviewer, e.g. "#r2") is ignored.
 
@@ -50,42 +44,17 @@ def parse_reviewer(name: str) -> tuple[str, str | None, str]:
     """
     m = _NAME.fullmatch(name.split("#")[0])
     if not m:
-        raise ValueError(f"bad reviewer name {name!r}; expected <prompt>[+<rules>][@<effort>][x<n>][-rc|-ro][-ms][-sh]")
-    if (m[5] or m[6] or m[7]) and not m[3]:  # else "v0b+foo-rc" is ambiguous: rulebook "foo-rc", or "foo" + rule check
-        raise ValueError(f"bad reviewer name {name!r}: -rc / -ro / -ms / -sh need an explicit @<effort> before them")
+        raise ValueError(f"bad reviewer name {name!r}; expected <prompt>[+<rules>][@<effort>][-rc|-ro]")
+    if (m[4] or m[5]) and not m[3]:  # else "v0b+foo-rc" is ambiguous: rulebook "foo-rc", or "foo" + rule check
+        raise ValueError(f"bad reviewer name {name!r}: -rc / -ro need an explicit @<effort> before them")
     return m[1], m[2], m[3] or "high"
-
-
-def parallel_of(name: str) -> int:
-    """How many reviewer runs `name` asks for (its `x<n>` suffix; 1 without one)."""
-    m = _NAME.fullmatch(name.split("#")[0])
-    return int(m[4]) if m and m[4] else 1
-
-
-def shell_of(name: str) -> bool:
-    """Whether `name` gives its agents a shell (`-sh` suffix), run in Claude Code's sandbox: no network
-    when replaying a historical sample, network when reviewing a PR now; never outside the workspace."""
-    m = _NAME.fullmatch(name.split("#")[0])
-    return bool(m and m[7])
-
-
-def cheap_main_of(name: str) -> bool:
-    """Whether `name` runs its main review agents on the cheaper model of [hybrid] (`-ms`), for learning.
-
-    The rule check keeps the reviewer's model and effort, and no merge call runs: the findings of the
-    runs stand side by side (each with support 1). The main agents' findings lose their rule citations,
-    so every rule signal (a rule's finding judged invalid) comes from the rule check. On 30 samples this
-    found 93% of the misses the full reviewer finds, with 15% false misses (full reviewer vs itself: 9%),
-    at $1.35 instead of $3.10 a sample."""
-    m = _NAME.fullmatch(name.split("#")[0])
-    return bool(m and m[6])
 
 
 def rulecheck_of(name: str) -> bool:
     """Whether `name` asks for a rule-check run next to the reviews (`-rc` suffix, needs a rulebook):
     one more agent that must give a verdict on every applicable rule, merged with the reviews."""
     m = _NAME.fullmatch(name.split("#")[0])
-    return bool(m and m[5] == "-rc" and m[2])
+    return bool(m and m[4] == "-rc" and m[2])
 
 
 def ruleonly_of(name: str) -> bool:
@@ -94,7 +63,7 @@ def ruleonly_of(name: str) -> bool:
     runs every matched point found through a rule-citing finding had the rule check among its sources), so
     replaying the full review there only pays for the part no rule change touches."""
     m = _NAME.fullmatch(name.split("#")[0])
-    return bool(m and m[5] == "-ro" and m[2])
+    return bool(m and m[4] == "-ro" and m[2])
 
 
 def prompt_template(version: str) -> tuple[str, tuple[str, ...]]:
@@ -202,8 +171,6 @@ def _primary_path(f: dict) -> str | None:
     return locs[0].get("path") if locs else None
 
 
-PLACE_SLACK = 15  # lines: a rule-check place this close to a main-review place is the same place
-
 SAME_PROMPT = """Below are pairs of code review findings on the same file, citing the same team rule. For
 each pair, answer whether B raises the same problem as A (so B can be dropped as a repeat), or a
 different problem that only falls under the same rule. Answer with one ```json block:
@@ -212,35 +179,20 @@ different problem that only falls under the same rule. Answer with one ```json b
 {pairs}"""
 
 
-def _places(f: dict) -> list[tuple[str, int]]:
-    return [(loc.get("path"), int(loc.get("start") or 0)) for loc in f.get("locations") or [] if loc.get("path")]
-
-
-def _covered(b: dict, fs: list[dict], slack: int = PLACE_SLACK) -> bool:
-    """Every place finding `b` points at is within `slack` lines of a place one of `fs` points at."""
-    ps = [p for f in fs for p in _places(f)]
-    return all(any(path == q and abs(line - n) <= slack for q, n in ps) for path, line in _places(b))
-
-
-def drop_repeats(main: list[dict], rulecheck: list[dict], confirm: bool = True,
-                 places: bool | None = None) -> tuple[list[dict], float]:
+def drop_repeats(main: list[dict], rulecheck: list[dict], confirm: bool = True) -> tuple[list[dict], float]:
     """The rule check's findings without those the main review already raised (the main review sees the
-    rulebook too). Candidates: same rule and same primary file as a main finding; with `places` (default:
-    [review] dedupe_places), only when every place the rule-check finding points at is also near a place
-    those main findings point at, so a rule broken in more places than the main review named keeps them.
-    With `confirm`, one small tool-less call ([review] dedupe_model, low effort) checks the candidates
-    and keeps those that raise a different problem under a broad rule; on failure every candidate is kept.
+    rulebook too). Candidates: same rule and same primary file as a main finding. With `confirm`, one
+    small tool-less call ([review] dedupe_model, low effort) checks the candidates and keeps those that
+    raise a different problem under a broad rule; on failure every candidate is kept.
 
     Returns:
         (the rule-check findings kept, the call's cost).
     """
-    places = bool(get("review", "dedupe_places")) if places is None else places
     by_key: dict = {}
     for f in main:
         if f.get("rule"):
             by_key.setdefault((f.get("rule"), _primary_path(f)), []).append(f)
-    cand = [(k, f) for k, f in enumerate(rulecheck) if (f.get("rule"), _primary_path(f)) in by_key
-            and (not places or _covered(f, by_key[(f.get("rule"), _primary_path(f))]))]
+    cand = [(k, f) for k, f in enumerate(rulecheck) if (f.get("rule"), _primary_path(f)) in by_key]
     if not cand:
         return list(rulecheck), 0.0
     drop, cost = {k for k, _ in cand}, 0.0
@@ -259,17 +211,16 @@ def drop_repeats(main: list[dict], rulecheck: list[dict], confirm: bool = True,
     return [f for k, f in enumerate(rulecheck) if k not in drop], cost
 
 
-def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, live: bool = False,
+def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER,
                  only: set[str] | None = None) -> dict:
-    """Run `reviewer` (see parse_reviewer) in workspace `wt` for PR `raw`; `live`: a PR reviewed now
-    (not a historical sample), which only matters for a shell's network (see shell_of).
+    """Run `reviewer` (see parse_reviewer) in workspace `wt` for PR `raw`.
 
     Returns:
         {"schema_version", "findings": list of schema.Finding dicts | None (None = output not
          parsable or not schema-valid, see "error"), "error", "raw": text, "cost", "turns",
-         "denials", "effort", "version", "rules", "reviewer"}. With `x<n>` (n > 1) the findings are
-        the merge run's, each with "support" (how many runs raised it); "parallel" = n, "runs" = each
-        run's findings/error/cost, "cost" = all runs plus the merge.
+         "denials", "effort", "version", "rules", "reviewer"}. With -rc the findings of the main review
+        and the rule check stand side by side, each with "support" 1; "parallel" = 2, "runs" = each
+        run's findings/error/cost, "cost" = both runs plus the dedupe call.
 
     `only`: with a rule-only reviewer (-ro), check only these rule ids of the book (vet uses it).
     """
@@ -291,30 +242,18 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
     system = prompt_system(version)
     meta = {"schema_version": SCHEMA_VERSION, "effort": effort, "version": version, "rules": rules,
             "reviewer": reviewer}
-    n, rc, ro = parallel_of(reviewer), rulecheck_of(reviewer) and bool(use), ruleonly_of(reviewer)
-    sh = shell_of(reviewer)
-    tools, sb = (TOOLS + ",Bash", "live" if live else "replay") if sh else (TOOLS, None)
-    if sh:
-        prompt = prompt.replace("\nFinish with one JSON block", SHELL_NOTE + "\nFinish with one JSON block", 1) \
-            if "\nFinish with one JSON block" in prompt else prompt + SHELL_NOTE
-
-    ms = cheap_main_of(reviewer)
+    n, rc, ro = 1, rulecheck_of(reviewer) and bool(use), ruleonly_of(reviewer)
+    tools = TOOLS
 
     def once() -> dict:
-        if not ms:
-            return _parsed(llm.run(prompt, effort, cwd=str(wt), tools=tools, system=system, sandbox=sb))
-        r = _parsed(llm.run(prompt, str(get("hybrid", "main_effort")), cwd=str(wt), tools=tools, system=system,
-                            sandbox=sb, model=str(get("hybrid", "main_model"))))
-        if r["findings"] is not None:  # rule signals come from the rule check only
-            r["findings"] = [{**f, "rule": None, "rules": []} for f in r["findings"]]
-        return r
+        return _parsed(llm.run(prompt, effort, cwd=str(wt), tools=tools, system=system))
 
-    def side_by_side(ok: list[dict]) -> dict:  # -ms / rc_merge off: no merge call, ids made unique as "<run>.<id>"
+    def side_by_side(ok: list[dict]) -> dict:  # no merge call, ids made unique as "<run>.<id>"
         main = [f for x in ok if x.get("kind") != "rulecheck" for f in x["findings"]]
         cost, kept = 0.0, {}
         for i, x in enumerate(ok):
             if x.get("kind") == "rulecheck":
-                kept[i], c = drop_repeats(main, x["findings"], places=bool(prompt_params(version).get("dedupe_places")))
+                kept[i], c = drop_repeats(main, x["findings"])
                 cost += c
         fs = [{**f, "id": f"{i}.{f.get('id') or k}", "support": 1}
               for i, x in enumerate(ok, 1) for k, f in enumerate(kept.get(i - 1, x["findings"]), 1)]
@@ -327,7 +266,7 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
         t = part_path(version, "rulecheck").read_text()
         if "{context}" not in t and "{shared}" not in t:  # an older prompt: the agent reads the workspace with tools
             p = t.format(rules="\n".join(rule_lines(use, rule_examples(version), rule_why(version))), **pr_meta(raw))
-            return _parsed(llm.run(p, effort, cwd=str(wt), tools=tools, system=system, sandbox=sb), rulecheck=True)
+            return _parsed(llm.run(p, effort, cwd=str(wt), tools=tools, system=system), rulecheck=True)
         if not re.fullmatch(r"p[0-9a-f]{8}", version):  # a named prompt would silently get today's check
             raise ValueError(f"prompt {version} predates the tool-less rule check; use a p<sha8> version")
         ctx = rulecheck_context(wt, symbols="SYMBOLS" in t)  # older prompt versions: as they ran
@@ -336,9 +275,9 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
         if "{shared}" in t:  # the PR and its context go in the system prompt, the same for the picking stage and
             # the check, so the check reads them from the cache the pick wrote instead of paying for them again
             rsys = ((system or "") + "\n\n" + SHARED_HEAD.format(**pr_meta(raw)) + ctx).strip()
-        def one(rules_: list[dict], focus: str = "") -> dict:
+        def one(rules_: list[dict]) -> dict:
             check, pick = rule_stage(version, rules_, ctx, raw, rce, rsys)
-            p = t.format(rules=focus + "\n".join(rule_lines(check, rule_examples(version), rule_why(version))), context=ctx, shared="", **pr_meta(raw))
+            p = t.format(rules="\n".join(rule_lines(check, rule_examples(version), rule_why(version))), context=ctx, shared="", **pr_meta(raw))
             r = _parsed(llm.run(p, rce, cwd=str(wt), tools="", system=rsys), rulecheck=True)
             if pick:  # rules left out in stage 1 get a verdict too: not applicable
                 left = [x["id"] for x in rules_ if x not in check]
@@ -348,46 +287,7 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
                          stage={"picked": [x["id"] for x in check], "left": left, "cost": pick["cost"]})
             return r
 
-        split = int(prompt_params(version).get("rulecheck_split_files") or 0)
-        paths = changed_paths(wt)
-        if not split or len(paths) <= split:
-            return one(use)
-        # a large change: one pass per group of files, so a rule broken in many files is checked in each of
-        # them (2026-11-26: on a 42-file PR the rule check raised rules on some files and missed the rest)
-        k = -(-len(paths) // split)
-        size = -(-len(paths) // k)
-        groups = [paths[i:i + size] for i in range(0, len(paths), size)]
-        parts = []
-        for gi, g in enumerate(groups, 1):
-            gu = applicable(use, g)
-            if not gu:
-                continue
-            focus = (f"THIS PASS ({gi} of {len(groups)}): check only the changes to these files; the rest of the diff is "
-                     f"context, other passes check it: {', '.join(g)}\n\n")
-            parts.append((gi, one(gu, focus)))
-        if not parts:
-            return one(use)
-        ok = [(gi, r) for gi, r in parts if r["findings"] is not None]
-        out = dict(parts[0][1])
-        out.update(findings=None if not ok else [{**f, "id": f"g{gi}.{f.get('id') or n}"} for gi, r in ok
-                                                 for n, f in enumerate(r["findings"], 1)],
-                   verdicts=[v for _, r in parts for v in r.get("verdicts") or []],
-                   cost=sum(r["cost"] for _, r in parts), usage=llm.add_usage(*(r.get("usage") for _, r in parts)),
-                   raw="\n\n".join(f"[pass {gi}]\n{r.get('raw') or ''}" for gi, r in parts),
-                   error=None if ok else parts[0][1].get("error"), split=[g for g in groups])
-        return out
-
-    def merge(ok: list[dict]) -> dict:  # one more agent run on the same workspace: it may read code
-        src = {f"{i}.{f.get('id') or k}": (i, f) for i, x in enumerate(ok, 1)
-               for k, f in enumerate(x["findings"], 1)}  # ids unique across runs: "<run>.<id>"
-        reviews = "\n\n".join(f"Run {i}" + (" (rule check: only team-rule violations, not a full review)"
-                                            if x.get("kind") == "rulecheck" else "") + ":\n"
-                              + json.dumps([{**f, "id": k} for k, (j, f) in src.items() if j == i], indent=1)
-                              for i, x in enumerate(ok, 1))
-        return _parsed(llm.run(part_path(version, "merge").read_text().format(n=len(ok), reviews=reviews,
-                                                                         **pr_meta(raw)),
-                               effort, cwd=str(wt), tools=tools, system=system, sandbox=sb),
-                       fix=lambda obj: _from_sources(obj, src))
+        return one(use)
 
     if ro:  # the rule check alone; no applicable rule: nothing to check, no run
         r = rulecheck() if use else {"findings": [], "error": None, "raw": "", "cost": 0.0, "turns": 0,
@@ -395,7 +295,7 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
         if r["findings"] is not None:
             r["findings"] = [{**f, "support": 1} for f in r["findings"]]
         return {**r, **meta}
-    e = ensemble(once, n, side_by_side if ms or not prompt_params(version)["rc_merge"] else merge, ok=lambda x: x["findings"] is not None,
+    e = ensemble(once, n, side_by_side, ok=lambda x: x["findings"] is not None,
                  extra=[rulecheck] if rc else [])
     if n == 1 and not rc:
         return {**e.result, **meta}
@@ -563,27 +463,7 @@ def _unfiled(verdicts: object, findings: list) -> list[dict]:
              "body": str(v.get("why") or ""), "locations": [], "rule": v["rule"]} for i, v in enumerate(vs, 1)]
 
 
-def _from_sources(merged: object, src: dict[str, tuple[int, dict]]) -> object:
-    """Fill in what the merge agent's `from` (source finding ids) determines, instead of trusting the model
-    with it: the team rules of a merged finding (every rule its sources cite, so none is lost when findings
-    citing different rules merge), and its support (how many runs its sources come from). Without usable
-    `from`, the finding is kept as is."""
-    if not isinstance(merged, list):
-        return merged
-    for f in merged:
-        if not isinstance(f, dict):
-            continue
-        refs = [src[k] for k in f.pop("from", None) or [] if isinstance(k, str) and k in src]
-        if not refs:
-            continue
-        rules = list(dict.fromkeys(r for _, s in refs for r in sorted(cites(s))))
-        f["rule"] = f.get("rule") if f.get("rule") in rules else (rules[0] if rules else None)
-        f["rules"] = [f["rule"], *(r for r in rules if r != f["rule"])] if rules else []
-        f["support"] = len({i for i, _ in refs})
-    return merged
-
-
-def _parsed(r: dict, rulecheck: bool = False, fix: Callable[[object], object] | None = None) -> dict:
+def _parsed(r: dict, rulecheck: bool = False) -> dict:
     """One llm.run result as run-file fields: findings (None if unparsable) and the error; a rule check
     (rulecheck.md output: {"verdicts", "findings"}) also keeps its per-rule verdicts."""
     findings, error, verdicts = None, None, None
@@ -594,7 +474,7 @@ def _parsed(r: dict, rulecheck: bool = False, fix: Callable[[object], object] | 
                 raise SchemaError("rule check output must be an object with verdicts and findings")
             verdicts, obj = obj.get("verdicts"), obj.get("findings") or []
             obj = obj + _unfiled(verdicts, obj)
-        findings = to_dicts(parse_findings(fix(obj) if fix else obj))
+        findings = to_dicts(parse_findings(obj))
     except (ValueError, SchemaError) as e:  # SchemaError is a ValueError; kept explicit for clarity
         error = str(e)
     out = {"findings": findings, "error": error, "raw": r["text"], "cost": r["cost"], "turns": r["turns"],
@@ -615,7 +495,7 @@ def review_pr(pr: int, commit: str | None = None, reviewer: str = DEFAULT_REVIEW
         raise RuntimeError(f"lmreview needs {', '.join(missing)} on PATH (claude: logged in; gh: `gh auth login`)")
     raw = github.fetch_pr(pr)
     with live_workspace(cfg, raw, commit, reviewer_context(reviewer)) as (wt, c, base):
-        out = run_reviewer(wt, raw, reviewer, live=True)
+        out = run_reviewer(wt, raw, reviewer)
     return {"pr": pr, "title": raw["title"], "commit": c, "base": base, **out}
 
 

@@ -272,7 +272,7 @@ def reviewer(book: str | None = None, learn: bool = False) -> str:
     c = config()
     book = book or (vname(head()) if head() else None)
     if learn and book and get("learn", "production"):  # learn from what production misses (2026-11-26)
-        return f"{prompt_id()}+{book}@{get('retain', 'effort')}" + suffix(True)
+        return f"{prompt_id()}+{book}@{c['effort']}" + suffix(True)
     return f"{prompt_id()}" + (f"+{book}" if book else "") + f"@{c['effort']}" + suffix(bool(book), learn)
 
 
@@ -1056,7 +1056,7 @@ def retain_reviewer() -> str:
     got credit for 26 of them only because the dedupe kept its copy), so the rule check alone, at about half
     the cost of a full review, says whether the book is applied. Its runs are judged against every human point of
     the sample (judge_runs), as production runs are, not only against the point asked about as vet does."""
-    return f"{prompt_id()}+{vname(head())}@{get('retain', 'effort')}-ro" + ("-sh" if config()["shell"] else "")
+    return f"{prompt_id()}+{vname(head())}@{config()['effort']}-ro" + ("-sh" if config()["shell"] else "")
 
 
 def entries_of(r: dict, rules: list[dict]) -> list[str]:
@@ -1108,7 +1108,7 @@ def retain_step(prs: set[int] | None = None, max_cost: float | None = None, reps
     judge, and send each row caught in fewer than all runs back to to_distill. Only resolved rows by default:
     a covered one has no entry behind it, so a rule check cannot catch it, with a try saying how often
     it was caught and what the runs made of it (distill reads it). A row sent back more than
-    [distill] max_requeues times goes to a person (needs_human). Rows caught every time get "retained"."""
+    [distill] max_requeues times by retain (its own count) goes to a person (needs_human). Rows caught every time get "retained"."""
     from .replay import replay
     from .runs import hits
     from .score import judge_runs
@@ -1152,11 +1152,11 @@ def retain_step(prs: set[int] | None = None, max_cost: float | None = None, reps
             r.setdefault("tries", []).append({"book": vname(head()), "entries": es, "result": "not retained",
                                               "why": why, "date": _now()[:10]})
             r.pop("retained", None)
-            if r.get("requeues", 0) >= MAX_REQUEUES:
+            if r.get("retain_requeues", 0) >= MAX_REQUEUES:  # its own count: requeue_parked's is for parked rows
                 r.update(status="needs_human", parked={"by": "retain", "prompt": distill_prompt_id(), "date": _now()[:10]})
                 out["needs_human"].append(r["comment"])
             else:  # the not-retained try is information for distill, not a failed attempt: requeued_at is after it
-                r.update(status="to_distill", requeues=r.get("requeues", 0) + 1, requeued_at=len(r["tries"]),
+                r.update(status="to_distill", retain_requeues=r.get("retain_requeues", 0) + 1, requeued_at=len(r["tries"]),
                          requeued={"date": _now()[:10], "book": vname(head()), "why": why[:300]})
                 out["requeued"].append(r["comment"])
                 note(f"  not retained #{r['pr']}@{r['commit'][:8]} c{r['comment']} ({h}/{n})", "change")

@@ -111,3 +111,90 @@ def check(entry: dict, comments: dict[str, dict], use_model: bool = True) -> dic
     j = judge(entry) if use_model and not bad else None
     return {"ok": not bad and (j is None or j["verdict"] != "specific"), "lint": bad, "judge": j,
             "cost": (j or {}).get("cost", 0)}
+
+
+REWRITE_PROMPT = """This entry of a code review rulebook is too specific: {why}
+
+A good entry describes a kind of problem that can come up in many changes, so a reviewer recognizes it in
+code it has never seen. Rewrite only "when" (the situation the entry applies to) and "expect" (what the
+reviewer should ask for) so that they:
+- describe the kind of situation and the kind of fix, in the project's general vocabulary;
+- do not name the change's own functions, classes, variables, config keys, files or PR numbers{names};
+- do not spell out the exact edit for one place.
+Keep the meaning: on the change this entry came from, a reviewer given the new text must still raise the
+same problem. The specific case stays in "examples", which you do not change.
+
+kind: {kind}
+when: {when}
+expect: {expect}
+examples: {examples}
+
+Answer with one JSON object only: {{"when": "...", "expect": "..."}}"""
+
+
+def rewrite(entry: dict, why: str, bad_names: list[str], effort: str = "high") -> tuple[dict | None, float]:
+    """One call: the entry with "when" / "expect" rewritten to describe the class (None if unparsable)."""
+    from . import llm
+    names = f" (here: {', '.join(bad_names[:12])})" if bad_names else ""
+    r = llm.run(REWRITE_PROMPT.format(why=why, names=names, kind=entry.get("kind", ""), when=entry.get("when", ""),
+                                      expect=entry.get("expect", ""), examples=json.dumps(entry.get("examples") or [])),
+                effort)
+    j = llm.extract_json(r.get("text")) or {}
+    if not (isinstance(j.get("when"), str) and isinstance(j.get("expect"), str) and j["when"].strip() and j["expect"].strip()):
+        return None, r.get("cost") or 0
+    return {**entry, "when": j["when"].strip(), "expect": j["expect"].strip()}, r.get("cost") or 0
+
+
+def enforce(rules: list[dict], base_rules: list[dict], comments: dict[str, dict], effort: str = "high",
+            use_model: bool = True) -> tuple[list[dict], list[dict], float]:
+    """Hold every entry this distill or compress wrote (new, or "when" / "expect" changed from the base) to
+    both checks. A failing entry gets one rewrite and is checked again; if it still fails, a new entry is
+    dropped (and the entries it replaced come back) and a revised one goes back to its base text.
+
+    Returns:
+        (the rulebook, change records "specific-rewrite" / "specific-drop" / "specific-revert", cost).
+    """
+    base = {r["id"]: r for r in base_rules}
+    changes, cost, out, dropped = [], 0.0, [], set()
+    for r in rules:
+        b = base.get(r["id"])
+        if r.get("status", "active") != "active" or (b and (b.get("when"), b.get("expect")) == (r.get("when"), r.get("expect"))):
+            out.append(r)
+            continue
+        c = check(r, comments, use_model)
+        cost += c["cost"]
+        if c["ok"]:
+            out.append(r)
+            continue
+        why = "; ".join(c["lint"]) or (c["judge"] or {}).get("why") or "it describes one fix"
+        bad = [x.split("'")[1] for x in c["lint"] if x.startswith("names '")]
+        new, k = rewrite(r, why, bad, effort)
+        cost += k
+        c2 = check(new, comments, use_model) if new else {"ok": False, "lint": [], "judge": None, "cost": 0}
+        cost += c2["cost"]
+        if c2["ok"]:
+            out.append(new)
+            changes.append({"op": "specific-rewrite", "rules": [r["id"]], "concern": r.get("name") or "", "why": why,
+                            "before": {"when": r.get("when"), "expect": r.get("expect")}})
+            continue
+        why2 = "; ".join(c2["lint"]) or (c2["judge"] or {}).get("why") or "rewrite unparsable"
+        if b:
+            out.append(b)
+            changes.append({"op": "specific-revert", "rules": [r["id"]], "concern": r.get("name") or "",
+                            "why": f"{why}; after one rewrite: {why2}"})
+        else:
+            dropped.add(r["id"])
+            changes.append({"op": "specific-drop", "rules": [r["id"]], "concern": r.get("name") or "",
+                            "why": f"{why}; after one rewrite: {why2}", "text": {"when": r.get("when"), "expect": r.get("expect")}})
+    if dropped:  # what a dropped entry replaced comes back; links to it go
+        fixed = []
+        for r in out:
+            if (r.get("retired") or {}).get("replaced_by") in dropped and r["id"] in base:
+                r = base[r["id"]]
+            if r.get("principle") in dropped:
+                r = {k: v for k, v in r.items() if k != "principle"}
+            if r.get("members"):
+                r = {**r, "members": [m for m in r["members"] if m not in dropped]}
+            fixed.append(r)
+        out = fixed
+    return out, changes, cost

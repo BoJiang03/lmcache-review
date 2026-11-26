@@ -5,3 +5,8 @@ build/
 *.egg-info/
 __pycache__/
 reports/skill_compare_files/reviews.json
+reports/vet_*.md
+lmreview/rules/cx*
+lmreview/rules/fx*
+lmreview/rules/mx*
+lmreview/rules/noise*

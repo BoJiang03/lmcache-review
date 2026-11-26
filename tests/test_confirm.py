@@ -10,7 +10,7 @@ import pathlib
 import sys
 import tempfile
 
-TMP = "/home/bo/.claude/jobs/63e1ad63/tmp"
+TMP = tempfile.gettempdir()
 os.environ["LMREVIEW_STATE"] = tempfile.mkdtemp(prefix="lmr-state-", dir=TMP)  # before importing state
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 

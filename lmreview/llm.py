@@ -57,7 +57,9 @@ def _tape_key(prompt: str, effort: str, tools: str, system: str | None, model: s
     return hashlib.sha256(json.dumps([prompt, effort, tools, system, model]).encode()).hexdigest()
 
 
-def _tape_replay(prompt, effort, tools, system, model) -> dict | None:
+def _tape_replay(prompt: str, effort: str, tools: str, system: str | None, model: str | None) -> dict | None:
+    """In replay mode, the recorded answer to this call (None in record mode); raises on a call the tape
+    does not hold, after writing it to <tape>.miss.jsonl."""
     global _tape, SPENT
     if os.environ.get("LMREVIEW_TAPE_MODE") != "replay":
         return None
@@ -89,7 +91,7 @@ def _tape_replay(prompt, effort, tools, system, model) -> dict | None:
 _tape_logged: dict[str, list[str]] | None = None
 
 
-def _tape_reordered(prompt, effort, tools, system, model) -> str | None:
+def _tape_reordered(prompt: str, effort: str, tools: str, system: str | None, model: str | None) -> str | None:
     """The key of a recorded call whose prompt has the same lines in another order, found through the
     prompts the recording run logged (LMREVIEW_TAPE_LOGS: their data/logs dir); each such hit is noted."""
     global _tape_logged
@@ -112,7 +114,7 @@ def _tape_reordered(prompt, effort, tools, system, model) -> str | None:
     return None
 
 
-def _tape_similar(prompt, effort, tools, system, model) -> str | None:
+def _tape_similar(prompt: str, effort: str, tools: str, system: str | None, model: str | None) -> str | None:
     """With LMREVIEW_TAPE_FUZZY: the unused recorded call whose prompt is closest (ratio >= 0.9). Calls with
     the same inputs run in parallel get different answers, and a replay can hand them out in another
     order, so later prompts carry the other answer's text; each such hit is noted with its diff to check."""
@@ -142,7 +144,8 @@ def _tape_similar(prompt, effort, tools, system, model) -> str | None:
     return best[1]
 
 
-def _tape_record(prompt, effort, tools, system, model, out: dict) -> None:
+def _tape_record(prompt: str, effort: str, tools: str, system: str | None, model: str | None, out: dict) -> None:
+    """In record mode, append this call's result to the tape."""
     if os.environ.get("LMREVIEW_TAPE_MODE") != "record":
         return
     with _tape_lock, open(TAPE, "a") as f:

@@ -206,8 +206,10 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER,
     version, rules, effort = parse_reviewer(reviewer.split("#")[0])
     if re.fullmatch(r"p[0-9a-f]{8}", version):
         from .state import prompt_id
-        if version == prompt_id():
-            prompt_id(save=True)  # keep the text of every prompt a run used
+        if version != prompt_id():  # an older id's saved prompts may need tools, a merge agent or other params
+            raise ValueError(f"{version} is not the current prompt ({prompt_id()}): its cached runs stay readable, "
+                             "but new runs need the current prompt")
+        prompt_id(save=True)  # keep the text of every prompt a run used
     prompt = prompt_template(version)[0].format(**pr_meta(raw))
     use = applicable(load_rules(rules), changed_paths(wt)) if rules else []
     if only is not None:  # a rule-only run on some rules of the book (vet: the changed ones and their links)
@@ -496,7 +498,7 @@ def to_markdown(r: dict) -> str:
     n = r.get("parallel") or 1
     if n > 1:  # merged parallel review: within a severity, what more runs agree on comes first
         fs.sort(key=lambda f: (SEVERITIES.index(f.severity), -(f.support or 1)))
-        head += [f"{n} parallel runs, merged; each finding shows how many runs raised it.", ""]
+        head += ["Main review and rule check side by side; each finding shows how many of them raised it.", ""]
 
     def item(f: Finding) -> list[str]:
         found = f" · found by {f.support or 1}/{n} runs" if n > 1 else ""

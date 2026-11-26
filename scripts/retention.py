@@ -19,7 +19,7 @@ picks the samples and reads the results. Nothing here writes lmreview/state/.
 Usage (env as in skill_compare: SC_REVIEWER, SC_REP, SC_MAIN_FROM, SC_RC_FROM):
     scripts/retention.py select                      # fix the pilot and holdout sets (once)
     SC_REP=2 scripts/retention.py run --set pilot --cap 25
-    scripts/retention.py report --set pilot --reviewer p990f2d2e+v0032@medium-rc --reps 1 2
+    scripts/retention.py report --set pilot --reviewer <prompt>+v0032@medium-rc --reps 1 2
 """
 
 from __future__ import annotations
@@ -400,7 +400,8 @@ def main() -> None:
     ap.add_argument("--set", default="pilot")
     ap.add_argument("--cap", type=float, default=25.0)
     ap.add_argument("--workers", type=int, default=4)
-    ap.add_argument("--reviewer", default=os.environ.get("SC_REVIEWER", "p990f2d2e+v0032@medium-rc"))
+    import skill_compare as sc
+    ap.add_argument("--reviewer", default=os.environ.get("SC_REVIEWER") or sc.REVIEWER)  # the production reviewer
     ap.add_argument("--reps", type=int, nargs="+", default=[1, 2])
     ap.add_argument("--detail", action="store_true")
     ap.add_argument("--only", nargs="+", help="run: only these sample keys of the set")

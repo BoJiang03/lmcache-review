@@ -74,6 +74,8 @@ def main(argv: list[str] | None = None) -> None:
     rt.add_argument("--prs", type=int, nargs="+")
     rt.add_argument("--samples", nargs="+", help="PR:commit8 (default: every sample of a learned point)")
     rt.add_argument("--reps", type=int, default=get("retain", "reps"))
+    rt.add_argument("--covered", action="store_true", help="also check covered points (found without an entry); "
+                    "needs a --reviewer with the main review, a rule check alone cannot find them")
     rt.add_argument("--reviewer", help="check with this reviewer's runs instead (same prompt and book; default: the rule check, -ro)")
     rt.add_argument("--max-cost", type=float, default=get("budget", "retain"))
     o = sub.add_parser("round", help="review + judge + distill + vet on these samples, then compress + vet when the book is over [compress] words (paid)")
@@ -197,7 +199,8 @@ def main(argv: list[str] | None = None) -> None:
             print(f"book in use: {state.vname(state.init(a.book, a.note))}")
     elif a.cmd == "retain":
         from .state import retain_step
-        print(retain_step(set(a.prs or []) or None, a.max_cost, a.reps, samples=set(a.samples or []) or None, reviewer=a.reviewer))
+        print(retain_step(set(a.prs or []) or None, a.max_cost, a.reps, samples=set(a.samples or []) or None, reviewer=a.reviewer,
+                          statuses=("covered", "resolved") if a.covered else ("resolved",)))
     elif a.cmd == "compress":
         from .state import compress_step
         print(compress_step(a.max_cost, stage=a.stage, repair=a.repair))

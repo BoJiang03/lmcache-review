@@ -318,6 +318,10 @@ def report(set_name: str, reviewer: str, reps: list[int], book_entries: list[dic
     sets = json.loads((OUT / "sets.json").read_text())
     ls, entries = learned_samples(), book_entries or book()
     pts, miss_cls, cost, n_runs = [], C.Counter(), [], 0
+    sys.path.insert(0, str(ROOT))
+    from lmreview.annotate import TIERS, severities, tier
+    from lmreview.config import Config
+    sev = severities(Config())
     for key in sets[set_name]:
         rows = ls[key]
         per_rep = []
@@ -358,7 +362,8 @@ def report(set_name: str, reviewer: str, reps: list[int], book_entries: list[dic
                 classes.append("c" if here else "c-elsewhere" if fired else "b")
             n = sum(g is not None for g in per_rep)
             pts.append({"sample": key, "comment": row["comment"], "status": row["status"], "hits": hits, "n": n,
-                        "classes": classes, "rules": sorted(rules_of(row, entries)) if row["status"] == "resolved" else []})
+                        "classes": classes, "rules": sorted(rules_of(row, entries)) if row["status"] == "resolved" else [],
+                        "tier": tier(sev.get(str(row["comment"])))})
             miss_cls.update(classes)
     full = [p for p in pts if p["n"] == len(reps)]
     dist = C.Counter(f"{p['hits']}/{p['n']}" for p in full)
@@ -367,6 +372,8 @@ def report(set_name: str, reviewer: str, reps: list[int], book_entries: list[dic
             "retention": round(dist.get(f"{len(reps)}/{len(reps)}", 0) / len(full), 3) if full else None,
             "dist": dict(sorted(dist.items())), "miss_classes": dict(miss_cls),
             "by_status": {s: dict(C.Counter(f"{p['hits']}/{p['n']}" for p in full if p["status"] == s)) for s in ("covered", "resolved")},
+            "by_tier": {t: {"retained": sum(p["hits"] == p["n"] for p in full if p["tier"] == t),
+                            "points": sum(p["tier"] == t for p in full)} for t in TIERS + (None,) if any(p["tier"] == t for p in full)},
             "runs": n_runs, "cost_per_run": round(sum(cost) / len(cost), 3) if cost else None, "detail": pts}
 
 

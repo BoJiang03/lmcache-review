@@ -103,10 +103,10 @@ def test_vet_sequential() -> None:
     monkey: dict = {}
     made = setup(monkey, cfg)
     try:
-        plan = vet.vet("n1", cfg=cfg, max_cost=0)
+        plan = vet.vet("n1", "b0", "p1", "high", "-ro", cfg=cfg, max_cost=0)
         assert "plus 1 second runs of effect samples" in plan and "est $2" in plan, plan
         out: dict = {}
-        rep = vet.vet("n1", cfg=cfg, max_cost=20, out=out)
+        rep = vet.vet("n1", "b0", "p1", "high", "-ro", cfg=cfg, max_cost=20, out=out)
     finally:
         restore(monkey)
     J = out["J"]
@@ -122,7 +122,7 @@ def test_vet_sequential_capped() -> None:
     setup(monkey, cfg)
     try:
         out: dict = {}
-        rep = vet.vet("n1", cfg=cfg, max_cost=4, out=out)  # first pass, base, one retry, one more: then the cap
+        rep = vet.vet("n1", "b0", "p1", "high", "-ro", cfg=cfg, max_cost=4, out=out)  # first pass, base, one retry, one more: then the cap
     finally:
         restore(monkey)
     assert out["verdict"] == "INCOMPLETE", rep

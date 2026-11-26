@@ -125,15 +125,6 @@ def test_judge_runs_rep() -> None:
     assert runs.hits(R, SAMPLE, 11, cfg) == (1, 2)
 
 
-def test_stability() -> None:
-    cfg = tmp_cfg()
-    put(cfg, 1, [{"id": "f1", "severity": "minor", "scope": "pr", "title": "t"}], [(11, []), (12, [])], model=None)
-    put(cfg, 2, [{"id": "f1", "severity": "minor", "scope": "pr", "title": "t"}], [(11, ["f1"]), (12, [])])
-    out = runs.stability(R, cfg)
-    assert "comments judged in >= 2 runs: 2; p = 0: 1, 0 < p < 1: 1, p = 1: 0" in out, out
-    assert "unknown model (older runs) 1" in out and "c11: 1/2" in out
-
-
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

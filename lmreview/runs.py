@@ -9,7 +9,7 @@ Each run json records the models its calls used ("model": the model ids, comma-s
 run made no call). llm.run notes the model every requested model name ("default" or an id) resolved to
 in <data>/models.json; a cached run whose recorded model is no longer what its reviewer's calls resolve
 to is not reused (`cached`). A run without "model" (older runs) is of unknown model: still reused, and
-counted as unknown in `stability`.
+counted as unknown in vet's report.
 
 Hits: `hits` counts, over every repeat of a reviewer, the judged runs on a sample that cover a comment
 and those that match it. vet's sequential check and round's miss confirmation read their counts here.
@@ -144,7 +144,7 @@ def _one(cfg: Config, d: pathlib.Path, name: str, comment: int | str, cites: set
     """Whether the run in dir `d` on sample file `name` matches `comment`; None if it has no judged
     result covering the comment (no run, a failed run, not judged, or judged for other comments only)."""
     from .schema import cites as finding_rules
-    from .score import JUDGE, _normalize, hkey
+    from .score import JUDGE, hkey
     f = d / name
     if not f.exists():
         return None
@@ -157,10 +157,6 @@ def _one(cfg: Config, d: pathlib.Path, name: str, comment: int | str, cites: set
     s = json.loads(sp.read_text())
     if s.get("judge", "j1") != JUDGE:
         return None
-    try:
-        s = _normalize(s, run)  # older scores matched findings by index
-    except ValueError:
-        pass
     mine = [h for h in s.get("human") or [] if comment in (hkey(s, h), cid_of(hkey(s, h)))]
     if not mine:
         return None
@@ -188,44 +184,3 @@ def hits(reviewer_base: str, sample: dict | str, comment: int | str, cfg: Config
     got = [_one(cfg, d, name, comment, cites) for _, d in rep_dirs(cfg, reviewer_base)]
     got = [x for x in got if x is not None]
     return sum(got), len(got)
-
-
-def stability(reviewer: str, cfg: Config | None = None) -> str:
-    """The comments `reviewer` has judged in at least two repeats and their hit rate p = hit/n, with how
-    many fall at p = 0, 0 < p < 1 and p = 1 (free); plus how many runs record no model.
-
-    Returns:
-        The report text.
-    """
-    from .score import JUDGE, WANT, hkey
-    cfg = cfg or Config()
-    dirs = rep_dirs(cfg, reviewer)
-    keys: dict[str, set] = {}  # sample file -> point keys judged in some repeat
-    unknown, models, n_runs = 0, {}, 0
-    for _, d in dirs:
-        for f in d.glob("*.json"):
-            run = json.loads(f.read_text())
-            n_runs += 1
-            if "model" not in run:
-                unknown += 1
-            elif run["model"]:
-                models[run["model"]] = models.get(run["model"], 0) + 1
-            sp = cfg.data / "scores" / d.name / f.name
-            if sp.exists() and (s := json.loads(sp.read_text())).get("judge", "j1") == JUDGE:
-                keys.setdefault(f.name, set()).update(hkey(s, h) for h in s.get("human") or [] if h.get("type") in WANT)
-    rows = []
-    for name, ks in sorted(keys.items()):
-        pr, c = name[:-5].split("-")
-        for k in sorted(ks, key=str):
-            h, n = hits(reviewer, f"{pr}@{c}", k, cfg)
-            if n >= 2:
-                rows.append((f"#{pr}@{c}", k, h, n))
-    zero = sum(h == 0 for *_, h, n in rows)
-    one = sum(h == n for *_, h, n in rows)
-    L = [f"# Stability of {reviewer}", "",
-         f"- repeats on disk: {', '.join(f'r{k}' for k, _ in dirs) or 'none'}; runs {n_runs}; models: "
-         + (", ".join(f"{m} {c}" for m, c in sorted(models.items())) or "none recorded")
-         + (f"; unknown model (older runs) {unknown}" if unknown else ""),
-         f"- comments judged in >= 2 runs: {len(rows)}; p = 0: {zero}, 0 < p < 1: {len(rows) - zero - one}, p = 1: {one}", ""]
-    L += [f"- {s} c{k}: {h}/{n}" for s, k, h, n in rows if 0 < h < n]
-    return "\n".join(L)

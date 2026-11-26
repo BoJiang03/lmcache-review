@@ -1,18 +1,7 @@
-"""Rule regression: after a rulebook changes, check that its rules still fix what their tests showed.
+"""Replay of rule cases for `lmreview vet` (vet.py): re-review each case's target with a rulebook and judge it.
 
-Users only see the default reviewer, so a rulebook edit (merge, generalize, rewrite) must not silently
-break a rule that worked. Each entry keeps its A/B records in "tests" (distill.record_test); the
-"corrected" ones are the entry's regression suite. Two layers, cheapest first:
-
-1. text: one coverage call per changed entry. The rewritten text must still explain its evidence
-   comments and the comments its tests corrected.
-2. replay: re-review each corrected test target with the new rulebook (`reps` runs) and judge it. The
-   entry passes a case if, in some run, every tested comment is matched by a finding citing the entry
-   (or its principle, or for a principle one of its members).
-
-`lmreview vet` (vet.py) checks a distill result as a whole and uses `replay` for its runs.
-
-The third layer, a whole-book eval on test before promotion, is `lmreview eval` (docs/usage.md).
+An entry passes a case if, in some run, every tested comment is matched by a finding citing the entry (or
+its principle, or for a principle one of its members).
 """
 
 from __future__ import annotations
@@ -24,12 +13,11 @@ import threading
 from .budget import capped_map
 from .config import Config
 from .schema import cites as finding_rules
-from .distill import COVERAGE, _ask, _fmt, _id
 from .reviewer import load_rules, parse_reviewer, reviewer_context, ruleonly_of, run_reviewer
 from .annotate import annotate, cid_of, points
 from .settings import get
 from .runs import cached as is_cached, run_dir, run_models, save_run
-from .score import REPORTS, hkey, load_gold, refuted, score_one
+from .score import hkey, load_gold, refuted, score_one
 from .workspace import cached_pr, sample_workspace
 
 FIELDS = ("when", "expect", "examples", "paths", "status")
@@ -42,47 +30,6 @@ def run_tag(only: set[str] | None) -> str:
     return "" if only is None else "#o" + hashlib.sha1(",".join(sorted(only)).encode()).hexdigest()[:8]
 
 
-def changed(new: list[dict], base: list[dict] | None) -> list[str]:
-    """Active entries of `new` that are new or differ from `base` in text, scope or status (all
-    active entries when there is no base)."""
-    old = {r["id"]: r for r in base or []}
-    return [r["id"] for r in new if r.get("status", "active") == "active"
-            and (base is None or r["id"] not in old or any(r.get(k) != old[r["id"]].get(k) for k in FIELDS))]
-
-
-def suite(rules: list[dict], ids: list[str]) -> list[tuple[str, dict]]:
-    """(entry id, test) for each corrected test of entries `ids`."""
-    by = {r["id"]: r for r in rules}
-    return [(i, t) for i in ids for t in by[i].get("tests") or [] if t["result"] == "corrected" and t.get("comments")]
-
-
-def text_check(rules: list[dict], ids: list[str], cm: dict, cfg: Config, effort: str = "high") -> tuple[dict, float]:
-    """Layer 1.
-
-    Returns:
-        ({entry id: comment ids it should explain but no longer does}, cost).
-    """
-    by, lost, cost = {r["id"]: r for r in rules}, {}, 0.0
-    for i in ids:
-        r = by[i]
-        want = list(dict.fromkeys([*(r.get("evidence") or []),
-                                   *(c for _, t in suite(rules, [i]) for c in t["comments"])]))
-        cs = [cm[c] for c in want if c in cm]
-        if not cs:
-            continue
-        text = f"{i}: when {r.get('when')} -> {r.get('expect')}"
-        try:
-            res, c = _ask(COVERAGE.format(rules=text, comments="\n\n".join(_fmt(x, False) for x in cs)), effort, cfg)
-        except Exception as e:  # a failed check must not sink the replays; count it as all lost, as distill does
-            print(f"text check of {i} failed: {e}")
-            res, c = None, 0.0
-        cost += c
-        ok = {_id(x.get("id")) for x in res if isinstance(x, dict) and i in (x.get("rules") or [])} \
-            if isinstance(res, list) else set()
-        lost[i] = [x["id"] for x in cs if x["id"] not in ok]
-    return lost, cost
-
-
 def cite_ids(by: dict[str, dict], i: str) -> set[str]:
     """Ids whose citation counts for entry `i` of a book (`by`: its entries by id): itself, its principle,
     a principle's members."""
@@ -92,7 +39,7 @@ def cite_ids(by: dict[str, dict], i: str) -> set[str]:
 
 def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float, cfg: Config,
            workers: int = 4, suffix: str = "", only: set[str] | None = None) -> tuple[list[dict], float]:
-    """Layer 2: re-review each case's target with `book` (the prompt and effort of the test's rule
+    """Re-review each case's target with `book` (the prompt and effort of the test's rule
     reviewer, plus `suffix`, e.g. "-rc") `reps` times; runs are cached under data/runs, so a rerun costs nothing.
 
     With a rule-only reviewer (suffix "-ro") the judge sees every point of the sample, as production runs
@@ -210,42 +157,3 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
                      "invalid": min(bads) if bads else None,  # findings citing the entry judged invalid
                      "verdicts": verdicts})  # the rule check's verdicts on the entry, one per run
     return rows, spent[0]
-
-
-def regress(book: str, base: str | None = None, reps: int = 2, max_cost: float = 10.0,
-            cfg: Config | None = None, suffix: str = "") -> str:
-    """Check rulebook `book` against `base` (or all its tested entries); see the module docstring.
-
-    Writes reports/regress_<book>.md and returns it. `max_cost` 0 = print the plan only. A case that
-    fails in all its runs is a regression; a changed entry that loses a comment in the text check is
-    one too.
-    """
-    cfg = cfg or Config()
-    rules = load_rules(book)
-    ids = changed(rules, load_rules(base) if base else None)
-    cases = suite(rules, ids)
-    est = len(ids) * 0.1 + len({t["target"] for _, t in cases}) * reps * EST_RUN
-    head = [f"# Regression check of {book}" + (f" against {base}" if base else " (all tested entries)"), "",
-            f"- changed entries: {', '.join(ids) or 'none'}",
-            f"- corrected tests to replay: {len(cases)} ({reps} runs each); est ${est:.1f}, cap ${max_cost:.1f}", ""]
-    if max_cost <= 0:
-        return "\n".join(head + ["plan only (max-cost 0)"])
-    _, cm = load_gold(cfg)
-    lost, cost = text_check(rules, ids, cm, cfg)
-    rows, rcost = replay(book, cases, reps, max_cost - cost, cfg, suffix=suffix)
-    bad_text = {i: l for i, l in lost.items() if l}
-    bad_runs = [r for r in rows if r["passed"] is False]
-    unknown = [r for r in rows if r["passed"] is None]
-    verdict = "REGRESSED" if bad_text or bad_runs else ("INCOMPLETE" if unknown else "PASS")
-    L = head + [f"**{verdict}** · cost ${cost + rcost:.2f}", "", "## Text check (layer 1)", ""]
-    L += [f"- {i}: " + (f"no longer explains {l}" if l else "ok") for i, l in lost.items()] or ["- nothing to check"]
-    L += ["", "## Replay of corrected tests (layer 2)", "", "| entry | target | reviewer | runs | result |",
-          "| --- | --- | --- | --- | --- |"]
-    for r in rows:
-        runs = " ".join("✓" if f else "✗" if f is False else "?" for f in r["runs"])
-        res = {True: "pass", False: "REGRESSED", None: "not run"}[r["passed"]]
-        L.append(f"| {r['entry']} | {r['target']} | {r['reviewer']} | {runs} | {res} |")
-    (REPORTS / f"regress_{book}{suffix}.md").write_text("\n".join(L) + "\n")
-    return "\n".join(L)
-
-

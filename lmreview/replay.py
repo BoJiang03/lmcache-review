@@ -44,17 +44,12 @@ def _picked(s: dict, prs: list) -> bool:
     return False
 
 
-def load_samples(cfg: Config, split: str, limit: int | None, prs: list | None = None,
-                 area: str | None = None) -> list[dict]:
+def load_samples(cfg: Config, split: str, limit: int | None, prs: list | None = None) -> list[dict]:
     """Samples of `split` in a fixed random order (a hash of PR and commit, so adding or removing
-    samples does not reorder the others), optionally only `prs`
-    (PR numbers or "PR:commit") or PRs whose files touch `area`. Samples whose gold is only
-    approvals are skipped unless named in `prs`."""
+    samples does not reorder the others), optionally only `prs` (PR numbers or "PR:commit"). Samples
+    whose gold is only approvals are skipped unless named in `prs`."""
     ss = [json.loads(l) for l in (cfg.data / "dataset" / "samples.jsonl").open()]
     ss = [s for s in ss if s["split"] == split and (_picked(s, prs) if prs else not s.get("approval_only"))]
-    if area:
-        meta = {p["pr"]: p for p in map(json.loads, (cfg.data / "dataset" / "prs.jsonl").open())}
-        ss = [s for s in ss if area in meta[s["pr"]]["areas"]]
     ss.sort(key=lambda s: hashlib.sha256(f"{s['pr']}-{s['commit']}".encode()).hexdigest())
     return ss[:limit] if limit else ss
 
@@ -75,7 +70,7 @@ def replay_one(cfg: Config, s: dict, reviewer: str, rep: int = 1) -> tuple[str, 
 
 
 def replay(reviewer: str = DEFAULT_REVIEWER, split: str = "test", limit: int | None = 10, workers: int = 4,
-           max_cost: float = 15.0, prs: list | None = None, area: str | None = None,
+           max_cost: float = 15.0, prs: list | None = None,
            cfg: Config | None = None, rep: int = 1, learned: bool = False) -> float:
     """Run `reviewer` over samples of `split` not run yet, stopping at `max_cost`; `rep` > 1: as that
     repeat (<reviewer>#r<rep>); `learned`: also the samples its rulebook came from (state.retain checks that
@@ -84,7 +79,7 @@ def replay(reviewer: str = DEFAULT_REVIEWER, split: str = "test", limit: int | N
     rules = parse_reviewer(reviewer)[1]
     if rules:
         load_rules(rules)  # fail now, not once per sample
-    ss = load_samples(cfg, split, limit, prs, area)
+    ss = load_samples(cfg, split, limit, prs)
     ev = rule_evidence(reviewer)
     leak = [s for s in ss if ev & set(s["gold_ids"])]
     if leak and not learned:  # its rulebook was distilled from these samples' own human comments
@@ -92,7 +87,7 @@ def replay(reviewer: str = DEFAULT_REVIEWER, split: str = "test", limit: int | N
               + ", ".join(f"#{s['pr']}-{s['commit'][:8]}" for s in leak))
         ss = [s for s in ss if s not in leak]
     todo = [s for s in ss if not cached(cfg, reviewer, run_path(cfg, reviewer, s, rep))]
-    note(f"{reviewer}" + (f"#r{rep}" if rep > 1 else "") + f" on {split}" + (f" ({area})" if area else "") + f": {len(ss)} samples, {len(ss) - len(todo)} cached, {len(todo)} to run "
+    note(f"{reviewer}" + (f"#r{rep}" if rep > 1 else "") + f" on {split}: {len(ss)} samples, {len(ss) - len(todo)} cached, {len(todo)} to run "
           f"(est ${len(todo) * est_cost(reviewer):.0f}, cap ${max_cost:.0f})")
     _, spent = capped_map(lambda s: replay_one(cfg, s, reviewer, rep), todo, workers, max_cost,
                           label=lambda s: f"#{s['pr']}-{s['commit'][:8]}",

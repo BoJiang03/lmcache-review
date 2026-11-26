@@ -192,6 +192,11 @@ How to write an entry (generalize, merge, add, revise):
   the "when" missed the situation; if it applied but judged nothing violated, the "expect" lacks the
   distinction the reviewer drew. Attaching it again as "evidence" of the same unchanged text will fail
   the same way.
+- A RETRY finding whose entry bundles several different asks (several kinds of change under one
+  "when" / "expect"), where the rule check raised another of its asks on that diff or none: the bundle
+  is checked as one rule and its other asks win. Split the finding's ask out as its own entry ("add",
+  "closest": the bundle, "why_new": that it was bundled with other asks and missed), and keep the bundle
+  as it is. Do not revise the bundle to cover it once more.
 - A finding whose earlier attempt says a broader entry was dropped because a replaced entry lost a proven
   case: generalize again, and make the new entry cover that case too (name the situation in "when", put
   it among the "examples"). Adding a narrow entry beside the old one is the fallback only when no single
@@ -605,6 +610,8 @@ entries with each other is left to the periodic whole-book compress. Changes:
   for, AS WRITTEN. It stays word for word; the others are retired in its favor. Prefer this to a merge
   whenever it holds: rewording an entry that already works is not tidying.
 - "contradict": two entries ask for opposite changes in the same situation. Do not change them; say why.
+A NEW entry split out of a bundle (its why_new says it was bundled with other asks) is neither
+merged nor absorbed back into it.
 List only changes; everything else stays as it is. Do not merge just to make the book smaller: every
 merge is checked later on all the comments the merged entries came from, and one that loses any of
 them is undone.

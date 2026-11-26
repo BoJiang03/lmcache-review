@@ -317,11 +317,12 @@ def run_lmreview(cfg: Config, s: dict, budget: Budget) -> dict:
         rc = next(x for x in d["runs"] if x.get("kind") == "rulecheck")
         with sample_workspace(cfg, s, "review", reviewer_context(REVIEWER)) as (wt, base):
             m = run_reviewer(wt, cached_pr(cfg, s["pr"], s["time"]), REVIEWER.removesuffix("-rc"))
+        kept, dcost = drop_repeats(m["findings"] or [], rc["findings"] or [])
         fs = None if m["findings"] is None else (
             [{**f, "id": f"1.{f.get('id') or k}", "support": 1} for k, f in enumerate(m["findings"], 1)]
             + [{**f, "id": f"2.{f.get('id') or k}", "support": 1}
-               for k, f in enumerate(drop_repeats(m["findings"], rc["findings"] or []), 1)])
-        r = {**m, "findings": fs, "cost": m["cost"] + rc["cost"], "reviewer": REVIEWER, "rc_from": RC_FROM,
+               for k, f in enumerate(kept, 1)])
+        r = {**m, "findings": fs, "cost": m["cost"] + rc["cost"] + dcost, "dedupe_cost": dcost, "reviewer": REVIEWER, "rc_from": RC_FROM,
              "runs": [{k: m[k] for k in ("findings", "error", "raw", "cost", "turns", "usage") if k in m}, rc]}
     else:
         with sample_workspace(cfg, s, "review", reviewer_context(REVIEWER)) as (wt, base):

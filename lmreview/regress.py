@@ -96,8 +96,8 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
     reviewer, plus `suffix`, e.g. "-rc") `reps` times; runs are cached under data/runs, so a rerun costs nothing.
 
     With a rule-only reviewer (suffix "-ro") the judge is targeted: it sees only the comments the cases
-    of a target ask about (all of them where a case checks a revision's invalid findings), and a run
-    with no findings is scored without a judge call.
+    of a target ask about (all of them where a case checks a revision's invalid findings, or always with
+    [vet] judge_all), and a run with no findings is scored without a judge call.
 
     `only` (rule-only reviewers): the rule check sees only these rule ids of `book`; such runs are cached
     apart, under the reviewer name plus "#o<hash of the ids>".
@@ -110,8 +110,11 @@ def replay(book: str, cases: list[tuple[str, dict]], reps: int, max_cost: float,
     reserved, est = [0.0], EST_RO if suffix.startswith("-ro") else EST_RUN * (2 if suffix else 1)  # expected cost of the reviews running now
     tag = run_tag(only)
     need: dict[str, set] = {}  # target -> comments its cases ask about (None: every comment)
+    judge_all = bool(get("vet", "judge_all"))  # judge against every point, as production runs are judged
     for _, t in cases:
-        if need.get(t["target"], set()) is not None:
+        if judge_all:
+            need[t["target"]] = None
+        elif need.get(t["target"], set()) is not None:
             need[t["target"]] = None if not t["comments"] else need.get(t["target"], set()) | {cid_of(c) for c in t["comments"]}
 
     def reviewer_of(t: dict) -> str:

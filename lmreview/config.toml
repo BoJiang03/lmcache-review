@@ -50,7 +50,7 @@ wide_margin = 1        # precision gate: a changed entry is reverted when, on th
 
 [learn]
 # Learn from what production misses (2026-11-26): round reviews with the production reviewer (current prompt and
-# book at [retain] effort, no -ms), and a point counts as found only when every confirm run finds it; one found in
+# book at [review] effort, no -ms: learning and use run the same effort), and a point counts as found only when every confirm run finds it; one found in
 # some runs goes to distill as flaky. false: the [hybrid] learning reviewer, a point found once is covered.
 production = true
 
@@ -60,7 +60,6 @@ production = true
 # on the samples of covered / resolved points `reps` times, judges against every point, and sends a point
 # caught in fewer than all runs back to to_distill.
 on = true
-effort = "medium"      # the production reviewer's effort (p...+<book>@medium-rc)
 reps = 2
 
 [hybrid]

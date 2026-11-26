@@ -27,9 +27,14 @@ effort = "high"      # splitting human comments into points and typing them (onc
 effort = "high"
 consolidate_drafts = 3 # tidy the whole book: drafts run in parallel; a change needs most of them to agree
 min_signal_prs = 2     # revise / retire on failure signals alone: they must come from this many PRs
-max_tries = 2          # distill attempts per comment before it goes to a person (needs_human)
 specificity = true     # written / changed entries pass specificity.py (identifier lint + a model check); one rewrite, else dropped / reverted
 max_requeues = 2       # times a parked (needs_human) comment gets another chance when the workflow changed (state.requeue_parked)
+
+[tiers]  # a point's severity tier (annotate.tier; none counts as minor) sets how hard it is learned
+max_tries = { "major+" = 3, minor = 2, nit = 1 }        # distill attempts before a person looks (needs_human)
+retain_need = { "major+" = 0, minor = 0, nit = 1 }      # retain runs that must catch it; 0 = every run
+retain_requeues = { "major+" = 2, minor = 1, nit = 0 }  # times retain sends a missed point back to distill; then
+                                                        # major+ goes to a person, minor / nit stay learned, marked "unretained"
 
 [vet]
 side_per_entry = 2     # side effects: source comments replayed per affected entry

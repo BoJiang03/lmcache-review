@@ -44,7 +44,17 @@ from .progress import note, step
 
 STATE = pathlib.Path(os.environ.get("LMREVIEW_STATE") or get("paths", "state")
                      or pathlib.Path(__file__).resolve().parent / "state")
-MAX_TRIES = int(get("distill", "max_tries"))  # distill attempts per comment before it goes to a person
+MAX_TRIES = max(get("tiers", "max_tries").values())  # the most distill attempts any point gets (see tier_limit)
+
+
+def row_tier(r: dict, sev: dict[str, str]) -> str:
+    """The severity tier of a ledger row; a point without a severity counts as minor."""
+    return tier(sev.get(str(r["comment"]))) or "minor"
+
+
+def tier_limit(key: str, r: dict, sev: dict[str, str]) -> int:
+    """[tiers] `key` for row `r`'s tier."""
+    return int(get("tiers", key)[row_tier(r, sev)])
 
 LEDGER = """ledger.jsonl rows: {"comment" (a point key: the comment id, or "<comment id>:<k>" for point k
 of a comment that makes several, see annotate.py), "pr", "commit", "status", "reviewer" (whose run judged it),
@@ -53,9 +63,10 @@ confirmed by a second run (confirm_misses) also has "hits" ("0/2": missed twice;
 run) and "flaky": true when found in some run, or "unconfirmed": true when the second run could not be made.
 status: covered (the reviewer found it without help) | to_distill | resolved (a book entry makes the
 reviewer find it, checked by vet) | not_rulable (distill, two calls agreed: context / not an
-issue / declined by the team) | needs_human (MAX_TRIES distill attempts failed, only the PR author
+issue / declined by the team) | needs_human ([tiers] max_tries distill attempts failed, only the PR author
 objected to it: contested, or the two attribution calls disagreed: unclear).
-A row's severity is not stored: it is its point's annotation (annotate.severities), and its tier
+retain adds "retained" ({"reviewer", "hits", "date"}) to a row caught often enough, or "unretained" to a
+minor / nit row past its retain requeues. A row's severity is not stored: it is its point's annotation (annotate.severities), and its tier
 (annotate.tier: major+ / minor / nit) is what status and retain report by."""
 STATUSES = ("covered", "to_distill", "resolved", "not_rulable", "needs_human")
 _VER = re.compile(r"v\d{4}")
@@ -841,7 +852,7 @@ UNTESTED = "its entry was kept but not tested on this comment"
 
 
 def counted_tries(r: dict) -> int:
-    """Failed distill attempts that count toward MAX_TRIES: those since the last requeue whose entry vet
+    """Failed distill attempts that count toward [tiers] max_tries: those since the last requeue whose entry vet
     actually tested on the comment (an untested one says nothing about whether the comment is learnable)."""
     return sum(1 for t in r.get("tries", [])[r.get("requeued_at", 0):] if t.get("why") != UNTESTED)
 
@@ -849,10 +860,11 @@ def counted_tries(r: dict) -> int:
 def vet_step(max_cost: float | None = None, reps: int | None = None, everything: bool = False, cfg: Config | None = None) -> str:
     """Vet the candidate against the book in use. What works becomes the next version (the rest is
     dropped or reverted, see vet._passing); each comment of the candidate is then resolved, or gets a
-    failed attempt (needs_human after MAX_TRIES). INCOMPLETE (cost cap) keeps the candidate for a rerun."""
+    failed attempt (needs_human after its tier's max_tries). INCOMPLETE (cost cap) keeps the candidate for a rerun."""
     from .vet import vet
     max_cost = get("budget", "vet") if max_cost is None else max_cost
     reps = reps or int(get("vet", "reps"))
+    sev = severities(cfg or Config())
     with lock():
         c = candidate()
         if not c:
@@ -927,7 +939,7 @@ def vet_step(max_cost: float | None = None, reps: int | None = None, everything:
             if seen:
                 tr["rulecheck"] = [dict(v, why=str(v.get("why") or "")[:300]) for v in seen[-2:]]
             r.setdefault("tries", []).append(tr)
-            if counted_tries(r) >= MAX_TRIES:
+            if counted_tries(r) >= tier_limit("max_tries", r, sev):
                 r["status"] = "needs_human"
                 r["parked"] = {"by": "vet", "prompt": distill_prompt_id(), "date": _now()[:10]}
                 out["needs_human"].append(i)
@@ -1085,7 +1097,9 @@ def retain_step(prs: set[int] | None = None, max_cost: float | None = None, reps
     judge, and send each row caught in fewer than all runs back to to_distill. Only resolved rows by default:
     a covered one has no entry behind it, so a rule check cannot catch it, with a try saying how often
     it was caught and what the runs made of it (distill reads it). A row sent back more than
-    [distill] max_requeues times by retain (its own count) goes to a person (needs_human). Rows caught every time get "retained"."""
+    How often it must be caught and how often it goes back depend on its tier ([tiers] retain_need,
+    retain_requeues): past its requeues a major+ row goes to a person (needs_human); a minor / nit row stays
+    learned, marked "unretained". Rows caught often enough get "retained"."""
     from .replay import replay
     from .runs import hits
     from .score import judge_runs
@@ -1109,7 +1123,8 @@ def retain_step(prs: set[int] | None = None, max_cost: float | None = None, reps
     for k in range(1, reps + 1):
         cost += judge_runs(cfg, rv, nums, "train", max(0.0, max_cost - cost), rep=k)[1]
     book = load_book(vname(head()))
-    out = {"retained": [], "requeued": [], "needs_human": [], "unknown": []}
+    out = {"retained": [], "requeued": [], "unretained": [], "needs_human": [], "unknown": []}
+    sev = severities(cfg)
     with lock():
         rows = ledger()
         for r0 in todo:
@@ -1120,7 +1135,8 @@ def retain_step(prs: set[int] | None = None, max_cost: float | None = None, reps
             if n < reps:
                 out["unknown"].append(r["comment"])
                 continue
-            if h == n:
+            if h >= (tier_limit("retain_need", r, sev) or n):
+                r.pop("unretained", None)
                 r["retained"] = {"reviewer": rv, "hits": f"{h}/{n}", "date": _now()[:10]}
                 out["retained"].append(r["comment"])
                 continue
@@ -1129,7 +1145,11 @@ def retain_step(prs: set[int] | None = None, max_cost: float | None = None, reps
             r.setdefault("tries", []).append({"book": vname(head()), "entries": es, "result": "not retained",
                                               "why": why, "date": _now()[:10]})
             r.pop("retained", None)
-            if r.get("retain_requeues", 0) >= MAX_REQUEUES:  # its own count: requeue_parked's is for parked rows
+            spent = r.get("retain_requeues", 0) >= tier_limit("retain_requeues", r, sev)  # its own count, not requeue_parked's
+            if spent and row_tier(r, sev) != "major+":  # not worth a person: stays learned, the try records the miss
+                r["unretained"] = {"reviewer": rv, "hits": f"{h}/{n}", "date": _now()[:10]}
+                out["unretained"].append(r["comment"])
+            elif spent:
                 r.update(status="needs_human", parked={"by": "retain", "prompt": distill_prompt_id(), "date": _now()[:10]})
                 out["needs_human"].append(r["comment"])
             else:  # the not-retained try is information for distill, not a failed attempt: requeued_at is after it
@@ -1138,7 +1158,6 @@ def retain_step(prs: set[int] | None = None, max_cost: float | None = None, reps
                 out["requeued"].append(r["comment"])
                 note(f"  not retained #{r['pr']}@{r['commit'][:8]} c{r['comment']} ({h}/{n})", "change")
         save_ledger(rows)
-        sev = severities(cfg)
         tiers = {t or "none": f"{sum(tier(sev.get(str(c))) == t for c in out['retained'])}/"
                               f"{sum(tier(sev.get(str(c))) == t for v in out.values() for c in v)}" for t in TIERS + (None,)}
         log("retain", reviewer=rv, cost=round(cost, 2), **{k: len(v) for k, v in out.items()}, by_tier=tiers)

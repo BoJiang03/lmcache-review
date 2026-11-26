@@ -40,7 +40,7 @@ book     = vet(book, new_book, human_comments)           # keep only what works 
                  resolved          not_rulable        failed attempt
               (next version)    (context, not an     (back to to_distill
                                  issue, declined)     with the reason;
-                                                      after 2: needs_human)
+                                                      after 3/2/1 by tier: needs_human)
 ```
 
 - **A sample** is one PR commit a human reviewed. Its human comments are the ground truth.

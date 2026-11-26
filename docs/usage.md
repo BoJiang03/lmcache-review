@@ -89,8 +89,13 @@ review ─> judge ─┬─> covered        (the reviewer found it)
                  └─> to_distill ─distill─> candidate ─vet─┬─> resolved     (an entry makes the reviewer find it)
                        ▲     │                            └─> failed attempt ─┐
                        │     └─> not_rulable (context / not an issue / declined)
-                       └──────────── tries < 2 ───────────────────────────────┤
-                                                       tries = 2 ─> needs_human
+                       └──────── tries < max_tries ───────────────────────────┤
+                                          tries = max_tries ─> needs_human
+
+Severity tiers (`[tiers]`, from the point's annotation): major+ / minor / nit get 3 / 2 / 1 distill attempts.
+retain counts a major+ or minor point learned when every run catches it, a nit when one does; a missed point
+goes back to distill 2 / 1 / 0 times, then a major+ one goes to a person and a minor / nit one stays
+learned, marked `unretained`. `lmreview status` and retain report by tier.
 ```
 
 ### Reviewer names
@@ -119,7 +124,7 @@ they reach it, and `0` prints the plan only.
 | `lmreview judge [--prs N ...]` | Judge the current reviewer's runs and file the comments in the ledger. |
 | `lmreview distill [--prs N ...] [--limit N] [--compress]` | `to_distill` comments to a candidate book: attribute, write, consolidate. |
 | `lmreview vet [--reps N] [--all]` | Replay where the candidate differs from the book in use; promote what works as the next version, record what failed. `--all` replays every base entry. |
-| `lmreview retain [--prs N ...] [--samples PR:c ...] [--reps N] [--covered] [--reviewer R]` | Re-run the rule check on the samples of covered / resolved points; a point not caught every time goes back to `to_distill`. |
+| `lmreview retain [--prs N ...] [--samples PR:c ...] [--reps N] [--covered] [--reviewer R]` | Re-run the rule check on the samples of covered / resolved points; a point not caught often enough for its tier goes back to `to_distill` (see severity tiers). |
 | `lmreview compress [--stage trim\|merge] [--repair]` | Make the book in use smaller as a candidate; `vet` keeps what loses no proven case. |
 | `lmreview status` | Book in use, candidate, ledger counts. |
 | `lmreview init BOOK.jsonl [--note T]` | Start the state from a rulebook file as v0001 (an empty file: no entries). |

@@ -514,11 +514,13 @@ def clear_candidate() -> None:
 
 
 def init(book: str, note: str = "") -> int:
-    """Start the state from rulebook rules/<book>.jsonl as v0001 (only when there is no state yet)."""
+    """Start the state as v0001 (only when there is no state yet) from rulebook `book`: a .jsonl path (an
+    empty file starts from no entries), or a name under rules/."""
     if head():
         raise RuntimeError(f"state already at {vname(head())}")
+    p = pathlib.Path(book) if book.endswith(".jsonl") else RULES / f"{book}.jsonl"
     with lock():
-        return new_version(load_book(book), None, by="init", **{"from": f"rules/{book}.jsonl"}, note=note)
+        return new_version([json.loads(l) for l in p.open() if l.strip()], None, by="init", **{"from": str(p)}, note=note)
 
 
 def discard() -> str:

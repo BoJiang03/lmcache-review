@@ -122,7 +122,7 @@ they reach it, and `0` prints the plan only.
 | `lmreview retain [--prs N ...] [--samples PR:c ...] [--reps N] [--covered] [--reviewer R]` | Re-run the rule check on the samples of covered / resolved points; a point not caught every time goes back to `to_distill`. |
 | `lmreview compress [--stage trim\|merge] [--repair]` | Make the book in use smaller as a candidate; `vet` keeps what loses no proven case. |
 | `lmreview status` | Book in use, candidate, ledger counts. |
-| `lmreview init BOOK [--note T]` | Start the state from `lmreview/rules/BOOK.jsonl` as v0001. |
+| `lmreview init BOOK.jsonl [--note T]` | Start the state from a rulebook file as v0001 (an empty file: no entries). |
 | `lmreview rollback vN` / `discard` | Make vN the book in use again as a new version / drop the candidate. |
 
 - `vet` promotes what works and drops or reverts the rest. A failed comment keeps its attempt (book,

@@ -1,4 +1,4 @@
-<title>lmreview 对比 /pr-review 和 /code-review</title>
+<title>lmreview vs /pr-review and /code-review</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&family=JetBrains+Mono:wght@400&display=swap">
 <style>
@@ -41,9 +41,205 @@ a{color:var(--ours)} td.o{color:var(--ours);font-weight:600} td.s{color:var(--sk
 ul{margin:4px 0 0;padding-left:20px} li{margin:3px 0}
 code{font-family:var(--mono);font-size:.85em}
 .note{color:var(--muted);font-size:.88rem}
+.langbar{max-width:860px;margin:0 auto 12px;display:flex;justify-content:flex-end}
+.langbar button{font:inherit;font-size:.85rem;padding:5px 12px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--fg);cursor:pointer}
 .grp{font-family:var(--display);font-size:.95rem;margin:12px 0 6px;color:var(--muted)}
 </style>
-<main>
+<div class="langbar"><button id="lang" type="button">中文</button></div>
+<main id="en" lang="en">
+<header>
+<h1>lmreview vs /pr-review and /code-review</h1>
+<p class="sub">20 historical PR samples: 10 learned, 10 unlearned. All three run on Opus 5.5 at medium effort, replayed offline, and graded by the same blind judge. 2026-11-26.</p>
+</header>
+
+<section>
+<h2>The three reviewers</h2>
+<div class="tw"><table>
+<thead><tr><th>Name</th><th>Source</th><th>Version used</th></tr></thead>
+<tbody>
+<tr><td><b>lmreview</b></td><td style="text-align:left;white-space:normal">Our own reviewer (repo <code>BoJiang03/lmcache-review</code>). Besides the main review it runs a rule check against a rulebook learned from LMCache maintainers' past review comments.</td><td style="text-align:left;white-space:normal">Production config <code>p990f2d2e+v0032@medium-rc</code>: main review on Opus medium; rule check on medium, checking each of the 49 rules in rulebook v0032, in parallel with the main review.</td></tr>
+<tr><td><b>/pr-review</b></td><td style="text-align:left;white-space:normal">The Claude Code skill shipped in the LMCache repo: <code>.claude/skills/pr-review/SKILL.md</code>, which reads <code>docs/coding_standards.md</code>. Written by LMCache maintainers.</td><td style="text-align:left;white-space:normal">The version on LMCache dev at d0959e0 (2026-11-09): SKILL.md last changed in bed12fc (2026-11-08), coding_standards.md in 5b9db86 (2026-11-06). Every sample used this version, not the one current at the PR's time.</td></tr>
+<tr><td><b>/code-review</b></td><td style="text-align:left;white-space:normal">The skill built into Claude Code. It works in any repo as <code>/code-review</code> and knows nothing specific to LMCache.</td><td style="text-align:left;white-space:normal">The version in Claude Code 2.1.332, run as <code>/code-review medium</code>, the way a developer reviews local changes: the PR's diff as uncommitted changes, with no PR description, past comments or coding standards.</td></tr>
+</tbody></table></div>
+</section>
+
+<section>
+<h2>Verdict: three-way comparison</h2>
+<p class="sub">Cost and time are per-sample averages.</p>
+<div class="tw"><table>
+<thead><tr><th></th><th>lmreview</th><th>/pr-review</th><th>/code-review</th></tr></thead>
+<tbody>
+<tr><td colspan="4" style="text-align:left;color:var(--muted)">10 learned PRs (47 human points)</td></tr>
+<tr><td>Recall</td><td class="o win">83%</td><td class="s">51%</td><td class="c">28%</td></tr>
+<tr><td>Cost</td><td class="o">$0.96</td><td class="s">$0.87</td><td class="c win">$0.59</td></tr>
+<tr><td>Time</td><td class="o">90 s</td><td class="s">118 s</td><td class="c win">87 s</td></tr>
+<tr><td colspan="4" style="text-align:left;color:var(--muted)">10 unlearned PRs (31 human points)</td></tr>
+<tr><td>Recall</td><td class="o win">71%</td><td class="s">65%</td><td class="c">42%</td></tr>
+<tr><td>Cost</td><td class="o">$1.16</td><td class="s">$1.18</td><td class="c win">$0.78</td></tr>
+<tr><td>Time</td><td class="o win">114 s</td><td class="s">159 s</td><td class="c">127 s</td></tr>
+</tbody></table></div>
+<ul style="margin-top:12px">
+<li><b>Recall</b>: lmreview is first in both groups, with the widest lead on learned PRs (83% vs 51% and 28%). Every point the other two caught, lmreview caught too. All three tie on blockers; the gap is at major and below.</li>
+<li><b>Cost</b>: /code-review is cheapest; it reviews shallowly. lmreview and /pr-review are close: $0.09 more on learned PRs, $0.02 less on unlearned.</li>
+<li><b>Time</b>: lmreview and /code-review are close; /pr-review is slowest.</li>
+<li><b>Against the target</b> (match on unlearned, beat on learned, for recall, cost and time alike): vs /pr-review, met except for the $0.09 extra cost on learned PRs. Vs /code-review, far ahead on recall, not yet matched on cost.</li>
+</ul>
+</section>
+
+<section>
+<h2>Recall of human review points</h2>
+<div class="legend"><span class="lo">lmreview</span><span class="ls">/pr-review</span><span class="lc">/code-review</span></div>
+<div class="bars">
+<div class="grp" style="grid-column:1/-1">Learned (47 points)</div>
+<span>lmreview (main review + rule check)</span><div class="bar b-o" style="width:83%"></div><span>39/47 · 83%</span>
+<span>lmreview (main review)</span><div class="bar b-o" style="width:64%;opacity:.55"></div><span>30/47 · 64%</span>
+<span>/pr-review</span><div class="bar b-s" style="width:51%"></div><span>24/47 · 51%</span>
+<span>/code-review</span><div class="bar b-c" style="width:28%"></div><span>13/47 · 28%</span>
+<div class="grp" style="grid-column:1/-1">Unlearned (31 points)</div>
+<span>lmreview (main review + rule check)</span><div class="bar b-o" style="width:71%"></div><span>22/31 · 71%</span>
+<span>lmreview (main review)</span><div class="bar b-o" style="width:65%;opacity:.55"></div><span>20/31 · 65%</span>
+<span>/pr-review</span><div class="bar b-s" style="width:65%"></div><span>20/31 · 65%</span>
+<span>/code-review</span><div class="bar b-c" style="width:42%"></div><span>13/31 · 42%</span>
+</div>
+<div class="tw" style="margin-top:14px"><table>
+<thead><tr><th>Points only one side caught</th><th>Learned</th><th>Unlearned</th></tr></thead>
+<tbody>
+<tr><td>lmreview, not /pr-review</td><td class="o">15 (major 5, minor 4, nit 6)</td><td class="o">2 (minor 2)</td></tr>
+<tr><td>/pr-review, not lmreview</td><td>0</td><td>0</td></tr>
+<tr><td>lmreview, not /code-review</td><td class="o">26 (major 8, minor 9, nit 9)</td><td class="o">9 (major 3, minor 6)</td></tr>
+<tr><td>/code-review, not lmreview</td><td>0</td><td>0</td></tr>
+<tr><td>/pr-review, not /code-review</td><td class="s">14 (major 5, minor 6, nit 3)</td><td class="s">7 (major 3, minor 4)</td></tr>
+<tr><td>/code-review, not /pr-review</td><td class="c">3 (major 2, minor 1)</td><td>0</td></tr>
+</tbody></table></div>
+<p class="note" style="margin-top:8px">Questions in human comments are not counted.</p>
+</section>
+
+<section>
+<h2>Recall by severity</h2>
+<div class="tw"><table>
+<thead><tr><th>Severity</th><th>lmreview</th><th>/pr-review</th><th>/code-review</th></tr></thead>
+<tbody>
+<tr><td colspan="4" style="text-align:left;color:var(--muted)">Learned</td></tr>
+<tr><td>major</td><td class="o win">13/14</td><td class="s">8/14</td><td class="c">5/14</td></tr>
+<tr><td>minor</td><td class="o win">17/21</td><td class="s">13/21</td><td class="c">8/21</td></tr>
+<tr><td>nit</td><td class="o win">9/12</td><td class="s">3/12</td><td class="c">0/12</td></tr>
+<tr><td colspan="4" style="text-align:left;color:var(--muted)">Unlearned</td></tr>
+<tr><td>blocker</td><td class="o">4/5</td><td class="s">4/5</td><td class="c">4/5</td></tr>
+<tr><td>major</td><td class="o">5/6</td><td class="s">5/6</td><td class="c">2/6</td></tr>
+<tr><td>minor</td><td class="o win">10/14</td><td class="s">8/14</td><td class="c">4/14</td></tr>
+<tr><td>nit</td><td class="o">3/6</td><td class="s">3/6</td><td class="c">3/6</td></tr>
+<tr><td colspan="4" style="text-align:left;color:var(--muted)">Total</td></tr>
+<tr><td>blocker</td><td class="o">4/5</td><td class="s">4/5</td><td class="c">4/5</td></tr>
+<tr><td>major</td><td class="o win">18/20</td><td class="s">13/20</td><td class="c">7/20</td></tr>
+<tr><td>minor</td><td class="o win">27/35</td><td class="s">21/35</td><td class="c">12/35</td></tr>
+<tr><td>nit</td><td class="o win">12/18</td><td class="s">6/18</td><td class="c">3/18</td></tr>
+</tbody></table></div>
+<p class="note">The learned group has no blocker-level human comments. On unlearned PRs lmreview leads /pr-review only at minor; on learned PRs it leads at every level, most at nit (9/12 vs 3/12), which is the maintainers' taste it learned from their comments.</p>
+</section>
+
+<section>
+<h2>Cost and speed (per-sample average)</h2>
+<div class="tw"><table>
+<thead><tr><th></th><th>lmreview</th><th>/pr-review</th><th>/code-review</th></tr></thead>
+<tbody>
+<tr><td colspan="4" style="text-align:left;color:var(--muted)">Learned</td></tr>
+<tr><td>Cost</td><td class="o">$0.96</td><td class="s">$0.87</td><td class="c win">$0.59</td></tr>
+<tr><td>&nbsp;&nbsp;of which</td><td style="white-space:normal">main review $0.58, rule check $0.36, dedupe $0.01</td><td style="white-space:normal">JSON extraction $0.10</td><td style="white-space:normal">JSON extraction $0.08</td></tr>
+<tr><td>Time</td><td class="o">90 s</td><td class="s">118 s</td><td class="c win">87 s</td></tr>
+<tr><td colspan="4" style="text-align:left;color:var(--muted)">Unlearned</td></tr>
+<tr><td>Cost</td><td class="o">$1.16</td><td class="s">$1.18</td><td class="c win">$0.78</td></tr>
+<tr><td>&nbsp;&nbsp;of which</td><td style="white-space:normal">main review $0.75, rule check $0.39, dedupe $0.02</td><td style="white-space:normal">JSON extraction $0.11</td><td style="white-space:normal">JSON extraction $0.09</td></tr>
+<tr><td>Time</td><td class="o win">114 s</td><td class="s">159 s</td><td class="c">127 s</td></tr>
+</tbody></table></div>
+<p class="note">lmreview runs the main review and the rule check in parallel, so its time is the longer of the two. /pr-review and /code-review write Markdown; one small call turns it into JSON, and that cost is counted against them.</p>
+</section>
+
+<section>
+<h2>The 20 PRs</h2>
+<p class="sub">Points = review points in the human comments that a reviewer should raise (questions excluded). The three recall columns count the points each side caught; green marks the best on that PR. Cost is the review cost for that PR.</p>
+<div class="tw"><table>
+<thead><tr><th>PR</th><th style="text-align:left">Title</th><th>Group</th><th>Points</th><th>lmreview</th><th>/pr-review</th><th>/code-review</th><th>lmreview cost</th><th>/pr-review cost</th><th>/code-review cost</th></tr></thead>
+<tbody>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/3210" target="_blank" rel="noopener">#3210</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Feature][RawBlock] Add multi-device sharding to the MP L2 adapter</td><td>learned</td><td>5</td><td class="o win">5</td><td class="s">3</td><td class="c">2</td><td>$1.10</td><td>$1.00</td><td>$0.51</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/3413" target="_blank" rel="noopener">#3413</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Perf] Avoid redundant PCIe transfer on leader rank during retrieve</td><td>learned</td><td>2</td><td class="o win">2</td><td class="s">1</td><td class="c">0</td><td>$0.57</td><td>$0.79</td><td>$0.50</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/3476" target="_blank" rel="noopener">#3476</a></td><td style="text-align:left;white-space:normal;min-width:16em">feat: Add MP server autostart for vLLM connector</td><td>learned</td><td>4</td><td class="o win">4</td><td class="s">0</td><td class="c">2</td><td>$1.03</td><td>$0.81</td><td>$0.58</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/3638" target="_blank" rel="noopener">#3638</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Bug] async_save_bytes_to_disk: add exception safety for write failures</td><td>learned</td><td>3</td><td class="o win">3</td><td class="s win">3</td><td class="c win">3</td><td>$0.48</td><td>$0.50</td><td>$0.40</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/3853" target="_blank" rel="noopener">#3853</a></td><td style="text-align:left;white-space:normal;min-width:16em">[GPU connector] Allow non-zero storage_offset in dim-0-padded layout</td><td>learned</td><td>2</td><td class="o win">2</td><td class="s win">2</td><td class="c">0</td><td>$0.62</td><td>$0.69</td><td>$0.51</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/3869" target="_blank" rel="noopener">#3869</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Prefetch sliding window 3/3] Load only KV cache in sliding window</td><td>learned</td><td>17</td><td class="o win">10</td><td class="s">6</td><td class="c">3</td><td>$1.83</td><td>$1.66</td><td>$1.10</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/3877" target="_blank" rel="noopener">#3877</a></td><td style="text-align:left;white-space:normal;min-width:16em">[MP][MUSA] add stage4-2 MP IPC event support</td><td>learned</td><td>4</td><td class="o win">4</td><td class="s win">4</td><td class="c">0</td><td>$1.61</td><td>$1.42</td><td>$0.61</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/4203" target="_blank" rel="noopener">#4203</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Serde] add ObjectKey to parameter</td><td>learned</td><td>2</td><td class="o win">1</td><td class="s win">1</td><td class="c win">1</td><td>$1.12</td><td>$0.68</td><td>$0.72</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/4367" target="_blank" rel="noopener">#4367</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Fix] Align LazyMemoryAllocator's buffer base to align_bytes</td><td>learned</td><td>3</td><td class="o win">3</td><td class="s">1</td><td class="c">0</td><td>$0.57</td><td>$0.55</td><td>$0.48</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/4687" target="_blank" rel="noopener">#4687</a></td><td style="text-align:left;white-space:normal;min-width:16em">fix(mp): detect server restarts from heartbeat tokens</td><td>learned</td><td>5</td><td class="o win">5</td><td class="s">3</td><td class="c">2</td><td>$0.71</td><td>$0.64</td><td>$0.50</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/4729" target="_blank" rel="noopener">#4729</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Refactor]: vLLM LBHNC KVLayout metadata</td><td>unlearned</td><td>3</td><td class="o win">2</td><td class="s win">2</td><td class="c">1</td><td>$2.42</td><td>$2.42</td><td>$1.55</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5045" target="_blank" rel="noopener">#5045</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Feature] Add raw-block I/O attempt metrics</td><td>unlearned</td><td>6</td><td class="o win">3</td><td class="s win">3</td><td class="c">0</td><td>$1.34</td><td>$1.47</td><td>$0.96</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5053" target="_blank" rel="noopener">#5053</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Perf][MP] Poll lookup status without blocking the scheduler</td><td>unlearned</td><td>4</td><td class="o win">4</td><td class="s win">4</td><td class="c">1</td><td>$0.93</td><td>$1.22</td><td>$0.61</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5076" target="_blank" rel="noopener">#5076</a></td><td style="text-align:left;white-space:normal;min-width:16em">[feat][vllm] publish MP connector KV events</td><td>unlearned</td><td>2</td><td class="o win">1</td><td class="s win">1</td><td class="c win">1</td><td>$0.94</td><td>$1.20</td><td>$0.61</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5159" target="_blank" rel="noopener">#5159</a></td><td style="text-align:left;white-space:normal;min-width:16em">feat: step1-support pluggable MP server modules</td><td>unlearned</td><td>2</td><td class="o">0</td><td class="s">0</td><td class="c">0</td><td>$1.53</td><td>$1.46</td><td>$1.08</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5268" target="_blank" rel="noopener">#5268</a></td><td style="text-align:left;white-space:normal;min-width:16em">Fix scratch group blocking store metadata in hybrid models</td><td>unlearned</td><td>2</td><td class="o win">2</td><td class="s win">2</td><td class="c win">2</td><td>$0.69</td><td>$0.60</td><td>$0.54</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5283" target="_blank" rel="noopener">#5283</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Refactor] Route GDS stream operations through platform</td><td>unlearned</td><td>4</td><td class="o win">4</td><td class="s win">4</td><td class="c win">4</td><td>$0.88</td><td>$0.86</td><td>$0.65</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5478" target="_blank" rel="noopener">#5478</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Bugfix][MP] Prevent cache-load failures from stale lookup cleanup</td><td>unlearned</td><td>2</td><td class="o">0</td><td class="s">0</td><td class="c">0</td><td>$1.33</td><td>$1.23</td><td>$0.78</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5527" target="_blank" rel="noopener">#5527</a></td><td style="text-align:left;white-space:normal;min-width:16em">[serde] Add fused scaled FP8 KV serializer</td><td>unlearned</td><td>4</td><td class="o win">4</td><td class="s win">4</td><td class="c win">4</td><td>$0.83</td><td>$0.75</td><td>$0.39</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5981" target="_blank" rel="noopener">#5981</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Example] Add CPU-only server Kubernetes example</td><td>unlearned</td><td>2</td><td class="o win">2</td><td class="s">0</td><td class="c">0</td><td>$0.77</td><td>$0.58</td><td>$0.66</td></tr>
+</tbody></table></div>
+<p class="note">How samples were picked. Learned: training PRs whose human comments are all in the ledger, with at least 2 covered by rules. Unlearned: test PRs with no human comment in the ledger (#4729, the first sample we ran, is also in this group). All samples have at least 2 human points and at most 2,500 changed lines, one sample per PR, spread across modules where possible.</p>
+</section>
+
+<section>
+<h2>Missed by all three</h2>
+<p>lmreview missed 17 points, and /pr-review and /code-review missed all 17 as well. No point was caught by another reviewer and missed by lmreview.</p>
+<ul>
+<li><b>1 blocker</b>: after rebasing on dev, interface signatures no longer match and mypy fails (#5478). This needs the base branch's state at the time, which offline replay does not have.</li>
+<li><b>2 major</b>: a race where a key can be evicted between <code>reserve_write</code> and <code>reserve_read</code> (#3869); a flaky test caused by an async L2 read lock (#5478).</li>
+<li><b>8 minor</b>: mostly trade-offs that need project context, such as splitting into a separate PR, moving a function to its own file, two overlapping metrics, two sentences in a removed docstring that should stay, and not importing vllm in unit tests.</li>
+<li><b>6 nit</b>: matters of taste, such as renames (<code>num_groups</code> → <code>num_object_groups</code>, <code>rust_io</code>), using <code>itertools.groupby</code>, moving an import to the top, and reverting an unneeded rename.</li>
+</ul>
+<p class="note">#3869 alone accounts for 7. Missed comments feed the learning loop and become rules; that is where the higher recall on learned PRs comes from.</p>
+</section>
+
+<section>
+<h2>Blockers and majors no human raised</h2>
+<div class="tw"><table>
+<thead><tr><th></th><th>Level</th><th>Reported</th><th>Not raised by humans</th><th>Judged valid</th></tr></thead>
+<tbody>
+<tr><td>lmreview</td><td>blocker</td><td class="o">12</td><td class="o">8</td><td class="o">7</td></tr>
+<tr><td>lmreview</td><td>major</td><td class="o">78</td><td class="o">57</td><td class="o">55</td></tr>
+<tr><td>/pr-review</td><td>error (as major)</td><td class="s">56</td><td class="s">45</td><td class="s">45</td></tr>
+<tr><td>/code-review</td><td>important (as major)</td><td class="c">63</td><td class="c">57</td><td class="c">40</td></tr>
+</tbody></table></div>
+<p class="note">/pr-review has only error / warning / info, and /code-review only important / pre_existing / nit; neither has a blocker level, so each gets one row compared as major. "Judged valid" is the AI judge's call, not gold, and still needs a human check. Share judged valid: lmreview 95% (62/65), /pr-review 100% (45/45), /code-review 70% (40/57).</p>
+<div class="tw" style="margin-top:12px"><table>
+<thead><tr><th>What the blockers/majors are about</th><th>lmreview</th><th>/pr-review</th><th>/code-review</th></tr></thead>
+<tbody>
+<tr><td>Total</td><td class="o">90</td><td class="s">56</td><td class="c">63</td></tr>
+<tr><td>Words like crash, leak, race, corrupt</td><td class="o">48</td><td class="s">28</td><td class="c">39</td></tr>
+<tr><td>Follow-up on an earlier review's unfixed issue</td><td class="o">10</td><td class="s">0</td><td class="c">4</td></tr>
+<tr><td>Mentions vLLM</td><td class="o">20</td><td class="s">11</td><td class="c">17</td></tr>
+<tr><td>Standards (docstring, typing, naming, import)</td><td class="o">11</td><td class="s">12</td><td class="c">7</td></tr>
+</tbody></table></div>
+<p style="margin-top:10px">lmreview reports the most deep issues, for four reasons:</p>
+<ul>
+<li><b>Correctness first</b>: the prompt asks for every real problem, correctness first, and a regression test for each bug found.</li>
+<li><b>Follows up earlier reviews</b>: an issue raised before and still not fixed in this revision is reported again.</li>
+<li><b>Can read vLLM source</b>: to check the PR's assumptions about vLLM behavior.</li>
+<li><b>Severity levels</b>: blocker/major is reserved for wrong behavior. On standards issues the three are about even.</li>
+</ul>
+<p class="note">/code-review also hunts for bugs and reports plenty, but about 30% are judged invalid; without the PR description and project standards it has more false alarms.</p>
+</section>
+
+<section>
+<h2>Configuration and side findings</h2>
+<ul>
+<li><b>lmreview</b>: <code>p990f2d2e+v0032@medium-rc</code>. Main review on Opus medium, with the /pr-review checklist, a design-doc check and batched reads, JSON output only. Rule check on medium, in parallel with the main review, without tools. Then one small Sonnet call removes rule-check findings that repeat a main-review finding.</li>
+<li><b>/pr-review</b>: <code>.claude/skills/pr-review/SKILL.md</code> plus <code>docs/coding_standards.md</code> from LMCache dev d0959e0, run offline.</li>
+<li><b>/code-review</b>: <code>/code-review medium</code>. Severity mapping: important → major, pre_existing → minor, nit → nit.</li>
+<li><b>High to medium</b> (6 samples, measured before this config): lmreview recall 70% → 70% with 25% lower cost; /pr-review recall 59% → 49%.</li>
+<li><b>Dedupe</b>: about $0.015 per PR. Checked one by one when the rule check ran on low: 25 of 72 findings removed, no human-point hit lost.</li>
+</ul>
+<p class="note" style="margin-top:8px">Limits: only 10 samples per group; the unlearned PRs are all newer (#5000 and up) and the learned ones are #3200–#4700, so the gap between groups is mixed with time; #3869 alone has 17 of the learned group's points; grading is a blind AI judge. Data in <code>data/skill_compare/</code>, script <code>scripts/skill_compare.py</code>.</p>
+</section>
+</main>
+
+<main id="zh" lang="zh-CN" hidden>
 <header>
 <h1>lmreview 对比 /pr-review 和 /code-review</h1>
 <p class="sub">20 个历史 PR 样本：学过的 10 个，没学过的 10 个。三方都用 Opus 5.5 medium，离线回放，同一个盲评判分器。2026-11-26。</p>
@@ -235,3 +431,9 @@ code{font-family:var(--mono);font-size:.85em}
 <p class="note" style="margin-top:8px">局限：每组只有 10 个样本；没学过的组都是较新的 PR（#5000 以后），学过的组是 #3200–#4700，所以两组之间的差异还混有时间因素；#3869 一个样本就占学过组 17 个要点；判分是 AI 盲评。数据在 <code>data/skill_compare/</code>，脚本是 <code>scripts/skill_compare.py</code>。</p>
 </section>
 </main>
+<script>
+(function(){var b=document.getElementById('lang'),en=document.getElementById('en'),zh=document.getElementById('zh');
+function set(l){en.hidden=l!=='en';zh.hidden=l==='en';b.textContent=l==='en'?'中文':'English';document.documentElement.lang=l==='en'?'en':'zh-CN';try{localStorage.setItem('lang',l)}catch(e){}}
+var l='en';try{l=localStorage.getItem('lang')||'en'}catch(e){}set(l);
+b.addEventListener('click',function(){set(en.hidden?'en':'zh')});})();
+</script>

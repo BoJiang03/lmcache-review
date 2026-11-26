@@ -50,11 +50,19 @@ prompt 被拆成很多小组件（规则条目），像软件拆成模块：规�
 - **规则只在 rule check 里生效**：v0007 上，靠规则找到的命中全都有 rule check 参与。所以 vet 只回放 rule check（`-ro`）就够了，不用重跑主 review。
 - **每次改动都留下"规则 ↔ 来源评论"的链接**，回放时知道该跑哪些样本。
 
+  | 改动 | vet 回放什么 |
+  | --- | --- |
+  | add | 它的来源样本：漏掉的点现在找到了吗（没有自己证据的新条目直接丢弃） |
+  | revise / RETRY 改写 | 它的来源和触发改动的 case：仍然找到，且 case 修好了吗 |
+  | generalize / merge | 新条目带着被替换条目证据的并集；回放被替换条目的每个来源 |
+  | absorb B 进 A | B 的证据移到 A，A 要对 B 的样本负责；回放 B 的所有来源 |
+  | side effect | 和改动条目相连的条目：抽它们的部分来源 |
+
 已知的弱点（目前都没有测）：
 - 规则之间的干扰：新加一条宽泛的规则，可能让别的规则判得更松或更严，而这些没改的规则不会被回放到。
 - 规模：规则库越大，干扰越明显。分阶段加载（先按 when 挑，再逐条判）只能缓解。
 - 模型升级：同一个 prompt 换了模型，所有"已证明"的结论都要重新确认。每个 run 记下实际用的模型（`model`），模型变了缓存不再命中；没记录的旧 run 算"未知"，照常命中，报告里标出。
-- 测量本身：缓存冷热会让成本对比失真；单次运行的噪声靠"失败的 case 再跑一次"来压。vet 按多次运行的计数下结论（报告里写 `NEW 2/2`、`NEW 3/4`）：effect 2/2 有效，1/2 补 2 次、≥3/4 有效；side effect 只有 NEW 0/2（或 1/3）且 BASE 两次里至少中一次才算 LOST，NEW 1/2 补一次、≥2/3 算保留。round 在 distill 前把有新 miss 的样本用同一个 reviewer 再跑一次（`#r2`，预算 `[budget.round] confirm`）：第二次找到的 miss 在 ledger 里记 `hits: "1/2"`、`flaky`，照样送 distill，排在两次都漏的后面；没跑成的记 `unconfirmed`；输出一行 `confirm: N misses, K flaky, $X`。重复运行存为 `<reviewer>#r<k>`，`lmreview stability --reviewer R` 免费统计每条评论在多次运行里的命中率。
+- 测量本身：缓存冷热会让成本对比失真；单次运行的噪声靠"失败的 case 再跑一次"来压。vet 按多次运行的计数下结论（报告里写 `NEW 2/2`、`NEW 3/4`）：effect 2/2 有效，1/2 补 2 次、≥3/4 有效；side effect 只有 NEW 0/2（或 1/3）且 BASE 两次里至少中一次才算 LOST，NEW 1/2 补一次、≥2/3 算保留。round 在 distill 前把有新 miss 的样本用同一个 reviewer 再跑一次（`#r2`，预算 `[budget.round] confirm`）：第二次找到的 miss 在 ledger 里记 `hits: "1/2"`、`flaky`，照样送 distill，排在两次都漏的后面；没跑成的记 `unconfirmed`；输出一行 `confirm: N misses, K flaky, $X`。重复运行存为 `<reviewer>#r<k>`。
 
 以后要验证时，可以定期做一次全量回放（`vet --all`），统计没改的规则因为别的规则改动而丢掉已证明 case 的比例。比例低，说明局部回放可靠；比例高，就要把回放范围扩到会互相影响的规则。
 
@@ -195,23 +203,24 @@ needs_human 不该靠人逐条改，而是暴露 workflow 的缺陷。复盘后�
 
 ## 工具（上线前）
 
-4 个命令，部署时用脚本把它们串起来。reviewer 的命名规则是 `<prompt>[+<规则库>][@<effort>]`，例如 `v0b+r1@high`。付费命令有 `--max-cost`，达到上限后就不再发起新的调用。所有命令都不会往 GitHub 发任何东西。
+命令和参数见 `docs/usage.md`，这里只列它们在机制里的位置。reviewer 的命名规则是
+`<prompt>[+<规则库>][@<effort>][-rc|-ro]`，例如 `pdba46ca9+v0032@medium-rc`：`-rc` 是生产 reviewer（主 review + rule check），`-ro` 只跑 rule check（vet、retain 用它回放）。付费命令有 `--max-cost`，达到上限后就不再发起新的调用。所有命令都不会往 GitHub 发任何东西。
 
-| 命令 | 做什么 | 费用 |
-| --- | --- | --- |
-| `lmreview sync` | 增量拉取最近更新过的 PR，重建样本。split：train / test / new（2026-11-01 之后创建的 PR，不用于蒸馏） | 免费 |
-| `lmreview review [PR]` | 带 PR 号：review 这个 PR 的当前版本。不带：在 `--split` 上跑 reviewer（`new` 就是新 PR 的隐藏运行） | 每个样本约 $1.3 |
-| `lmreview eval --reviewer R [--vs R0]` | 依次做：裁判判分 → 按 split 和领域统计 human 独有率 → 被动信号 → 逐条翻转比较。结果写到 `reports/eval_<R>.md` | 每个样本约 $0.4（裁判） |
-| `lmreview distill <out>` | 从 train 的人类评论中蒸馏：归因（可学 / 缺上下文 / 不算问题 / 被拒绝，附采纳情况和讨论串回复）→ 跨领域按关注点聚类 → 每组抽象成一条原则或知识。**默认用法是 `--misses-of R`，只从 R 漏掉的评论里学。** 写到 `lmreview/rules/<out>.jsonl` 和 `.md`；`--max-cost 0` 只打印计划 | 每条评论约 $0.01 |
-| `lmreview eval --rules <name>` | 覆盖率：held-out（test）上的人类评论（`--misses-of R` 表示只看漏报）有多少能被规则库解释。先用它判断规则能不能复用，再决定要不要花钱做 reviewer 的 A/B 对比 | 每 30 条评论约 $0.2 |
+| 命令 | 在机制里的位置 |
+| --- | --- |
+| `lmreview sync` | 增量拉取最近更新过的 PR，重建样本（免费） |
+| `lmreview round PR[:commit] ...` | 一轮：回放 → 判分 → 确认新 miss → distill + vet 直到评论落定；规则库超过 `[compress]` 词数时 compress + vet |
+| `lmreview judge` | 对比：把人类评论拆成点，和 AI 发现匹配，记进 ledger（covered / to_distill） |
+| `lmreview distill` | 归因 → 写 → consolidate，得到候选规则库 |
+| `lmreview vet` | 局部回放（`--all` 全量），通过的部分成为下一个版本，失败的评论带着原因回到 to_distill |
+| `lmreview retain` | 用 rule check 重跑已学会的点，不是每次都命中的送回 to_distill |
+| `lmreview compress` | 全书整理（trim / merge），结果是候选，再过 vet |
+| `lmreview review PR` | review 一个 PR 的当前版本（只在本地输出） |
+| `lmreview status` / `init` / `rollback` / `discard` | 查看 / 初始化 / 移动状态 |
 
 ```bash
-# 每天
 lmreview sync
-lmreview review --reviewer $CUR --split new --limit 0 --max-cost 20
-lmreview eval --reviewer $CUR
-# 每轮迭代
-scripts/misses_pipeline.sh <area> <N> $CUR $NEXT_RULES   # 在 train 上 review → 判分 → 从漏报蒸馏 → test 覆盖率
-lmreview review --reviewer $NEXT --split test --max-cost 30
-lmreview eval --reviewer $NEXT --vs $CUR      # 净修复 > 0 → 换成新版
+lmreview round 3359 3461:a58f5c9c    # 在这些样本上学一轮
+lmreview status
+git add lmreview/state && git commit  # 发布新版本
 ```

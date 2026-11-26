@@ -67,8 +67,7 @@ book     = vet(book, new_book, human_comments)           # keep only what works 
 ## What a rule must earn
 
 - **A comment of its own.** Every new rule must explain at least one missed human comment that no
-  other rule explains. A parent that only groups existing rules is dropped. (Principle induction
-  over the whole book, step 6, made such parents; it is off unless `--induce`.)
+  other rule explains. A parent that only groups existing rules is dropped.
 - **A reason to change.** A rule is revised or retired only on a failure signal or a human comment
   that asks for the opposite, and the revise must say what it now covers differently. Rewording
   is refused.
@@ -83,37 +82,39 @@ Everything the process needs is in `lmreview/state/`, in git:
 |---|---|
 | `HEAD.json`, `book.jsonl` | the book in use |
 | `history/vNNNN.*` | every version, with how it was made |
-| `candidate/` | a distilled book waiting for vet |
+| `candidate/` | a distilled or compressed book waiting for vet |
 | `ledger.jsonl` | every human comment and its status, keyed by (PR, commit) |
-| `prompts/` | snapshots of the reviewer prompt (`lmreview/prompts/reviewer.md`) |
+| `prompts/` | snapshots of the reviewer prompts (`lmreview/prompts/reviewer.md`, `rulecheck.md`, `rulepick.md`), by prompt id |
 | `log.jsonl` | what each step did |
 
-All settings (review effort, rule check, parallel main reviews, shell; distill, vet, cost caps, paths) are in
+All settings (review and rule-check effort, judge, distill, vet, retain, compress, cost caps, paths) are in
 `lmreview/config.toml`, commented. `LMREVIEW_CONFIG=<file>` merges a file with only the keys you change on top.
 
 ## Commands
 
 ```
+bin/lmreview review 5876 [--commit C]     # review one PR now (local output only)
 bin/lmreview status                       # book in use, candidate, ledger counts
-bin/lmreview round 3359 3461:a58f5c9c     # review + judge + distill + vet on these samples
-bin/lmreview review|judge|distill|vet     # one step at a time
-bin/lmreview rollback v0001 | discard     # move the state
+bin/lmreview round 3359 3461:a58f5c9c     # review + judge + distill + vet on these samples, then compress if big
+bin/lmreview judge | distill | vet        # one step at a time
+bin/lmreview retain                       # re-check learned points; unstable ones go back to to_distill
+bin/lmreview compress [--stage trim|merge] [--repair]   # shrink the book in use into a candidate (then vet)
+bin/lmreview init BOOK | rollback v0001 | discard        # start / move the state
 bin/lmreview sync                         # update the dataset from GitHub (free)
-bin/lmreview eval | regress | audit       # measurements and checks
 ```
 
-A bare PR number in `round` means its commits that still have a missed comment (with `[select] on` in
-config.toml, only the half of those not reviewed yet most likely to hold misses). Paid commands take
-a cost cap and stop starting new LLM calls when they reach it. Every run prints timestamped
-progress and is logged to `data/logs/`.
+A bare PR number in `round` means its commits that still have a missed comment (all of them if none
+has been judged yet). Paid commands take a cost cap and stop starting new LLM calls when they reach
+it (`--max-cost 0` prints the plan). Every run prints timestamped progress and is logged to `data/logs/`.
 
 ## Data
 
+`lmreview sync` collects recently updated PRs from GitHub into `data/raw/pr/`, then runs:
+
 ```
-python3 -I src/collect.py          # GitHub GraphQL -> data/raw/pr/<N>.json
-python3 -I src/fetch_commits.py    # recover force-pushed commits into data/LMCache
-python3 -I src/derive.py           # -> data/dataset/{prs,comments}.jsonl
-python3 -I src/samples.py          # -> data/dataset/samples.jsonl
+src/fetch_commits.py    # recover force-pushed commits into data/LMCache
+src/derive.py           # -> data/dataset/{prs,comments}.jsonl
+src/samples.py          # -> data/dataset/samples.jsonl
 ```
 
 `data/` is not tracked: raw data, the dataset, runs, scores, and a full LMCache clone.

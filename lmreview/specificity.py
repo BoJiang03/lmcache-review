@@ -1,6 +1,6 @@
 """Specificity checks for rulebook entries: an entry must describe a kind of problem, not how to fix one PR.
 
-Two checks, cheapest first (docs/plan-retention.md):
+Two checks, cheapest first:
 
 1. lint (free): a principle's "when" and "expect" must not name what its evidence PRs name: an identifier
    quoted or written in code style in an evidence comment (function, class, variable, config key), a

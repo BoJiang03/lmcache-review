@@ -39,3 +39,10 @@
 
 ## Spend
 ≈ $193.5 of the $200 approved. A next phase needs a new budget.
+
+## Correction (user): stably covered points need no attribute
+- "如果某个点本来reviewer自己就已经稳定命中了，后续应该是不需要学了啊" — agreed. attribute applies only to points the
+  production reviewer did not find 2/2; the covered_attr.json run is kept for reference, not used for the target.
+- Guard = every point found 2/2 before learning (no attribute filter); main = not found 2/2 and attribute learnable.
+- Open: attribute's accuracy is unmeasured (only stability); could be checked against team signals (author changed
+  the code as asked, thread resolved by the reviewer, objections) without LLM cost.

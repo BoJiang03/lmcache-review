@@ -53,8 +53,8 @@ confirmed by a second run (confirm_misses) also has "hits" ("0/2": missed twice;
 run) and "flaky": true when found in some run, or "unconfirmed": true when the second run could not be made.
 status: covered (the reviewer found it without help) | to_distill | resolved (a book entry makes the
 reviewer find it, checked by vet) | not_rulable (distill, two calls agreed: context / not an
-issue / declined by the team) | needs_human (MAX_TRIES distill attempts failed, or only the PR author
-objected to it: contested)."""
+issue / declined by the team) | needs_human (MAX_TRIES distill attempts failed, only the PR author
+objected to it: contested, or the two attribution calls disagreed: unclear)."""
 STATUSES = ("covered", "to_distill", "resolved", "not_rulable", "needs_human")
 _VER = re.compile(r"v\d{4}")
 
@@ -594,11 +594,12 @@ def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: 
         n_out = 0
         for a in map(json.loads, att.open()) if att.exists() else []:
             r = rows.get(a.get("id"))
-            if r and a.get("kind") in ("context", "not_issue", "rejected", "unclear"):  # two calls agreed, or disagreed (unclear)
+            if r and a.get("kind") in ("context", "not_issue", "rejected"):  # two calls agreed (distill.py)
                 r.update(status="not_rulable", note=f"{a['kind']}: {a.get('reason') or a.get('why') or ''}"[:300])
                 n_out += 1
-            elif r and a.get("kind") == "contested":  # only the PR author objected: a person decides
-                r.update(status="needs_human", note=f"contested: {a.get('why') or ''}"[:300],
+            elif r and a.get("kind") in ("contested", "unclear"):  # only the PR author objected, or the two
+                # attribution calls disagreed on whether it is learnable: a person decides
+                r.update(status="needs_human", note=f"{a['kind']}: {a.get('why') or ''}"[:300],
                          parked={"by": "attribute", "prompt": distill_prompt_id(), "date": _now()[:10]})
                 n_out += 1
         save_ledger(rows)
@@ -933,7 +934,7 @@ def vet_step(max_cost: float | None = None, reps: int | None = None, everything:
                 r.update(status="resolved", resolved_by={"book": vname(n), "entry": ok[0]})
                 out["resolved"].append(i)
                 continue
-            why = ("the two attribution calls disagreed on whether it is learnable" if not es and norm(i) in unconfirmed
+            why = ("attribution got no second answer (cost cap or unparsable output)" if not es and norm(i) in unconfirmed
                    else "distill made no entry for it" if not es else
                    NO_EFFECT if any(e in J["no_effect"] for e in es) else
                    "dropped: a linked change made an existing entry worse"
@@ -1034,8 +1035,11 @@ def confirm_misses(rv: str, new: list[int | str], max_cost: float, cfg: Config |
             if r is None or r["status"] != "covered":
                 continue
             h, n = hits(rv, sample(r), k, cfg)
+            if n < 2:  # no second run (cost cap): not settled; the next round's confirm asks again
+                unconf += 1
+                continue
             r["hits"] = f"{h}/{n}"
-            if n >= 2 and h < n:  # found by chance: production misses it in some runs, so it is learned
+            if h < n:  # found by chance: production misses it in some runs, so it is learned
                 r.update(status="to_distill", flaky=True)
                 chance += 1
         save_ledger(rows)

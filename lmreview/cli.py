@@ -198,6 +198,8 @@ def main(argv: list[str] | None = None) -> None:
         else:
             print(f"book in use: {state.vname(state.init(a.book, a.note))}")
     elif a.cmd == "retain":
+        if a.covered and not a.reviewer:
+            sys.exit("retain --covered needs --reviewer with the main review: a rule check alone cannot find covered points")
         from .state import retain_step
         print(retain_step(set(a.prs or []) or None, a.max_cost, a.reps, samples=set(a.samples or []) or None, reviewer=a.reviewer,
                           statuses=("covered", "resolved") if a.covered else ("resolved",)))

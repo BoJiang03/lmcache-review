@@ -56,6 +56,7 @@ from lmreview.workspace import cached_pr, sample_workspace  # noqa: E402
 
 REVIEWER = os.environ.get("SC_REVIEWER", "p29f48666+v0032@high-rc")  # default: the formal review, all Opus
 TAG = REVIEWER.replace("+", "_").replace("@", "_")  # lmreview runs, scores and results are kept per reviewer
+MAIN_FROM = os.environ.get("SC_MAIN_FROM")  # an -rc reviewer with the same main prompt whose cached main review is reused
 RC_FROM = os.environ.get("SC_RC_FROM")  # an -rc reviewer whose cached rule check (same prompt, book) is reused
 EFFORT = os.environ.get("SC_SKILL_EFFORT", "high")  # the skill arm's effort
 SKILL_SUB = "" if EFFORT == "high" else f"effort_{EFFORT}"  # other efforts are cached apart
@@ -357,6 +358,22 @@ def run_lmreview(cfg: Config, s: dict, budget: Budget) -> dict:
     budget.check("lmreview")
     t0 = time.time()
     donor = RC_FROM and OUT / "lmreview" / "runs" / RC_FROM.replace("+", "_").replace("@", "_") / f"{key_of(s)}.json"
+    mdonor = MAIN_FROM and OUT / "lmreview" / "runs" / MAIN_FROM.replace("+", "_").replace("@", "_") / f"{key_of(s)}.json"
+    if mdonor and mdonor.exists():  # same main prompt, other rule check: reuse the main review, run the rule check only
+        d = json.loads(mdonor.read_text())
+        m = next(x for x in d["runs"] if x.get("kind") != "rulecheck")
+        with sample_workspace(cfg, s, "review", reviewer_context(REVIEWER)) as (wt, base):
+            rc = run_reviewer(wt, cached_pr(cfg, s["pr"], s["time"]), REVIEWER.removesuffix("-rc") + "-ro")
+        kept, dcost = drop_repeats(m["findings"] or [], rc["findings"] or [])
+        fs = None if m["findings"] is None else (
+            [{**f, "id": f"1.{f.get('id') or k}", "support": 1} for k, f in enumerate(m["findings"], 1)]
+            + [{**f, "id": f"2.{f.get('id') or k}", "support": 1} for k, f in enumerate(kept, 1)])
+        r = {**rc, "findings": fs, "cost": m["cost"] + rc["cost"] + dcost, "dedupe_cost": dcost, "reviewer": REVIEWER,
+             "main_from": MAIN_FROM, "runs": [m, {**{k: rc[k] for k in ("findings", "error", "raw", "cost", "turns", "usage", "verdicts") if k in rc}, "kind": "rulecheck"}]}
+        run = {"pr": s["pr"], "commit": s["commit"], "base": base, **r, "model": run_models(r), "arm": "lmreview",
+               "secs": d.get("secs")}  # wall time: the main review's (the rule check runs alongside it)
+        save(p, run)
+        return run
     if donor and donor.exists():  # the rule check does not depend on the main review: reuse it, run the main only
         d = json.loads(donor.read_text())
         rc = next(x for x in d["runs"] if x.get("kind") == "rulecheck")

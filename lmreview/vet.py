@@ -29,7 +29,7 @@ unprotected.
 only the comments the cases ask about: a rule change shows in the rule check, so the full review is not
 replayed (about $0.8 per sample instead of $3.5). Runs are cached under data/runs/<reviewer>/,
 so an earlier A/B with the same reviewer names costs nothing here. Single runs are noisy, so each
-failing case gets one more run with NEW before it counts (`retry`), and then a sequential check
+failing case gets one more run with NEW before it counts, and then a sequential check
 decides every effect and side case from its counts over all runs on disk (runs.hits; repeats are
 #r<k> runs): an effect case works at NEW 2/2, or at >= 3/4 where the first two disagree; a side case is
 kept at NEW 1/1, 2/2 or >= 2/3, and LOST only when NEW misses it (0/2, or 1/3) and BASE matches it at
@@ -39,13 +39,11 @@ Verdict, by what the next book takes: ALL KEPT if every entry with new evidence 
 of its comments, nothing regressed and every revision fixed its trigger; PARTLY KEPT if some changes
 fail (they are dropped or reverted, the rest promoted); NONE KEPT if none works; INCOMPLETE if any case
 was not run (nothing is promoted). Generality flags are listed for the reader and keep nothing out.
-`write` saves NEW without the failing changes, as the next working book.
 """
 
 from __future__ import annotations
 
 import datetime as dt
-import json
 import pathlib
 import re
 
@@ -53,13 +51,12 @@ from . import runs
 from .config import Config
 from .annotate import cid_of, norm
 from .settings import get
-from .state import book_path
 from .progress import note
 from .regress import EST_RO, EST_RUN, FIELDS, cite_ids, replay, run_tag
 
 SIDE_PER_ENTRY = int(get("vet", "side_per_entry"))  # side effects: source comments replayed per affected entry (`--all`: every one)
-from .distill import book_meta, design_flags, write_meta
-from .reviewer import load_rules, parse_reviewer
+from .distill import book_meta, design_flags
+from .reviewer import load_rules
 from .score import REPORTS, load_gold
 
 LINKS = ("principle", "members")
@@ -135,25 +132,19 @@ def base_verdict(h: int, n: int) -> tuple[str, int]:
     return ("hit", n) if h else ("miss", n) if n >= 2 else ("more", 2)
 
 
-def vet(book: str, base: str | None = None, prompt: str | None = None, effort: str | None = None,
-        suffix: str | None = None, reps: int = 1,
-        max_cost: float = 30.0, everything: bool = False, every_sample: bool = False, retry: bool = True,
-        write: str | None = None, cfg: Config | None = None, out: dict | None = None,
+def vet(book: str, base: str, prompt: str, effort: str, suffix: str, reps: int = 1,
+        max_cost: float = 30.0, everything: bool = False, cfg: Config | None = None, out: dict | None = None,
         targets: set | None = None) -> str:
     """Vet rulebook `book` against `base`; see the module docstring.
 
     Args:
         book: the new rulebook (a distill result).
-        base: the rulebook it was built from (default: from rules/<book>.meta.json).
-        prompt, effort, suffix: the reviewer is `<prompt>+<book>@<effort><suffix>`, and the same with base.
-            Default: prompt and effort of the runs distill learned from (meta "runs"), else v0f and high;
-            suffix -ro (the rule check alone, targeted judge; -rc replays the full review as before).
+        base: the rulebook it was built from.
+        prompt, effort, suffix: the reviewer is `<prompt>+<book>@<effort><suffix>`, and the same with base
+            (state.vet_step: the current prompt and effort, suffix -ro: the rule check alone).
         reps: runs per sample and book; a comment counts as matched if any run matches it.
         max_cost: cap for all runs together; 0 prints the plan only.
         everything: replay every active entry of base on its sources, not only the affected ones.
-        every_sample: test new comments in every sample of a PR, not only the one holding most of them.
-        retry: give each failing case one more run with the new book before it counts.
-        write: also write rules/<write>.jsonl: the new book without the changes that failed.
         cfg: configuration.
         targets: the comments the candidate was distilled for. Every entry that carries one of them as
             evidence is tested on it, even when the base already had that evidence (a revision made for it,
@@ -165,13 +156,6 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     """
     cfg = cfg or Config()
     meta = book_meta(book)
-    base = base or meta.get("base")
-    if not base:
-        raise ValueError(f"no base for {book}: pass --base (rules/{book}.meta.json names none)")
-    if meta.get("runs"):
-        version, _, eff = parse_reviewer(meta["runs"].split("#")[0])
-        prompt, effort = prompt or version, effort or eff
-    prompt, effort, suffix = prompt or "v0f", effort or "high", "-ro" if suffix is None else suffix
     act = lambda rs: {r["id"]: r for r in rs if r.get("status", "active") == "active"}  # noqa: E731
     new_rules, old_rules = load_rules(book), load_rules(base)
     N, O = act(new_rules), act(old_rules)
@@ -192,19 +176,19 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     effect = [(i, norm(e)) for i, r in N.items() for e in r.get("evidence") or []
               if norm(e) in where and (norm(e) not in in_base or norm(e) in tg)]  # comments new to the book (a parent's
     # inherited evidence is not new: its members' source comments are replayed as side effects)
-    if not every_sample:  # one sample per PR: the one holding most of the new comments
-        n_in: dict = {}
-        for _, e in effect:
-            n_in[where[e]] = n_in.get(where[e], 0) + 1
-        def cached(k: tuple) -> int:  # runs already on disk for this sample (ties go to cached ones)
-            return sum(any((cfg.data / "runs").glob(f"{prompt}+{b}@{effort}{suffix}*/{k[0]}-{k[1][:8]}*.json"))
-                       for b in (base, book))
-        best = {k[0]: max((x for x in n_in if x[0] == k[0]), key=lambda x: (n_in[x], cached(x))) for k in n_in}
-        picked = {best[k[0]] for k in n_in}
-        for i in dict.fromkeys(i for i, _ in effect):  # every entry needs one tested comment: add a sample
-            if not any(where[e] in picked for j, e in effect if j == i):
-                picked.add(max((where[e] for j, e in effect if j == i), key=lambda x: (n_in[x], cached(x))))
-        effect = [(i, e) for i, e in effect if where[e] in picked]
+    # one sample per PR: the one holding most of the new comments
+    n_in: dict = {}
+    for _, e in effect:
+        n_in[where[e]] = n_in.get(where[e], 0) + 1
+    def cached(k: tuple) -> int:  # runs already on disk for this sample (ties go to cached ones)
+        return sum(any((cfg.data / "runs").glob(f"{prompt}+{b}@{effort}{suffix}*/{k[0]}-{k[1][:8]}*.json"))
+                   for b in (base, book))
+    best = {k[0]: max((x for x in n_in if x[0] == k[0]), key=lambda x: (n_in[x], cached(x))) for k in n_in}
+    picked = {best[k[0]] for k in n_in}
+    for i in dict.fromkeys(i for i, _ in effect):  # every entry needs one tested comment: add a sample
+        if not any(where[e] in picked for j, e in effect if j == i):
+            picked.add(max((where[e] for j, e in effect if j == i), key=lambda x: (n_in[x], cached(x))))
+    effect = [(i, e) for i, e in effect if where[e] in picked]
     eff_set = set(effect)
     affected = [i for i in O if i not in N or everything or rel.get(i, {i}) & touched]
     # side effects: at most SIDE_PER_ENTRY source comments per entry (whether an entry still works shows
@@ -250,13 +234,13 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     per_run = EST_RO if ruleonly else EST_RUN * (2 if suffix else 1)
     # the sequential check runs NEW a second time on every effect sample (more only where the runs disagree)
     second = sorted({tgt(e) for _, e in effect} - {t for t in samples if any(
-        run_dir(book, 2).glob(f"{t.split('@')[0]}-{t.split('@')[1]}*.json"))}) if retry else []
+        run_dir(book, 2).glob(f"{t.split('@')[0]}-{t.split('@')[1]}*.json"))})
     est = (len(todo) + len(second)) * per_run  # base runs: only where NEW misses a side case
     flags = {i: f for i in sorted(touched) if (f := lint(N[i]))}
 
     L = [f"# Vet of {book} (from {base})", "",
          f"- reviewer: {prompt}+<book>@{effort}{suffix}, {reps} run(s) per sample and book"
-         + ("; failures get one more run" if retry else ""),
+         + "; failures get one more run",
          f"- changed entries: {len(touched)} (revised {len(revised)}, retired {len(retired)}); "
          f"evidence comments added: {len(effect)}; base entries replayed for side effects: {len(affected)} "
          f"({len(side)} comments{', all entries' if everything else ''}; {unproven} unproven source comments not "
@@ -324,24 +308,24 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     J, c_r = judge(), 0.0
     note(f"      first pass: works {sorted(J['works'])}, not working {J['no_effect']}, lost {len(J['lost'])}, "
          f"revisions not fixed {len(J['not_fixed'])}")
-    if retry:  # single runs are noisy: a failing case gets one more run with NEW before it counts
-        # a case both books missed gets one more run with BASE too: a BASE miss by noise would leave it unprotected
-        both = [(i, e) for i, e in side if B.get(ck(i, e), {}).get("passed") is False
-                and (Nw.get(ck(i, e), {}).get("any" if i in retired else "passed") is False)]
-        again = ([(i, {"target": tgt(e), "with": w, "comments": [e]}) for i, e in effect if i in J["no_effect"]]
-                 + [(i, {"target": tgt(e), "with": w, "comments": [e]}) for i, e in J["lost"] + both]
-                 + [(i, {"target": t, "with": w, "comments": []}) for i, t in J["not_fixed"]])
-        if both:
-            note(f"[3/3] {len(both)} case(s) missed by both get one more run with {base}")
-            rows_rb, c_rb = replay(base, [(i, {"target": tgt(e), "with": w, "comments": [e]}) for i, e in both],
-                                   reps + 1, max(0.0, max_cost - c_b - c_n), cfg, suffix=suffix, only=only)
-            B |= {key(r): r for r in rows_rb if r["passed"] is not None}
-            c_b += c_rb
-        if again:
-            note(f"[3/3] {len(again)} failing case(s) get one more run with {book} (${c_b + c_n:.2f} so far)")
-            rows_r, c_r = replay(book, again, reps + 1, max(0.0, max_cost - c_b - c_n), cfg, suffix=suffix, only=only)
-            Nw |= {key(r): r for r in rows_r if r["passed"] is not None}
-            J = judge()
+    # single runs are noisy: a failing case gets one more run with NEW before it counts
+    # a case both books missed gets one more run with BASE too: a BASE miss by noise would leave it unprotected
+    both = [(i, e) for i, e in side if B.get(ck(i, e), {}).get("passed") is False
+            and (Nw.get(ck(i, e), {}).get("any" if i in retired else "passed") is False)]
+    again = ([(i, {"target": tgt(e), "with": w, "comments": [e]}) for i, e in effect if i in J["no_effect"]]
+             + [(i, {"target": tgt(e), "with": w, "comments": [e]}) for i, e in J["lost"] + both]
+             + [(i, {"target": t, "with": w, "comments": []}) for i, t in J["not_fixed"]])
+    if both:
+        note(f"[3/3] {len(both)} case(s) missed by both get one more run with {base}")
+        rows_rb, c_rb = replay(base, [(i, {"target": tgt(e), "with": w, "comments": [e]}) for i, e in both],
+                               reps + 1, max(0.0, max_cost - c_b - c_n), cfg, suffix=suffix, only=only)
+        B |= {key(r): r for r in rows_rb if r["passed"] is not None}
+        c_b += c_rb
+    if again:
+        note(f"[3/3] {len(again)} failing case(s) get one more run with {book} (${c_b + c_n:.2f} so far)")
+        rows_r, c_r = replay(book, again, reps + 1, max(0.0, max_cost - c_b - c_n), cfg, suffix=suffix, only=only)
+        Nw |= {key(r): r for r in rows_r if r["passed"] is not None}
+        J = judge()
 
     # sequential check: decide every effect and side case from its counts over all runs on disk
     rv_of = lambda b: f"{prompt}+{b}@{effort}{suffix}" + run_tag(only)  # noqa: E731
@@ -371,53 +355,50 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
         return v, want
 
     c_s = 0.0
-    if retry:
+    V, want = decide()
+    for _ in range(4):  # effect runs go 1 -> 2 -> 4, side NEW 1 -> 2 -> 3, BASE 1 -> 2
+        left = max_cost - c_b - c_n - c_r - c_s
+        if not want or left <= 0:
+            break
+        note(f"[seq] {sum(map(len, want.values()))} case(s) need more runs: "
+             + ", ".join(f"{b} to {k} runs: {len(cs)}" for (b, k), cs in sorted(want.items())))
+        for (b, k), cs in sorted(want.items()):
+            _, c = replay(b, cs, k, max(0.0, max_cost - c_b - c_n - c_r - c_s), cfg, suffix=suffix, only=only)
+            c_s += c
+        before = dict(counts)
         V, want = decide()
-        for _ in range(4):  # effect runs go 1 -> 2 -> 4, side NEW 1 -> 2 -> 3, BASE 1 -> 2
-            left = max_cost - c_b - c_n - c_r - c_s
-            if not want or left <= 0:
-                break
-            note(f"[seq] {sum(map(len, want.values()))} case(s) need more runs: "
-                 + ", ".join(f"{b} to {k} runs: {len(cs)}" for (b, k), cs in sorted(want.items())))
-            for (b, k), cs in sorted(want.items()):
-                _, c = replay(b, cs, k, max(0.0, max_cost - c_b - c_n - c_r - c_s), cfg, suffix=suffix, only=only)
-                c_s += c
-            before = dict(counts)
-            V, want = decide()
-            if counts == before:  # nothing new could run (cost cap): the rest stays undecided
-                break
-        works = {i for i, e in effect if V[("e", i, e)][0] == "works"}
-        unknown = {i for i, e in effect if V[("e", i, e)][0] == "more"}
-        lost, kept, both_miss, s_which = [], 0, 0, []
-        for i, e in side:
-            x, y = V[("s", i, e)][0], V.get(("b", i, e), ("", 0))[0]
-            if x == "kept":
-                kept += 1
-            elif x == "more" or y == "more":
-                s_which.append((i, e, "new" if x == "more" else "base"))
-            elif y == "hit":
-                lost.append((i, e))
-            else:
-                both_miss += 1
-        J.update(works=works, unknown=unknown, no_effect=sorted({i for i, _ in effect} - works - unknown),
-                 lost=lost, kept=kept, both_miss=both_miss, s_unknown=len(s_which), s_which=s_which)
-        note(f"      sequential check (${c_s:.2f}): works {sorted(works)}, not working {J['no_effect']}, "
-             f"lost {len(lost)}, kept {kept}, undecided {len(unknown) + len(s_which)}")
+        if counts == before:  # nothing new could run (cost cap): the rest stays undecided
+            break
+    works = {i for i, e in effect if V[("e", i, e)][0] == "works"}
+    unknown = {i for i, e in effect if V[("e", i, e)][0] == "more"}
+    lost, kept, both_miss, s_which = [], 0, 0, []
+    for i, e in side:
+        x, y = V[("s", i, e)][0], V.get(("b", i, e), ("", 0))[0]
+        if x == "kept":
+            kept += 1
+        elif x == "more" or y == "more":
+            s_which.append((i, e, "new" if x == "more" else "base"))
+        elif y == "hit":
+            lost.append((i, e))
+        else:
+            both_miss += 1
+    J.update(works=works, unknown=unknown, no_effect=sorted({i for i, _ in effect} - works - unknown),
+             lost=lost, kept=kept, both_miss=both_miss, s_unknown=len(s_which), s_which=s_which)
+    note(f"      sequential check (${c_s:.2f}): works {sorted(works)}, not working {J['no_effect']}, "
+         f"lost {len(lost)}, kept {kept}, undecided {len(unknown) + len(s_which)}")
 
     def mark(x: bool | None) -> str:
         return {True: "hit", False: "miss", None: "not run"}[x]
 
     eff_lines, fair = [], 0
-    passed = lambda i, e: (Nw.get(ck(i, e), {}).get("passed") if not retry else  # noqa: E731
-                           {"works": True, "no": False}.get(effect_verdict(*counts[(book, i, e)])[0]))
+    passed = lambda i, e: {"works": True, "no": False}.get(effect_verdict(*counts[(book, i, e)])[0])  # noqa: E731
     for i, e in effect:
         b, n = B.get(ck(i, e), {}), Nw.get(ck(i, e), {})
         nc, ba = passed(i, e), b.get("any")
-        res = ("not run" if nc is None and not retry else "undecided" if nc is None else "corrected" if nc and ba is False
+        res = ("undecided" if nc is None else "corrected" if nc and ba is False
                else "both hit" if nc and ba else "fires, base not run" if nc
                else "new finds it, no citation" if n.get("any") else "miss")
-        if retry:
-            res += f" (NEW {counts[(book, i, e)][0]}/{counts[(book, i, e)][1]})"
+        res += f" (NEW {counts[(book, i, e)][0]}/{counts[(book, i, e)][1]})"
         is_fair = i in O and bool(b.get("passed"))  # entry existed in base: a base hit citing it is fair
         fair += is_fair
         rh, rn = runs.hits(meta["runs"], tgt(e), e, cfg) if ba is None and meta.get("runs") else (0, 0)
@@ -467,11 +448,6 @@ def vet(book: str, base: str | None = None, prompt: str | None = None, effort: s
     if out is not None:
         out.update(verdict=verdict, J=J, effect=effect, rows=list(Nw.values()), kept=_with_tests(_passing(new_rules, old_rules, O, J, rel), tests),
                    cost=c_b + c_n + c_r + c_s, retired=retired)
-    if write:
-        kept_book = _with_tests(_passing(new_rules, old_rules, O, J, rel), tests)
-        book_path(write).write_text("".join(json.dumps(r) + "\n" for r in kept_book))
-        write_meta(write, {**meta, "base": base, "vetted_from": book})  # keeps "seen" for the next distill
-        L += ["", f"wrote rules/{write}.jsonl: {len(kept_book)} entries (failing changes dropped or reverted)"]
     unk = sum(runs.unknown_model(cfg, f"{prompt}+{b}@{effort}{suffix}" + run_tag(only), sorted(samples)) for b in (book, base))
     L = L[:2] + [f"**{verdict}** · cost ${c_b + c_n + c_r + c_s:.2f}", ""] \
         + ([f"- {unk} run(s) of unknown model (made before runs recorded their model)", ""] if unk else []) + L[2:]

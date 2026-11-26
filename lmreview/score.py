@@ -1,27 +1,25 @@
-"""Eval: grade reviewer runs against the merged human reviews on the same commit.
+"""Judge: grade reviewer runs against the merged human reviews on the same commit.
 
-For each sample (PR, reviewed commit) in data/runs/<version>/:
+For each sample (PR, reviewed commit) of a run:
   1. Classify each human review comment on that commit (all reviewers merged): change_request | question | nit | praise.
   2. For each change_request/nit, rate its severity and decide which AI finding (if any) raises the
      same issue and asks for a change in the same direction.
   3. Judge whether each AI finding is valid, reading the code.
 One judge call per sample, in the SAME workspace the reviewer saw. Results go to
-<data>/scores/<version>/<pr>-<commit8>.json and a summary to reports/score_<version>.md.
+<data>/scores/<reviewer>/<pr>-<commit8>.json.
 """
 
 from __future__ import annotations
 
-import collections as C
 import json
 import pathlib
 
 from . import llm
-from .budget import capped_map
 from .progress import note
 from .annotate import annotate, point_comments, points
 from .config import Config
 from .settings import get
-from .reviewer import prompt_template, rule_evidence
+from .reviewer import prompt_template
 from .schema import load_findings
 from .workspace import TOOLS, cached_pr, pr_meta, sample_workspace
 
@@ -208,102 +206,7 @@ def _fmt_human(i: int, c: dict) -> str:
     return f"[c{i}] overall review by {c['author']} ({c['review_state']}):\n{c['body'][:2500]}"
 
 
-def _normalize(s: dict, run: dict) -> dict:
-    """Upgrade judge files written before findings had ids (index-based, scalar matches)."""
-    ids = [f.id for f in load_findings(run) or []]
-    for h in s["human"]:
-        m = h.get("matched_ai")
-        m = [] if m is None else m if isinstance(m, list) else [m]
-        h["matched_ai"] = [ids[x] if isinstance(x, int) and x < len(ids) else str(x) for x in m]
-    for f in s["ai"]:
-        if "id" not in f:
-            f["id"] = ids[f["idx"]] if f["idx"] < len(ids) else f"f{f['idx'] + 1}"
-    return s
-
-
 EST_COST = 0.4  # $/sample for a judge call; used only for the estimate
-
-
-def judge(version: str, workers: int = 4, effort: str = "high", max_cost: float = 10.0,
-          cfg: Config | None = None) -> tuple[list[dict], list[dict]]:
-    """Judge every valid run of `version` not judged yet (stopping at `max_cost`).
-
-    Returns:
-        (runs that have a judge result, their normalized judge results), in the same order.
-    """
-    cfg = cfg or Config()
-    ss, cm = load_gold(cfg)
-    runs = [json.loads(p.read_text()) for p in sorted((cfg.data / "runs" / version).glob("*.json"))]
-    runs = [r for r in runs if r["findings"] is not None]
-    stale = [r for r in runs if (r["pr"], r["commit"]) not in ss]
-    if stale:  # the dataset was rebuilt and the sample no longer exists (e.g. its commit was corrected)
-        note(f"skipping {len(stale)} runs whose sample no longer exists: "
-              + ", ".join(f"#{r['pr']}-{r['commit'][:8]}" for r in stale))
-        runs = [r for r in runs if (r["pr"], r["commit"]) in ss]
-    ev = rule_evidence(version)
-    leak = [r for r in runs if ev & set(ss[(r["pr"], r["commit"])]["gold_ids"])]
-    if leak:  # see replay: the rulebook was distilled from these samples' own human comments
-        note(f"skipping {len(leak)} runs whose sample the rulebook came from")
-        runs = [r for r in runs if r not in leak]
-    sdir = cfg.data / "scores" / version
-    path = lambda r: sdir / f"{r['pr']}-{r['commit'][:8]}.json"  # noqa: E731
-    def fresh(r: dict) -> bool:  # judged against the sample's current gold (it changes when the dataset is rebuilt)
-        if not path(r).exists():
-            return False
-        s = json.loads(path(r).read_text())
-        return s.get("gold_ids") == ss[(r["pr"], r["commit"])]["gold_ids"] and s.get("judge") == JUDGE
-    todo = [r for r in runs if not fresh(r)]
-    note(f"judge {version}: {len(runs)} runs, {len(todo)} to judge (est ${len(todo) * EST_COST:.0f}, "
-         f"cap ${max_cost:.0f})")
-
-    def one(r: dict) -> tuple[str, float]:
-        k = (r["pr"], r["commit"])
-        s = score_one(cfg, r, ss[k], [cm[i] for i in ss[k]["gold_ids"]], path(r), effort)
-        return "judged", s["cost"]
-    capped_map(one, todo, workers, max_cost, label=lambda r: f"#{r['pr']}-{r['commit'][:8]}", est=EST_COST)
-    done = [r for r in runs if fresh(r)]  # an older judge's result left by the cost cap is not one
-    res = [score_one(cfg, r, None, None, path(r), effort) for r in done]  # cached reads (effort-checked)
-    return done, [_normalize(s, r) for s, r in zip(res, done)]
-
-
-def score(version: str = "v0", workers: int = 4, effort: str = "high", max_cost: float = 10.0,
-          cfg: Config | None = None) -> str:
-    """Judge runs of `version`, write reports/score_<version>.md, return its headline."""
-    cfg = cfg or Config()
-    ss, cm = load_gold(cfg)
-    gold = {k: [cm[i] for i in s["gold_ids"]] for k, s in ss.items()}
-    runs, res = judge(version, workers, effort, max_cost, cfg)
-    types = C.Counter(h["type"] for s in res for h in s["human"])
-    want = [h for s in res for h in s["human"] if h["type"] in ("change_request", "nit")]
-    cr = [h for s in res for h in s["human"] if h["type"] == "change_request"]
-    serious = [h for h in want if h.get("severity") in ("blocker", "major")]
-    ai = [f for s in res for f in s["ai"]]
-    matched = {(s["pr"], s["commit"], m) for s in res for h in s["human"] for m in h["matched_ai"]}
-    ai_only = [(s["pr"], f) for s in res for f in s["ai"] if (s["pr"], s["commit"], f["id"]) not in matched]
-    n = lambda xs: sum(1 for x in xs if x["matched_ai"])  # noqa: E731
-    v = C.Counter(str(f["valid"]) for f in ai)
-    vo = C.Counter(str(f["valid"]) for _, f in ai_only)
-    cost = sum(r["cost"] for r in runs) + sum(s["cost"] for s in res)
-    L = [f"# Score: reviewer {version}", "",
-         f"Samples (PR, reviewed commit): {len(res)} · human review comments: {sum(types.values())} "
-         f"({', '.join(f'{k} {c}' for k, c in types.most_common())})", "",
-         f"- Recall on change requests: {n(cr)}/{len(cr)} ({n(cr) / max(len(cr), 1):.0%})",
-         f"- Recall on change requests + nits: {n(want)}/{len(want)} ({n(want) / max(len(want), 1):.0%})",
-         f"- Recall on serious human comments (blocker/major): {n(serious)}/{len(serious)} "
-         f"({n(serious) / max(len(serious), 1):.0%})",
-         f"- AI findings: {len(ai)} ({len(ai) / max(len(res), 1):.1f}/PR); judged valid: "
-         f"{v['True']} ({v['True'] / max(len(ai), 1):.0%}), invalid {v['False']}, unsure {v['unsure']}",
-         f"- AI-only findings: {len(ai_only)}; judged valid {vo['True']}, invalid {vo['False']}, unsure {vo['unsure']}",
-         f"- Cost (review + grading): ${cost:.2f}", "",
-         "## Missed change requests", ""]
-    for s in res:
-        for h in s["human"]:
-            if h["type"] == "change_request" and not h["matched_ai"]:
-                c = gold[(s["pr"], s["commit"])][h["id"]]
-                L.append(f"- #{s['pr']} `{c.get('path') or 'overall review'}:{c.get('line_lo') or ''}` {c['author']}: "
-                         f"{c['body'][:160].replace(chr(10), ' ')} ([link]({c['url']}))")
-    (REPORTS / f"score_{version}.md").write_text("\n".join(L) + "\n")
-    return "\n".join(L[:9])
 
 
 def judge_runs(cfg: Config, reviewer: str, prs: set[int] | None, split: str, max_cost: float,
@@ -313,7 +216,7 @@ def judge_runs(cfg: Config, reviewer: str, prs: set[int] | None, split: str, max
     `rep` > 1: the runs of that repeat (<reviewer>#r<rep>, see runs.py).
 
     Returns:
-        ([(run, normalized score)], cost).
+        ([(run, score)], cost).
     """
     from .progress import note
     from .runs import run_dir
@@ -333,7 +236,7 @@ def judge_runs(cfg: Config, reviewer: str, prs: set[int] | None, split: str, max
         sp.parent.mkdir(parents=True, exist_ok=True)
         sc = score_one(cfg, run, s, [cm[i] for i in s["gold_ids"]], sp, str(get("judge", "effort")))
         cost += 0 if was else sc.get("cost", 0)
-        out.append((run, _normalize(sc, run)))
+        out.append((run, sc))
         if not was:
             n = out[-1][1]
             note(f"judged #{run['pr']}@{run['commit'][:8]}: {sum(bool(h['matched_ai']) for h in n['human'])}/{len(n['human'])} "

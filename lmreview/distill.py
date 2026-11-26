@@ -1,8 +1,7 @@
-"""`lmreview distill`: turn what a reviewer missed into rulebook changes; `coverage`: test whether it reuses.
+"""`lmreview distill`: turn what a reviewer missed into rulebook changes; also the compress steps (trim, merge).
 
-distill neither reviews nor judges: it learns from judged review runs (the ledger's to_distill points,
-or the misses of `misses_of` in its judge results; `lmreview judge` / `eval` judge runs). Findings citing
-a base entry that were refuted are its failure signals. Comments whose file never changed again although
+distill neither reviews nor judges: it learns from judged review runs (the ledger's to_distill points;
+`lmreview judge` judges runs). Findings citing a base entry that were refuted are its failure signals. Comments whose file never changed again although
 the PR got later commits are dropped.
   1. attribute (batches, no tools): learnable | context | not_issue | rejected (declined in the
      thread) | contested; for a learnable one, what the reviewer asked the author to do (a
@@ -18,19 +17,15 @@ the PR got later commits are dropped.
      from step 2) is verified by blind parallel calls: it must act differently on the case that
      motivated it, or (a merge) act exactly as the entries it replaces; a rephrasing or an unasked-for
      difference is undone. vet then replays every source of a merged entry
-Output: rules/<out>.jsonl, rules/<out>.md (readable), <data>/distill/<out>/{attribution,changes}.json.
+Output: the candidate book (state/candidate/book.jsonl, .md readable), <data>/distill/<out>/{attribution,changes}.json.
 Whether the result is kept is `lmreview vet`'s call (vet.py).
 Never reads test/new samples.
-
-coverage(): for human comments of a split (default test), which entries explain them. Rules that
-reuse explain held-out comments; this is checked before spending on reviewer A/B runs.
 """
 
 from __future__ import annotations
 
 import collections as C
 import datetime as dt
-import fnmatch
 import functools
 import json
 import re
@@ -41,14 +36,14 @@ from collections.abc import Callable
 
 from . import llm
 from .budget import capped_map
-from .config import RULES, Config
+from .config import Config
 from .schema import cites as finding_rules
 from .annotate import cid_of, norm
 from .settings import get
 from .state import book_path
 from .ensemble import ensemble
 from .progress import note
-from .score import REPORTS, _normalize, hkey, load_gold, refuted
+from .score import load_gold, refuted
 
 BATCH = 30          # comments per attribution / coverage call
 WRITE_BATCH = 25    # findings per write call (each call sees the whole rulebook)
@@ -297,36 +292,6 @@ def _resolve(x: object, keys: "set | dict") -> object:
         return x
     hits = [k for k in keys if str(k).split(":")[0] == str(x)]
     return hits[0] if len(hits) == 1 else x
-
-
-def _misses(cfg: Config, reviewer: str, split: str) -> list[int]:
-    """Gold comment ids of `split` that `reviewer` missed (change requests / nits, from its judge results)."""
-    ss, _ = load_gold(cfg)
-    ids = []
-    for p in sorted((cfg.data / "scores" / reviewer).glob("*.json")):
-        run = json.loads((cfg.data / "runs" / reviewer / p.name).read_text())
-        if ss.get((run["pr"], run["commit"]), {}).get("split") != split:
-            continue
-        s = _normalize(json.loads(p.read_text()), run)
-        ids += [hkey(s, h) for h in s["human"] if h["type"] in ("change_request", "nit") and not h["matched_ai"]]
-    return ids
-
-
-def inputs(cfg: Config, misses_of: str | None, area: str | None, split: str = "train") -> list[dict]:
-    """Human comments of `split` to distill from (or to test coverage on). A comment whose file never
-    changed again is kept: it may ask for changes elsewhere; attribute reads the thread and decides."""
-    ss, cm = load_gold(cfg)
-    if misses_of:
-        ids = _misses(cfg, misses_of, split)
-    else:
-        ids = [i for s in ss.values() if s["split"] == split for i in s["gold_ids"]]
-    cs = [cm[i] for i in dict.fromkeys(ids)]
-    if not area:
-        return cs
-    # by PR (as `review --area` picks samples), not by the comment's own area: a team standard voiced
-    # on a file of another area is still evidence (e.g. a docstring preference on an mp file)
-    prs = {p["pr"]: p for p in map(json.loads, (cfg.data / "dataset" / "prs.jsonl").open())}
-    return [c for c in cs if area in prs[c["pr"]]["areas"]]
 
 
 OUTCOME = {"lines-changed": "the commented lines were changed afterwards",
@@ -1943,19 +1908,15 @@ def attribute(cs: list[dict], effort: str, cfg: Config, workers: int, max_cost: 
         att.append({**a, "id": i})
     return att, spent
 
-def distill(out: str, base: str | None = None, misses_of: str | None = None, area: str | None = None,
-            limit: int | None = None, effort: str = "high", workers: int = 4, max_cost: float = 5.0,
-            reuse: str | None = None, cfg: Config | None = None,
-            n: int = 3, prs: list[int] | None = None,
-            comments: list[int] | None = None, notes: dict[int, str] | None = None, tidy: bool = False) -> str:
-    """Build rules/<out>.jsonl; returns a short summary. `max_cost` 0 = plan only (prints the estimate).
+def distill(out: str, base: str, misses_of: str, comments: list[int | str], effort: str = "high", workers: int = 4,
+            max_cost: float = 5.0, cfg: Config | None = None, n: int = 3, prs: list[int] | None = None,
+            notes: dict[int, str] | None = None, tidy: bool = False) -> str:
+    """Build the candidate book `out` from book `base`; returns a short summary. `max_cost` 0 = plan only
+    (prints the estimate).
 
-    distill does not review. It learns from review runs that exist: `misses_of` names the reviewer
-    whose runs to use, normally `<prompt>+<base>@high-rc` run with `lmreview review` on the train PRs
-    `prs`, so that the misses are the base book's own.
-    distill does not judge: it reads the judge results on disk (`lmreview judge` / `eval` make them; runs
-    without one are left out). The missed points are what to learn, and findings citing a base entry
-    that were refuted are its failure signals. Steps: (1) attribute the missed comments; (2) write: one step that
+    distill does not review or judge. It learns `comments` (the ledger's to_distill points, see state.py),
+    which `misses_of` (the reviewer whose judged runs filed them) missed; findings of its runs citing a base
+    entry that were refuted are the entry's failure signals. Steps: (1) attribute the missed comments; (2) write: one step that
     sees the whole base book, its failure signals and the learnable findings and decides per finding
     (evidence, generalize, merge, add; revise/retire only on failure signals, an opposite finding or a
     retry); (3) update the book; (4) consolidate the whole book (parallel drafts, voted; skipped when
@@ -1963,32 +1924,17 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     then drop every new entry without an evidence comment of its own. Whether the
     result is kept is `lmreview vet`'s call.
 
-    `comments`: learn exactly these comments (the ledger's to_distill, see state.py) instead of the misses
-    of `misses_of` minus the base's "seen"; `notes`: comment id -> what earlier attempts made of it."""
+    `notes`: comment id -> what earlier attempts made of it."""
     cfg = cfg or Config()
     if book_path(out).exists():
         raise FileExistsError(f"{book_path(out)} exists; pick a new name")
-    pre = 0.0
-    if misses_of and base:
-        from .reviewer import parse_reviewer
-        if parse_reviewer(misses_of.split("#")[0])[1] != base:
-            print(f"note: {misses_of} does not use {base}: its misses are not the base book's own", flush=True)
-    if comments is not None:
-        _, cm0 = load_gold(cfg)
-        cs, seen = [cm0[i] for i in comments if i in cm0], set()
-    else:
-        cs = inputs(cfg, misses_of, area, "train")
-        seen = set(book_meta(base).get("seen") or []) if base else set()  # comments an earlier distill already processed
+    _, cm0 = load_gold(cfg)
+    cs = [cm0[i] for i in comments if i in cm0]
     if prs:
         cs = [c for c in cs if c["pr"] in set(prs)]
-    n_seen = sum(c["id"] in seen for c in cs)
-    cs = [c for c in cs if c["id"] not in seen][:limit]
-    if n_seen:
-        print(f"skipping {n_seen} comments already processed into {base} or its ancestors", flush=True)
-    by_id = {c["id"]: c for c in cs}
     batches = [cs[i:i + BATCH] for i in range(0, len(cs), BATCH)]
     n_cand = int(len(cs) * 0.7)  # pilot: ~75% learnable
-    est = (0 if reuse else 2 * len(batches) * EST["attribute"]) \
+    est = 2 * len(batches) * EST["attribute"] \
         + (n_cand // WRITE_BATCH + 1) * EST["write"] * (n + 1 if n > 1 else 1) \
         + EST["consolidate"] * (CONSOLIDATE_DRAFTS + 1)  # n drafts + merge; consolidate drafts + final
     note(f"distill {out}: {len(cs)} comments" + (f" missed by {misses_of}" if misses_of else "")
@@ -1998,19 +1944,13 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
 
     work = cfg.data / "distill" / out
     work.mkdir(parents=True, exist_ok=True)
-    if reuse:  # attribution of an earlier run (same inputs): only the write step is re-done
-        att = [{**a, "id": _resolve(a.get("id"), by_id)} for a in
-               map(json.loads, (cfg.data / "distill" / reuse / "attribution.jsonl").open())]
-        att, spent = [a for a in att if a["id"] in by_id], 0.0
-    else:
-        note(f"[1/4] attribute {len(cs)} comments in {len(batches)} batches")
-        att, spent = attribute(cs, effort, cfg, workers, max_cost - pre)
-        spent += pre
+    note(f"[1/4] attribute {len(cs)} comments in {len(batches)} batches")
+    att, spent = attribute(cs, effort, cfg, workers, max_cost)
     (work / "attribution.jsonl").write_text("".join(json.dumps(a) + "\n" for a in att))
     note(f"      attribution: {dict(C.Counter(a.get('kind') for a in att))}; {len(cs) - len(att)} not attributed")
 
     # findings: the learnable comments (an attribution from before "asks" has a candidate "rule" instead)
-    base_rules = [json.loads(l) for l in book_path(base).open() if l.strip()] if base else []
+    base_rules = [json.loads(l) for l in book_path(base).open() if l.strip()]
     written = C.defaultdict(list)  # comment -> active entries already written from it
     for r in base_rules:
         if r.get("status", "active") == "active":
@@ -2028,7 +1968,7 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     spend = [spent]
     _, cm = load_gold(cfg)
     sig_text, sig = failure_signals(base_rules, cfg, reviewer=misses_of, prs=set(prs or []) or None) \
-        if base_rules and misses_of else ({}, {})
+        if base_rules else ({}, {})
     for k in sig:
         items[k], evid[k] = sig_text[k], []
     note(f"[2/4] write: {len(evid) - len(sig)} findings ({len(retry)} retries), {len(sig)} failure signals, "
@@ -2062,12 +2002,12 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     book_path(out).parent.mkdir(parents=True, exist_ok=True)
     book_path(out).write_text("".join(json.dumps(r) + "\n" for r in rules))
     write_meta(out, {"base": base, "runs": misses_of, "prs": sorted(prs or []) or None,
-                     "seen": sorted(seen | {a["id"] for a in att}, key=str)})  # point keys mix ints and "<id>:<k>"; vet reads this; the next distill skips "seen"
+                     "seen": sorted({a["id"] for a in att}, key=str)})  # point keys mix ints and "<id>:<k>"
 
     kinds = C.Counter(a.get("kind") for a in att)
     md = [f"# Rulebook {out}", "",
           f"From {len(cs)} train comments" + (f" missed by {misses_of}" if misses_of else "")
-          + (f", area {area}" if area else "") + (f", extending {base}" if base else "")
+          + (f", extending {base}" if base else "")
           + f"; attribution: {dict(kinds)}; cost ${spent:.2f}",
           f"{len(rules)} entries: " + ", ".join(f"{k} {v}" for k, v in C.Counter(r["kind"] for r in rules).items()), ""]
     md += ["## Changes", ""] + [f"- {ch['op']}: " + ", ".join(ch.get("rules") or ch.get("new") or [])
@@ -2088,120 +2028,3 @@ def distill(out: str, base: str | None = None, misses_of: str | None = None, are
     book_path(out).with_suffix(".md").write_text("\n".join(md) + "\n")
     return (f"rules/{out}.jsonl: {len(rules)} entries ({dict(C.Counter(r['kind'] for r in rules))}) from "
             f"{len(cs)} comments ({dict(kinds)}), ${spent:.2f}")
-
-
-def coverage(rules_name: str, split: str = "test", area: str | None = None, misses_of: str | None = None,
-             effort: str = "high", workers: int = 4, max_cost: float = 2.0, cfg: Config | None = None) -> str:
-    """Which rulebook entries explain the human comments of `split` (only those `misses_of` missed, if
-    given). Writes reports/coverage_<rules>_<split>.md (and .json: the explained comments); returns its headline. `max_cost` 0 = plan only."""
-    cfg = cfg or Config()
-    rules = [r for r in map(json.loads, filter(str.strip, book_path(rules_name).open()))
-             if r.get("status", "active") == "active"]
-    cs = inputs(cfg, misses_of, area, split)
-    batches = [cs[i:i + BATCH] for i in range(0, len(cs), BATCH)]
-    print(f"coverage {rules_name} on {split}" + (f" ({area})" if area else "") + f": {len(cs)} comments, "
-          f"{len(batches)} calls; est ${len(batches) * EST['attribute']:.1f}, cap ${max_cost:.1f}", flush=True)
-    if max_cost <= 0:
-        return "plan only (max-cost 0)"
-    rtext = "\n".join(f"{r['id']}: when {r.get('when')} -> {r.get('expect')}" for r in rules)
-    res, spent = capped_map(lambda b: _ask(COVERAGE.format(rules=rtext, comments="\n\n".join(_fmt(c, False) for c in b)),
-                                           effort, cfg), batches, workers, max_cost, label=lambda b: f"coverage {len(b)}")
-    hits = {}
-    for part in res:
-        for x in part if isinstance(part, list) else []:
-            if isinstance(x, dict) and _id(x.get("id")) in {c["id"] for c in cs}:
-                hits[_id(x["id"])] = [r for r in x.get("rules") or [] if any(r == y["id"] for y in rules)]
-    covered = [i for i, rs in hits.items() if rs]
-    use = C.Counter(r for rs in hits.values() for r in rs)
-    byid = {r["id"]: r for r in rules}
-    L = [f"# Coverage of {rules_name} on {split}" + (f" ({area})" if area else "")
-         + (f", comments missed by {misses_of}" if misses_of else ""), "",
-         f"- comments checked: {len(hits)} of {len(cs)}; explained by some entry: {len(covered)} "
-         f"({len(covered) / max(len(hits), 1):.0%})",
-         f"- entries used at least once: {len(use)} of {len(rules)}; cost ${spent:.2f}", "",
-         "| entry | kind | train PRs | held-out comments explained | rule |", "| --- | --- | --- | --- | --- |"]
-    for rid, n in use.most_common():
-        r = byid[rid]
-        L.append(f"| {rid} | {r.get('kind')} | {r.get('n_prs')} | {n} | When {r.get('when')}: {(r.get('expect') or '')[:100]} |")
-    (REPORTS / f"coverage_{rules_name}_{split}.md").write_text("\n".join(L) + "\n")
-    (REPORTS / f"coverage_{rules_name}_{split}.json").write_text(json.dumps(
-        [{"comment": i, "pr": next(c["pr"] for c in cs if c["id"] == i), "rules": rs} for i, rs in hits.items() if rs], indent=1))
-    return "\n".join(L[:5])
-
-
-TEST_RESULTS = ("corrected", "both-hit", "both-miss", "uncited-gain", "regressed")
-
-
-def record_test(name: str, rule: str, target: str, control: str, treated: str, result: str, note: str = "",
-                comments: list[int] | None = None) -> None:
-    """Append one A/B record to entry `rule` of rules/<name>.jsonl (entry field "tests").
-
-    A fair target is a PR the rule was not distilled from whose diff ADDS code meeting the rule's
-    condition (moved code does not count), reviewed by `control` (same prompt, without the rule) and
-    `treated` (with it). result: corrected = control missed, treated hit citing the rule; both-hit /
-    both-miss = no signal; uncited-gain = treated hit without citing it; regressed = treated lost a hit.
-    `comments`: the human comment ids the rule is tested on (what `lmreview regress` replays and checks).
-    """
-    if result not in TEST_RESULTS:
-        raise ValueError(f"result must be one of {TEST_RESULTS}")
-    path = book_path(name)
-    rules = [json.loads(l) for l in path.open() if l.strip()]
-    hit = [r for r in rules if r["id"] == rule]
-    if not hit:
-        raise KeyError(f"{rule} not in {name}")
-    hit[0].setdefault("tests", []).append({"target": target, "control": control, "with": treated,
-                                           "result": result, "note": note, "comments": comments or [],
-                                           "date": dt.date.today().isoformat()})
-    path.write_text("".join(json.dumps(r) + "\n" for r in rules))
-
-
-def audit(name: str, cfg: Config | None = None) -> str:
-    """Free checks that suggest retiring entries of rules/<name> (it never changes the rulebook).
-
-    - paths gone: the entry's path globs match no file on dev any more
-    - judged invalid: findings that cite the entry (runs of reviewers using this rulebook) and how
-      the judge rated them
-    - contested: later human comments asked for the opposite (set by distill's revise step)
-    - tests: the entry's A/B records (see record_test); "corrected" = the control missed, the rule
-      reviewer hit with a finding citing the entry. An active entry with no corrected test is a candidate.
-    Writes reports/audit_<name>.md; returns it.
-    """
-    from .reviewer import parse_reviewer
-    cfg = cfg or Config()
-    rules = [json.loads(l) for l in book_path(name).open() if l.strip()]
-    files = subprocess.run(["git", "-C", str(cfg.repo), "ls-tree", "-r", "--name-only", "origin/dev"],
-                           capture_output=True, text=True, check=True).stdout.split()
-    cited, valid = C.Counter(), C.Counter()
-    for d in (cfg.data / "runs").iterdir():
-        try:
-            uses = d.is_dir() and not d.name.startswith("_") and parse_reviewer(d.name.split("#")[0])[1] == name
-        except ValueError:
-            uses = False
-        if not uses:
-            continue
-        for p in d.glob("*.json"):
-            run = json.loads(p.read_text())
-            sp = cfg.data / "scores" / d.name / p.name
-            judged = {a["id"]: a.get("valid") for a in json.loads(sp.read_text()).get("ai", [])} if sp.exists() else {}
-            for f in run.get("findings") or []:
-                for rule in finding_rules(f):
-                    cited[rule] += 1
-                    valid[rule] += judged.get(f["id"]) is True
-    L = [f"# Audit of rulebook {name}", "", "Suggestions only; retiring an entry is a decision.", "",
-         "| entry | status | v | evidence PRs | paths on dev | findings citing it | judged valid | tests (corrected/run) "
-         "| suggestion |",
-         "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
-    for r in rules:
-        gone = bool(r.get("paths")) and not any(fnmatch.fnmatch(f, g) for g in r["paths"] for f in files)
-        n, ok = cited[r["id"]], valid[r["id"]]
-        why = (["retire? paths gone"] if gone else []) + (["review: mostly judged invalid"] if n >= 3 and ok / n < 0.5 else []) \
-            + ([f"contested by {len(r['contested'])} comments"] if r.get("contested") else [])
-        tests = r.get("tests") or []
-        fixed = sum(t["result"] == "corrected" for t in tests)
-        if r.get("status", "active") == "active" and not fixed:
-            why.append("candidate: no corrected test" + ("" if tests else " (no target yet)"))
-        L.append(f"| {r['id']} | {r.get('status', 'active')} | {r.get('version', 1)} | {r.get('n_prs')} | "
-                 f"{'gone' if gone else 'ok'} | {n} | {ok} | {fixed}/{len(tests)} | {'; '.join(why)} |")
-    (REPORTS / f"audit_{name}.md").write_text("\n".join(L) + "\n")
-    return "\n".join(L)
-

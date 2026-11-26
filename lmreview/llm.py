@@ -68,15 +68,73 @@ def _tape_replay(prompt, effort, tools, system, model) -> dict | None:
             for line in pathlib.Path(TAPE).open():
                 d = json.loads(line)
                 _tape.setdefault(d["key"], []).append(d["out"])
+        if not _tape.get(k):  # same lines in another order (parallel drafts joined as they finish)?
+            k = _tape_reordered(prompt, effort, tools, system, model) or _tape_similar(prompt, effort, tools, system, model) or k
         if not _tape.get(k):
             miss = pathlib.Path(TAPE).with_suffix(".miss.jsonl")
             with miss.open("a") as f:
                 f.write(json.dumps({"key": k, "caller": _caller(), "effort": effort, "tools": tools,
-                                    "model": model, "prompt": prompt[:4000]}) + "\n")
+                                    "model": model, "prompt": prompt}) + "\n")
             raise RuntimeError(f"tape miss {k[:12]} ({_caller()})")
         out = _tape[k].pop(0)
         SPENT += float(out.get("cost") or 0)
     return {**out, "effort": effort}
+
+
+_tape_logged: dict[str, list[str]] | None = None
+
+
+def _tape_reordered(prompt, effort, tools, system, model) -> str | None:
+    """The key of a recorded call whose prompt has the same lines in another order, found through the
+    prompts the recording run logged (LMREVIEW_TAPE_LOGS: their data/logs dir); each such hit is noted."""
+    global _tape_logged
+    import hashlib
+    logs = os.environ.get("LMREVIEW_TAPE_LOGS")
+    if not logs:
+        return None
+    lines = lambda t: hashlib.sha256("\n".join(sorted(t.splitlines())).encode()).hexdigest()
+    if _tape_logged is None:
+        _tape_logged = {}
+        for f in pathlib.Path(logs).glob("*/calls/*.prompt.md"):
+            t = f.read_bytes().decode()  # as written: read_text would turn \r\n into \n
+            _tape_logged.setdefault(lines(t), []).append(t)
+    for t in _tape_logged.get(lines(prompt), []):
+        k = _tape_key(t, effort, tools, system, model)
+        if _tape.get(k):
+            with pathlib.Path(TAPE).with_suffix(".reordered.jsonl").open("a") as f:
+                f.write(json.dumps({"key": k, "caller": _caller()}) + "\n")
+            return k
+    return None
+
+
+def _tape_similar(prompt, effort, tools, system, model) -> str | None:
+    """With LMREVIEW_TAPE_FUZZY: the unused recorded call whose prompt is closest (ratio >= 0.9). Calls with
+    the same inputs run in parallel get different answers, and a replay can hand them out in another
+    order, so later prompts carry the other answer's text; each such hit is noted with its diff to check."""
+    import difflib
+    if not os.environ.get("LMREVIEW_TAPE_FUZZY") or not _tape_logged:
+        return None
+    best = None
+    for ts in _tape_logged.values():
+        for t in ts:
+            if abs(len(t) - len(prompt)) > 0.1 * len(prompt):
+                continue
+            k = _tape_key(t, effort, tools, system, model)
+            if not _tape.get(k):
+                continue
+            sm = difflib.SequenceMatcher(None, t, prompt, autojunk=False)
+            if sm.quick_ratio() < 0.9 or (best and sm.quick_ratio() <= best[0]):
+                continue
+            r = sm.ratio()
+            if r >= 0.9 and (not best or r > best[0]):
+                best = (r, k, t)
+    if not best:
+        return None
+    diff = [x for x in difflib.unified_diff(best[2].splitlines(), prompt.splitlines(), lineterm="", n=0)
+            if x[:1] in "+-" and x[:3] not in ("+++", "---")]
+    with pathlib.Path(TAPE).with_suffix(".fuzzy.jsonl").open("a") as f:
+        f.write(json.dumps({"key": best[1], "caller": _caller(), "ratio": round(best[0], 4), "diff": diff}) + "\n")
+    return best[1]
 
 
 def _tape_record(prompt, effort, tools, system, model, out: dict) -> None:

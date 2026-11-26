@@ -66,9 +66,13 @@ after it: every reply with who wrote it, and whether the thread was resolved and
   stated one). Describe this comment; do not write a rule: rules are written later, from all the
   findings and the whole rulebook together. When the team took only part of the comment (the author
   adopted one ask and argued down another, and no reviewer insisted on it), it is "learnable" and
-  "asks" covers only the part that was taken. A comment is "learnable" only if the comment or its
-  thread makes the motivation clear: what is wrong with the code as written, what it would cause, or
-  the standard it breaks. Without that, it is "not_issue", even if the author made the change.
+  "asks" covers only the part that was taken. A comment is "learnable" only if its motivation is clear:
+  the comment or its thread states it (what is wrong with the code as written, what it would cause, or
+  the standard it breaks), or the hunk and the suggestion together make it evident, so that you can
+  name the kind of problem the change fixes (e.g. a hand-written loop next to "use itertools.groupby":
+  re-implementing the standard library). Then put that reason in "asks", marked "(inferred)". That the
+  author made the change supports this but is not enough alone. When neither the thread nor the code
+  shows a reason (a bare preference, a question), it is "not_issue".
   Judge the whole thread: a comment that opens with a question is "learnable" when a later reply
   (the author's explanation, or the reviewer's follow-up) turns it into such an ask. Marking an ask
   "nit" does not make it "not_issue". An author who agrees with the point but defers the change (adds a
@@ -77,9 +81,9 @@ after it: every reply with who wrote it, and whether the thread was resolved and
 - "context": it needs knowledge outside the code (an offline decision, roadmap, where code should live
   across projects, another PR's state). Decide this before "contested": an author's reply does not make
   a roadmap question a code standard.
-- "not_issue": a question, praise, or nothing actionable; also an ask whose motivation neither the
-  comment nor its thread makes clear (a bare preference, or a question the thread never answers with a
-  problem in the code).
+- "not_issue": a question, praise, or nothing actionable; also an ask whose motivation the thread does
+  not state and the code does not make evident (a bare preference, or a question the thread never
+  answers with a problem in the code).
 - "rejected": the team took no part of the suggestion: the reviewer (or another reviewer) withdrew it,
   agreed with the author's objection, or resolved the thread with the code left as it was; or the
   file never changed again and nothing in the discussion shows the change was made in other files.
@@ -2029,10 +2033,9 @@ def attribute(cs: list[dict], effort: str, cfg: Config, workers: int, max_cost: 
     """Attribute comments `cs` (ATTRIBUTE): one call, then a second, independent one on every comment.
 
     One call alone neither learns a comment (a rule written from a comment that only confirmed the code)
-    nor drops it. Where the two disagree on learnable vs not, a third call decides by majority (the
-    attribution kept is the third's when it says learnable, else that of the first two calls that sided
-    with it); with no third answer
-    (cost cap, garbled) the comment stays open as "unconfirmed" and a later attempt asks again.
+    nor drops it. A comment is learned only when both calls say "learnable"; where they disagree it is
+    "unclear" (no third call: kept apart for a person); with no second answer (cost cap, garbled) the
+    comment stays open as "unconfirmed" and a later attempt asks again.
 
     Args:
         cs: the comments (with their hunk, later changes and discussion; see _fmt).
@@ -2061,20 +2064,20 @@ def attribute(cs: list[dict], effort: str, cfg: Config, workers: int, max_cost: 
     second, c2 = ask(split(list(first)), "recheck", max(0.0, max_cost - spent))
     spent += c2
     learn = lambda a: (a or {}).get("kind") == "learnable"  # noqa: E731
+    # learnable needs both calls; where they disagree the comment is "unclear" (2026-11-26: a third call
+    # made ~10% of comments a coin flip between learned and dropped; unclear ones are kept apart, for a person)
     split_ids = [i for i in first if i in second and learn(first[i]) != learn(second[i])]
-    third: dict = {}
     if split_ids:
-        note(f"      third opinion on {len(split_ids)} comments the two calls disagree on")
-        third, c3 = ask(split(split_ids), "tiebreak", max(0.0, max_cost - spent))
-        spent += c3
+        note(f"      {len(split_ids)} comments unclear: the two calls disagree on whether they are learnable")
     att = []
     for i, a in first.items():
-        b, t = second.get(i), third.get(i)
-        if b is None or (i in split_ids and t is None):
-            a = {**a, "first": a.get("kind"), "second": (b or {}).get("kind"), "kind": "unconfirmed"}
+        b = second.get(i)
+        if b is None:
+            a = {**a, "first": a.get("kind"), "second": None, "kind": "unconfirmed"}
         elif i in split_ids:
-            votes = [a.get("kind"), b.get("kind"), t.get("kind")]
-            a = {**(t if learn(t) else a if learn(a) == learn(t) else b), "second": b.get("kind"), "votes": votes}
+            nl = b if learn(a) else a  # the call that found no lesson says why
+            a = {**a, "kind": "unclear", "votes": [a.get("kind"), b.get("kind")], "second": b.get("kind"),
+                 "why": f"{nl.get('kind')}: {nl.get('why') or ''}"}
         else:
             a = {**a, "second": b.get("kind")}
         att.append({**a, "id": i})

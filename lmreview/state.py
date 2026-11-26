@@ -592,7 +592,7 @@ def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: 
         n_out = 0
         for a in map(json.loads, att.open()) if att.exists() else []:
             r = rows.get(a.get("id"))
-            if r and a.get("kind") in ("context", "not_issue", "rejected"):  # two calls agreed (distill.py)
+            if r and a.get("kind") in ("context", "not_issue", "rejected", "unclear"):  # two calls agreed, or disagreed (unclear)
                 r.update(status="not_rulable", note=f"{a['kind']}: {a.get('reason') or a.get('why') or ''}"[:300])
                 n_out += 1
             elif r and a.get("kind") == "contested":  # only the PR author objected: a person decides

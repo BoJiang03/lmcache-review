@@ -27,3 +27,15 @@
 - Apply on the real state for the 30 pilot+holdout samples: one-time
   `retain --covered --reviewer pdba46ca9+v0032@medium-rc` (cached), then distill + vet (~$15).
 - Push of b35c462, 3023a1b and this record needs "push吧".
+
+## Free estimate: union of 2 runs (cached runs only, $0)
+Script: jobs tmp union_est.py. Data: pdba46ca9+v0032@medium-rc runs 1–4 (the same runs as p990f2d2e) on pilot+holdout,
+101 points (65 with 2 runs, 22 with 3, 14 with 4). 2/2 estimated per point as q² (single: est 78%, observed 76%).
+| | per-run hit | est 2/2 | cost / sample |
+|---|---|---|---|
+| single (production) | 82% | 78% | $0.88 |
+| rule check ×2, union | 85% | 82% | +36% |
+| whole review ×2, union | 88% | 86% | +100% |
+- 14 hard points with 4 runs (direct): 42% → 50% (rc union) / 52% (full union).
+- Rule check findings: 32% invalid (main 12%). 39 / 193 hits came only from the rule check.
+- Misses are correlated across runs, not coin flips: sampling more buys little. Not worth the cost.

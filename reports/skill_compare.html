@@ -1,19 +1,19 @@
-<title>lmreview vs /pr-review and /code-review</title>
+<title>lmreview vs review skills</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&family=JetBrains+Mono:wght@400&display=swap">
 <style>
 /* Layout: one reading column; numbers in tables, recall as bars */
 :root{
   --bg:#f7f8fa; --panel:#ffffff; --fg:#1b2230; --muted:#5d6878; --line:#dde2ea;
-  --ours:#2f6fde; --skill:#9a6a1f; --cc:#7a5bc7; --good:#1f8a52; --warn:#b5651d;
+  --ours:#2f6fde; --skill:#9a6a1f; --cc:#7a5bc7; --ak:#17817c; --good:#1f8a52; --warn:#b5651d;
   --display:"Space Grotesk",system-ui,sans-serif; --body:"Inter",system-ui,"PingFang SC","Microsoft YaHei",sans-serif; --mono:"JetBrains Mono",ui-monospace,monospace;
 }
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
   --bg:#12161d; --panel:#1a2029; --fg:#e6eaf0; --muted:#9aa5b5; --line:#2c3440;
-  --ours:#6b9cf2; --skill:#d6a25a; --cc:#a98ef0; --good:#4cc286; --warn:#e0975a; color-scheme:dark}}
+  --ours:#6b9cf2; --skill:#d6a25a; --cc:#a98ef0; --ak:#4cc6c0; --good:#4cc286; --warn:#e0975a; color-scheme:dark}}
 :root[data-theme="dark"]{
   --bg:#12161d; --panel:#1a2029; --fg:#e6eaf0; --muted:#9aa5b5; --line:#2c3440;
-  --ours:#6b9cf2; --skill:#d6a25a; --cc:#a98ef0; --good:#4cc286; --warn:#e0975a; color-scheme:dark}
+  --ours:#6b9cf2; --skill:#d6a25a; --cc:#a98ef0; --ak:#4cc6c0; --good:#4cc286; --warn:#e0975a; color-scheme:dark}
 body{background:var(--bg);color:var(--fg);font-family:var(--body);line-height:1.6;
   padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:32px 56px}
 main{max-width:860px;margin:0 auto;display:flex;flex-direction:column;gap:28px}
@@ -30,14 +30,14 @@ table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font
 th,td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
 th:first-child,td:first-child{text-align:left}
 thead th{color:var(--muted);font-weight:500;font-size:.82rem;text-transform:uppercase;letter-spacing:.04em}
-a{color:var(--ours)} td.o{color:var(--ours);font-weight:600} td.s{color:var(--skill)} td.c{color:var(--cc)}
+a{color:var(--ours)} td.o{color:var(--ours);font-weight:600} td.s{color:var(--skill)} td.c{color:var(--cc)} td.a{color:var(--ak)}
 .win{color:var(--good);font-weight:600}
 .bars{display:grid;grid-template-columns:auto 1fr auto;gap:6px 10px;align-items:center;font-variant-numeric:tabular-nums;font-size:.9rem}
 .bar{height:12px;border-radius:3px}
-.b-o{background:var(--ours)} .b-s{background:var(--skill)} .b-c{background:var(--cc)}
-.legend{display:flex;gap:16px;font-size:.85rem;color:var(--muted);margin-bottom:8px}
+.b-o{background:var(--ours)} .b-s{background:var(--skill)} .b-c{background:var(--cc)} .b-a{background:var(--ak)}
+.legend{display:flex;flex-wrap:wrap;gap:16px;font-size:.85rem;color:var(--muted);margin-bottom:8px}
 .legend span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
-.lo::before{background:var(--ours)} .ls::before{background:var(--skill)} .lc::before{background:var(--cc)}
+.lo::before{background:var(--ours)} .ls::before{background:var(--skill)} .lc::before{background:var(--cc)} .la::before{background:var(--ak)}
 ul{margin:4px 0 0;padding-left:20px} li{margin:3px 0}
 code{font-family:var(--mono);font-size:.85em}
 .note{color:var(--muted);font-size:.88rem}
@@ -48,152 +48,148 @@ code{font-family:var(--mono);font-size:.85em}
 <div class="langbar"><button id="lang" type="button">中文</button></div>
 <main id="en" lang="en">
 <header>
-<h1>lmreview vs /pr-review and /code-review</h1>
-<p class="sub">20 historical PR samples: 10 learned, 10 unlearned. All three run on Opus 5.5 at medium effort, replayed offline, and graded by the same blind judge. 2026-11-26.</p>
+<h1>lmreview vs /pr-review, /anthropic-skills:pr-review and /code-review</h1>
+<p class="sub">20 historical PR samples: 10 learned, 10 unlearned. All four run on Opus 5.5 at medium effort, replayed offline, and graded by the same blind judge. 2026-11-26.</p>
 </header>
 
 <section>
-<h2>The three reviewers</h2>
+<h2>The four reviewers</h2>
 <div class="tw"><table>
 <thead><tr><th>Name</th><th>Source</th><th>Version used</th></tr></thead>
 <tbody>
 <tr><td><b>lmreview</b></td><td style="text-align:left;white-space:normal">Our own reviewer (repo <code>BoJiang03/lmcache-review</code>). Besides the main review it runs a rule check against a rulebook learned from LMCache maintainers' past review comments.</td><td style="text-align:left;white-space:normal">Production config <code>p990f2d2e+v0032@medium-rc</code>: main review on Opus medium; rule check on medium, checking each of the 49 rules in rulebook v0032, in parallel with the main review.</td></tr>
-<tr><td><b>/pr-review</b></td><td style="text-align:left;white-space:normal">The Claude Code skill shipped in the LMCache repo: <code>.claude/skills/pr-review/SKILL.md</code>, which reads <code>docs/coding_standards.md</code>. Written by LMCache maintainers.</td><td style="text-align:left;white-space:normal">The version on LMCache dev at d0959e0 (2026-11-09): SKILL.md last changed in bed12fc (2026-11-08), coding_standards.md in 5b9db86 (2026-11-06). Every sample used this version, not the one current at the PR's time.</td></tr>
-<tr><td><b>/code-review</b></td><td style="text-align:left;white-space:normal">The skill built into Claude Code. It works in any repo as <code>/code-review</code> and knows nothing specific to LMCache.</td><td style="text-align:left;white-space:normal">The version in Claude Code 2.1.332, run as <code>/code-review medium</code>, the way a developer reviews local changes: the PR's diff as uncommitted changes, with no PR description, past comments or coding standards.</td></tr>
+<tr><td><b>/pr-review</b></td><td style="text-align:left;white-space:normal">The Claude Code skill shipped in the LMCache repo: <code>.claude/skills/pr-review/SKILL.md</code>, which reads <code>docs/coding_standards.md</code>. Written by LMCache maintainers.</td><td style="text-align:left;white-space:normal">The version on LMCache dev at d0959e0 (2026-11-09): SKILL.md last changed in bed12fc (2026-11-08), coding_standards.md in 5b9db86 (2026-11-06). Every sample used this version, not the one current at the PR’s time.</td></tr>
+<tr><td><b>/anthropic-skills:pr-review</b></td><td style="text-align:left;white-space:normal">A general-purpose PR review skill shared through our claude.ai organization; it shows up in Claude Code as <code>/anthropic-skills:pr-review</code>. Not specific to LMCache and does not read <code>coding_standards.md</code>. It looks for DESIGN.md / ARCHITECTURE.md under the changed directories and reads CLAUDE.md / AGENTS.md, then checks design-doc compliance, code quality, correctness, thread safety and test coverage.</td><td style="text-align:left;white-space:normal">The copy synced to this machine (2026-09-21, SKILL.md sha256 15e064d3d8ce). Installed in each sample’s workspace in place of the repo’s own pr-review, and run offline like /pr-review: PR metadata in the prompt and the diff from local git instead of <code>gh</code>.</td></tr>
+<tr><td><b>/code-review</b></td><td style="text-align:left;white-space:normal">The skill built into Claude Code. It works in any repo as <code>/code-review</code> and knows nothing specific to LMCache.</td><td style="text-align:left;white-space:normal">The version in Claude Code 2.1.332, run as <code>/code-review medium</code>, the way a developer reviews local changes: the PR’s diff as uncommitted changes, with no PR description, past comments or coding standards.</td></tr>
 </tbody></table></div>
 </section>
 
 <section>
-<h2>Verdict: three-way comparison</h2>
+<h2>Verdict</h2>
 <p class="sub">Cost and time are per-sample averages.</p>
 <div class="tw"><table>
-<thead><tr><th></th><th>lmreview</th><th>/pr-review</th><th>/code-review</th></tr></thead>
+<thead><tr><th></th><th>lmreview</th><th>/pr-review</th><th>/anthropic-skills:pr-review</th><th>/code-review</th></tr></thead>
 <tbody>
-<tr><td colspan="4" style="text-align:left;color:var(--muted)">10 learned PRs (47 human points)</td></tr>
-<tr><td>Recall</td><td class="o win">83%</td><td class="s">51%</td><td class="c">28%</td></tr>
-<tr><td>Cost</td><td class="o">$0.96</td><td class="s">$0.87</td><td class="c win">$0.59</td></tr>
-<tr><td>Time</td><td class="o">90 s</td><td class="s">118 s</td><td class="c win">87 s</td></tr>
-<tr><td colspan="4" style="text-align:left;color:var(--muted)">10 unlearned PRs (31 human points)</td></tr>
-<tr><td>Recall</td><td class="o win">71%</td><td class="s">65%</td><td class="c">42%</td></tr>
-<tr><td>Cost</td><td class="o">$1.16</td><td class="s">$1.18</td><td class="c win">$0.78</td></tr>
-<tr><td>Time</td><td class="o win">114 s</td><td class="s">159 s</td><td class="c">127 s</td></tr>
+<tr><td colspan="5" style="text-align:left;color:var(--muted)">10 learned PRs (47 human points)</td></tr>
+<tr><td>Recall</td><td class="o win">83%</td><td class="s">51%</td><td class="a">49%</td><td class="c">28%</td></tr>
+<tr><td>Cost</td><td class="o">$0.96</td><td class="s">$0.87</td><td class="a">$0.79</td><td class="c win">$0.59</td></tr>
+<tr><td>Time</td><td class="o">90 s</td><td class="s">118 s</td><td class="a">106 s</td><td class="c win">87 s</td></tr>
+<tr><td colspan="5" style="text-align:left;color:var(--muted)">10 unlearned PRs (31 human points)</td></tr>
+<tr><td>Recall</td><td class="o win">71%</td><td class="s">65%</td><td class="a">65%</td><td class="c">42%</td></tr>
+<tr><td>Cost</td><td class="o">$1.16</td><td class="s">$1.18</td><td class="a">$1.05</td><td class="c win">$0.78</td></tr>
+<tr><td>Time</td><td class="o win">114 s</td><td class="s">159 s</td><td class="a">157 s</td><td class="c">127 s</td></tr>
 </tbody></table></div>
 <ul style="margin-top:12px">
-<li><b>Recall</b>: lmreview is first in both groups, with the widest lead on learned PRs (83% vs 51% and 28%). Every point the other two caught, lmreview caught too. All three tie on blockers; the gap is at major and below.</li>
-<li><b>Cost</b>: /code-review is cheapest; it reviews shallowly. lmreview and /pr-review are close: $0.09 more on learned PRs, $0.02 less on unlearned.</li>
-<li><b>Time</b>: lmreview and /code-review are close; /pr-review is slowest.</li>
-<li><b>Against the target</b> (match on unlearned, beat on learned, for recall, cost and time alike): vs /pr-review, met except for the $0.09 extra cost on learned PRs. Vs /code-review, far ahead on recall, not yet matched on cost.</li>
+<li><b>Recall</b>：lmreview is first in both groups, with the widest lead on learned PRs (83% vs 51%, 49% and 28%). Of all the points the other three caught, lmreview missed only one (a minor that only /anthropic-skills:pr-review caught). All four tie on blockers; the gap is at major and below. The two pr-review skills are about even.</li>
+<li><b>Cost</b>：/code-review is cheapest; it reviews shallowly. Then /anthropic-skills:pr-review, then /pr-review and lmreview. lmreview costs $0.17 more than /anthropic-skills:pr-review on learned PRs and $0.11 more on unlearned.</li>
+<li><b>Time</b>：lmreview and /code-review are fastest; the two pr-review skills are slowest.</li>
+<li><b>Against the target</b> (match on unlearned, beat on learned, for recall, cost and time alike)：recall and time are met against all three. Cost is not yet: lmreview is $0.09 above /pr-review on learned PRs, $0.11–0.17 above /anthropic-skills:pr-review, and $0.37–0.38 above /code-review.</li>
 </ul>
 </section>
 
 <section>
 <h2>Recall of human review points</h2>
-<div class="legend"><span class="lo">lmreview</span><span class="ls">/pr-review</span><span class="lc">/code-review</span></div>
+<div class="legend"><span class="lo">lmreview</span><span class="ls">/pr-review</span><span class="la">/anthropic-skills:pr-review</span><span class="lc">/code-review</span></div>
 <div class="bars">
 <div class="grp" style="grid-column:1/-1">Learned (47 points)</div>
 <span>lmreview (main review + rule check)</span><div class="bar b-o" style="width:83%"></div><span>39/47 · 83%</span>
 <span>lmreview (main review)</span><div class="bar b-o" style="width:64%;opacity:.55"></div><span>30/47 · 64%</span>
 <span>/pr-review</span><div class="bar b-s" style="width:51%"></div><span>24/47 · 51%</span>
+<span>/anthropic-skills:pr-review</span><div class="bar b-a" style="width:49%"></div><span>23/47 · 49%</span>
 <span>/code-review</span><div class="bar b-c" style="width:28%"></div><span>13/47 · 28%</span>
 <div class="grp" style="grid-column:1/-1">Unlearned (31 points)</div>
 <span>lmreview (main review + rule check)</span><div class="bar b-o" style="width:71%"></div><span>22/31 · 71%</span>
 <span>lmreview (main review)</span><div class="bar b-o" style="width:65%;opacity:.55"></div><span>20/31 · 65%</span>
 <span>/pr-review</span><div class="bar b-s" style="width:65%"></div><span>20/31 · 65%</span>
+<span>/anthropic-skills:pr-review</span><div class="bar b-a" style="width:65%"></div><span>20/31 · 65%</span>
 <span>/code-review</span><div class="bar b-c" style="width:42%"></div><span>13/31 · 42%</span>
 </div>
-<div class="tw" style="margin-top:14px"><table>
-<thead><tr><th>Points only one side caught</th><th>Learned</th><th>Unlearned</th></tr></thead>
-<tbody>
-<tr><td>lmreview, not /pr-review</td><td class="o">15 (major 5, minor 4, nit 6)</td><td class="o">2 (minor 2)</td></tr>
-<tr><td>/pr-review, not lmreview</td><td>0</td><td>0</td></tr>
-<tr><td>lmreview, not /code-review</td><td class="o">26 (major 8, minor 9, nit 9)</td><td class="o">9 (major 3, minor 6)</td></tr>
-<tr><td>/code-review, not lmreview</td><td>0</td><td>0</td></tr>
-<tr><td>/pr-review, not /code-review</td><td class="s">14 (major 5, minor 6, nit 3)</td><td class="s">7 (major 3, minor 4)</td></tr>
-<tr><td>/code-review, not /pr-review</td><td class="c">3 (major 2, minor 1)</td><td>0</td></tr>
-</tbody></table></div>
-<p class="note" style="margin-top:8px">Questions in human comments are not counted.</p>
+<p style="margin-top:14px">Points only one side caught: each cell counts points the row caught and the column missed.</p>
+<div class="tw" style="margin-top:12px"><table><thead><tr><th>Learned</th><th>lmreview</th><th>/pr-review</th><th>/anthropic-skills:pr-review</th><th>/code-review</th></tr></thead><tbody><tr><td class="o">lmreview</td><td>–</td><td>15</td><td>17</td><td>26</td></tr><tr><td class="s">/pr-review</td><td>0</td><td>–</td><td>5</td><td>14</td></tr><tr><td class="a">/anthropic-skills:pr-review</td><td>1</td><td>4</td><td>–</td><td>11</td></tr><tr><td class="c">/code-review</td><td>0</td><td>3</td><td>1</td><td>–</td></tr></tbody></table></div>
+<div class="tw" style="margin-top:12px"><table><thead><tr><th>Unlearned</th><th>lmreview</th><th>/pr-review</th><th>/anthropic-skills:pr-review</th><th>/code-review</th></tr></thead><tbody><tr><td class="o">lmreview</td><td>–</td><td>2</td><td>2</td><td>9</td></tr><tr><td class="s">/pr-review</td><td>0</td><td>–</td><td>2</td><td>7</td></tr><tr><td class="a">/anthropic-skills:pr-review</td><td>0</td><td>2</td><td>–</td><td>8</td></tr><tr><td class="c">/code-review</td><td>0</td><td>0</td><td>1</td><td>–</td></tr></tbody></table></div>
+<p class="note" style="margin-top:8px">lmreview’s extra points on learned PRs: vs /pr-review major 5, minor 4, nit 6; vs /anthropic-skills:pr-review major 6, minor 4, nit 7; vs /code-review major 8, minor 9, nit 9. Questions in human comments are not counted.</p>
 </section>
 
 <section>
 <h2>Recall by severity</h2>
 <div class="tw"><table>
-<thead><tr><th>Severity</th><th>lmreview</th><th>/pr-review</th><th>/code-review</th></tr></thead>
+<thead><tr><th>Severity</th><th>lmreview</th><th>/pr-review</th><th>/anthropic-skills:pr-review</th><th>/code-review</th></tr></thead>
 <tbody>
-<tr><td colspan="4" style="text-align:left;color:var(--muted)">Learned</td></tr>
-<tr><td>major</td><td class="o win">13/14</td><td class="s">8/14</td><td class="c">5/14</td></tr>
-<tr><td>minor</td><td class="o win">17/21</td><td class="s">13/21</td><td class="c">8/21</td></tr>
-<tr><td>nit</td><td class="o win">9/12</td><td class="s">3/12</td><td class="c">0/12</td></tr>
-<tr><td colspan="4" style="text-align:left;color:var(--muted)">Unlearned</td></tr>
-<tr><td>blocker</td><td class="o">4/5</td><td class="s">4/5</td><td class="c">4/5</td></tr>
-<tr><td>major</td><td class="o">5/6</td><td class="s">5/6</td><td class="c">2/6</td></tr>
-<tr><td>minor</td><td class="o win">10/14</td><td class="s">8/14</td><td class="c">4/14</td></tr>
-<tr><td>nit</td><td class="o">3/6</td><td class="s">3/6</td><td class="c">3/6</td></tr>
-<tr><td colspan="4" style="text-align:left;color:var(--muted)">Total</td></tr>
-<tr><td>blocker</td><td class="o">4/5</td><td class="s">4/5</td><td class="c">4/5</td></tr>
-<tr><td>major</td><td class="o win">18/20</td><td class="s">13/20</td><td class="c">7/20</td></tr>
-<tr><td>minor</td><td class="o win">27/35</td><td class="s">21/35</td><td class="c">12/35</td></tr>
-<tr><td>nit</td><td class="o win">12/18</td><td class="s">6/18</td><td class="c">3/18</td></tr>
+<tr><td colspan="5" style="text-align:left;color:var(--muted)">Learned</td></tr>
+<tr><td>major</td><td class="o win">13/14</td><td class="s">8/14</td><td class="a">7/14</td><td class="c">5/14</td></tr>
+<tr><td>minor</td><td class="o win">17/21</td><td class="s">13/21</td><td class="a">14/21</td><td class="c">8/21</td></tr>
+<tr><td>nit</td><td class="o win">9/12</td><td class="s">3/12</td><td class="a">2/12</td><td class="c">0/12</td></tr>
+<tr><td colspan="5" style="text-align:left;color:var(--muted)">Unlearned</td></tr>
+<tr><td>blocker</td><td class="o">4/5</td><td class="s">4/5</td><td class="a">4/5</td><td class="c">4/5</td></tr>
+<tr><td>major</td><td class="o">5/6</td><td class="s">5/6</td><td class="a">5/6</td><td class="c">2/6</td></tr>
+<tr><td>minor</td><td class="o win">10/14</td><td class="s">8/14</td><td class="a">8/14</td><td class="c">4/14</td></tr>
+<tr><td>nit</td><td class="o">3/6</td><td class="s">3/6</td><td class="a">3/6</td><td class="c">3/6</td></tr>
+<tr><td colspan="5" style="text-align:left;color:var(--muted)">Total</td></tr>
+<tr><td>blocker</td><td class="o">4/5</td><td class="s">4/5</td><td class="a">4/5</td><td class="c">4/5</td></tr>
+<tr><td>major</td><td class="o win">18/20</td><td class="s">13/20</td><td class="a">12/20</td><td class="c">7/20</td></tr>
+<tr><td>minor</td><td class="o win">27/35</td><td class="s">21/35</td><td class="a">22/35</td><td class="c">12/35</td></tr>
+<tr><td>nit</td><td class="o win">12/18</td><td class="s">6/18</td><td class="a">5/18</td><td class="c">3/18</td></tr>
 </tbody></table></div>
-<p class="note">The learned group has no blocker-level human comments. On unlearned PRs lmreview leads /pr-review only at minor; on learned PRs it leads at every level, most at nit (9/12 vs 3/12), which is the maintainers' taste it learned from their comments.</p>
+<p class="note">The learned group has no blocker-level human comments. On unlearned PRs lmreview leads the two pr-review skills only at minor; on learned PRs it leads at every level, most at nit (9/12 vs 3/12 and 2/12), which is the maintainers’ taste it learned from their comments.</p>
 </section>
 
 <section>
 <h2>Cost and speed (per-sample average)</h2>
 <div class="tw"><table>
-<thead><tr><th></th><th>lmreview</th><th>/pr-review</th><th>/code-review</th></tr></thead>
+<thead><tr><th></th><th>lmreview</th><th>/pr-review</th><th>/anthropic-skills:pr-review</th><th>/code-review</th></tr></thead>
 <tbody>
-<tr><td colspan="4" style="text-align:left;color:var(--muted)">Learned</td></tr>
-<tr><td>Cost</td><td class="o">$0.96</td><td class="s">$0.87</td><td class="c win">$0.59</td></tr>
-<tr><td>&nbsp;&nbsp;of which</td><td style="white-space:normal">main review $0.58, rule check $0.36, dedupe $0.01</td><td style="white-space:normal">JSON extraction $0.10</td><td style="white-space:normal">JSON extraction $0.08</td></tr>
-<tr><td>Time</td><td class="o">90 s</td><td class="s">118 s</td><td class="c win">87 s</td></tr>
-<tr><td colspan="4" style="text-align:left;color:var(--muted)">Unlearned</td></tr>
-<tr><td>Cost</td><td class="o">$1.16</td><td class="s">$1.18</td><td class="c win">$0.78</td></tr>
-<tr><td>&nbsp;&nbsp;of which</td><td style="white-space:normal">main review $0.75, rule check $0.39, dedupe $0.02</td><td style="white-space:normal">JSON extraction $0.11</td><td style="white-space:normal">JSON extraction $0.09</td></tr>
-<tr><td>Time</td><td class="o win">114 s</td><td class="s">159 s</td><td class="c">127 s</td></tr>
+<tr><td colspan="5" style="text-align:left;color:var(--muted)">Learned</td></tr>
+<tr><td>Cost</td><td class="o">$0.96</td><td class="s">$0.87</td><td class="a">$0.79</td><td class="c win">$0.59</td></tr>
+<tr><td>&nbsp;&nbsp;of which</td><td style="white-space:normal">main review $0.58, rule check $0.36, dedupe $0.01</td><td style="white-space:normal">JSON extraction $0.10</td><td style="white-space:normal">JSON extraction $0.10</td><td style="white-space:normal">JSON extraction $0.08</td></tr>
+<tr><td>Time</td><td class="o">90 s</td><td class="s">118 s</td><td class="a">106 s</td><td class="c win">87 s</td></tr>
+<tr><td colspan="5" style="text-align:left;color:var(--muted)">Unlearned</td></tr>
+<tr><td>Cost</td><td class="o">$1.16</td><td class="s">$1.18</td><td class="a">$1.05</td><td class="c win">$0.78</td></tr>
+<tr><td>&nbsp;&nbsp;of which</td><td style="white-space:normal">main review $0.75, rule check $0.39, dedupe $0.02</td><td style="white-space:normal">JSON extraction $0.11</td><td style="white-space:normal">JSON extraction $0.12</td><td style="white-space:normal">JSON extraction $0.09</td></tr>
+<tr><td>Time</td><td class="o win">114 s</td><td class="s">159 s</td><td class="a">157 s</td><td class="c">127 s</td></tr>
 </tbody></table></div>
-<p class="note">lmreview runs the main review and the rule check in parallel, so its time is the longer of the two. /pr-review and /code-review write Markdown; one small call turns it into JSON, and that cost is counted against them.</p>
+<p class="note">lmreview runs the main review and the rule check in parallel, so its time is the longer of the two. The other three write Markdown; one small call turns it into JSON, and that cost is counted against them.</p>
 </section>
 
 <section>
 <h2>The 20 PRs</h2>
-<p class="sub">Points = review points in the human comments that a reviewer should raise (questions excluded). The three recall columns count the points each side caught; green marks the best on that PR. Cost is the review cost for that PR.</p>
+<p class="sub">Points = review points in the human comments that a reviewer should raise (questions excluded). The four recall columns count the points each side caught; green marks the best on that PR. Cost is the review cost for that PR.</p>
 <div class="tw"><table>
-<thead><tr><th>PR</th><th style="text-align:left">Title</th><th>Group</th><th>Points</th><th>lmreview</th><th>/pr-review</th><th>/code-review</th><th>lmreview cost</th><th>/pr-review cost</th><th>/code-review cost</th></tr></thead>
+<thead><tr><th>PR</th><th style="text-align:left">Title</th><th>Group</th><th>Points</th><th>lmreview</th><th>/pr-review</th><th>/anthropic-skills:pr-review</th><th>/code-review</th><th>lmreview cost</th><th>/pr-review cost</th><th>/anthropic-skills:pr-review cost</th><th>/code-review cost</th></tr></thead>
 <tbody>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/3210" target="_blank" rel="noopener">#3210</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Feature][RawBlock] Add multi-device sharding to the MP L2 adapter</td><td>learned</td><td>5</td><td class="o win">5</td><td class="s">3</td><td class="c">2</td><td>$1.10</td><td>$1.00</td><td>$0.51</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/3413" target="_blank" rel="noopener">#3413</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Perf] Avoid redundant PCIe transfer on leader rank during retrieve</td><td>learned</td><td>2</td><td class="o win">2</td><td class="s">1</td><td class="c">0</td><td>$0.57</td><td>$0.79</td><td>$0.50</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/3476" target="_blank" rel="noopener">#3476</a></td><td style="text-align:left;white-space:normal;min-width:16em">feat: Add MP server autostart for vLLM connector</td><td>learned</td><td>4</td><td class="o win">4</td><td class="s">0</td><td class="c">2</td><td>$1.03</td><td>$0.81</td><td>$0.58</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/3638" target="_blank" rel="noopener">#3638</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Bug] async_save_bytes_to_disk: add exception safety for write failures</td><td>learned</td><td>3</td><td class="o win">3</td><td class="s win">3</td><td class="c win">3</td><td>$0.48</td><td>$0.50</td><td>$0.40</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/3853" target="_blank" rel="noopener">#3853</a></td><td style="text-align:left;white-space:normal;min-width:16em">[GPU connector] Allow non-zero storage_offset in dim-0-padded layout</td><td>learned</td><td>2</td><td class="o win">2</td><td class="s win">2</td><td class="c">0</td><td>$0.62</td><td>$0.69</td><td>$0.51</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/3869" target="_blank" rel="noopener">#3869</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Prefetch sliding window 3/3] Load only KV cache in sliding window</td><td>learned</td><td>17</td><td class="o win">10</td><td class="s">6</td><td class="c">3</td><td>$1.83</td><td>$1.66</td><td>$1.10</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/3877" target="_blank" rel="noopener">#3877</a></td><td style="text-align:left;white-space:normal;min-width:16em">[MP][MUSA] add stage4-2 MP IPC event support</td><td>learned</td><td>4</td><td class="o win">4</td><td class="s win">4</td><td class="c">0</td><td>$1.61</td><td>$1.42</td><td>$0.61</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/4203" target="_blank" rel="noopener">#4203</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Serde] add ObjectKey to parameter</td><td>learned</td><td>2</td><td class="o win">1</td><td class="s win">1</td><td class="c win">1</td><td>$1.12</td><td>$0.68</td><td>$0.72</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/4367" target="_blank" rel="noopener">#4367</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Fix] Align LazyMemoryAllocator's buffer base to align_bytes</td><td>learned</td><td>3</td><td class="o win">3</td><td class="s">1</td><td class="c">0</td><td>$0.57</td><td>$0.55</td><td>$0.48</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/4687" target="_blank" rel="noopener">#4687</a></td><td style="text-align:left;white-space:normal;min-width:16em">fix(mp): detect server restarts from heartbeat tokens</td><td>learned</td><td>5</td><td class="o win">5</td><td class="s">3</td><td class="c">2</td><td>$0.71</td><td>$0.64</td><td>$0.50</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/4729" target="_blank" rel="noopener">#4729</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Refactor]: vLLM LBHNC KVLayout metadata</td><td>unlearned</td><td>3</td><td class="o win">2</td><td class="s win">2</td><td class="c">1</td><td>$2.42</td><td>$2.42</td><td>$1.55</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/5045" target="_blank" rel="noopener">#5045</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Feature] Add raw-block I/O attempt metrics</td><td>unlearned</td><td>6</td><td class="o win">3</td><td class="s win">3</td><td class="c">0</td><td>$1.34</td><td>$1.47</td><td>$0.96</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/5053" target="_blank" rel="noopener">#5053</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Perf][MP] Poll lookup status without blocking the scheduler</td><td>unlearned</td><td>4</td><td class="o win">4</td><td class="s win">4</td><td class="c">1</td><td>$0.93</td><td>$1.22</td><td>$0.61</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/5076" target="_blank" rel="noopener">#5076</a></td><td style="text-align:left;white-space:normal;min-width:16em">[feat][vllm] publish MP connector KV events</td><td>unlearned</td><td>2</td><td class="o win">1</td><td class="s win">1</td><td class="c win">1</td><td>$0.94</td><td>$1.20</td><td>$0.61</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/5159" target="_blank" rel="noopener">#5159</a></td><td style="text-align:left;white-space:normal;min-width:16em">feat: step1-support pluggable MP server modules</td><td>unlearned</td><td>2</td><td class="o">0</td><td class="s">0</td><td class="c">0</td><td>$1.53</td><td>$1.46</td><td>$1.08</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/5268" target="_blank" rel="noopener">#5268</a></td><td style="text-align:left;white-space:normal;min-width:16em">Fix scratch group blocking store metadata in hybrid models</td><td>unlearned</td><td>2</td><td class="o win">2</td><td class="s win">2</td><td class="c win">2</td><td>$0.69</td><td>$0.60</td><td>$0.54</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/5283" target="_blank" rel="noopener">#5283</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Refactor] Route GDS stream operations through platform</td><td>unlearned</td><td>4</td><td class="o win">4</td><td class="s win">4</td><td class="c win">4</td><td>$0.88</td><td>$0.86</td><td>$0.65</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/5478" target="_blank" rel="noopener">#5478</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Bugfix][MP] Prevent cache-load failures from stale lookup cleanup</td><td>unlearned</td><td>2</td><td class="o">0</td><td class="s">0</td><td class="c">0</td><td>$1.33</td><td>$1.23</td><td>$0.78</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/5527" target="_blank" rel="noopener">#5527</a></td><td style="text-align:left;white-space:normal;min-width:16em">[serde] Add fused scaled FP8 KV serializer</td><td>unlearned</td><td>4</td><td class="o win">4</td><td class="s win">4</td><td class="c win">4</td><td>$0.83</td><td>$0.75</td><td>$0.39</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/5981" target="_blank" rel="noopener">#5981</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Example] Add CPU-only server Kubernetes example</td><td>unlearned</td><td>2</td><td class="o win">2</td><td class="s">0</td><td class="c">0</td><td>$0.77</td><td>$0.58</td><td>$0.66</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/3210" target="_blank" rel="noopener">#3210</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Feature][RawBlock] Add multi-device sharding to the MP L2 adapter</td><td>learned</td><td>5</td><td class="o win">5</td><td class="s">3</td><td class="a">3</td><td class="c">2</td><td>$1.10</td><td>$1.00</td><td>$0.75</td><td>$0.51</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/3413" target="_blank" rel="noopener">#3413</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Perf] Avoid redundant PCIe transfer on leader rank during retrieve</td><td>learned</td><td>2</td><td class="o win">2</td><td class="s">1</td><td class="a">1</td><td class="c">0</td><td>$0.57</td><td>$0.79</td><td>$0.53</td><td>$0.50</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/3476" target="_blank" rel="noopener">#3476</a></td><td style="text-align:left;white-space:normal;min-width:16em">feat: Add MP server autostart for vLLM connector</td><td>learned</td><td>4</td><td class="o win">4</td><td class="s">0</td><td class="a">3</td><td class="c">2</td><td>$1.03</td><td>$0.81</td><td>$0.71</td><td>$0.58</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/3638" target="_blank" rel="noopener">#3638</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Bug] async_save_bytes_to_disk: add exception safety for write failures</td><td>learned</td><td>3</td><td class="o win">3</td><td class="s win">3</td><td class="a win">3</td><td class="c win">3</td><td>$0.48</td><td>$0.50</td><td>$0.64</td><td>$0.40</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/3853" target="_blank" rel="noopener">#3853</a></td><td style="text-align:left;white-space:normal;min-width:16em">[GPU connector] Allow non-zero storage_offset in dim-0-padded layout</td><td>learned</td><td>2</td><td class="o win">2</td><td class="s win">2</td><td class="a">1</td><td class="c">0</td><td>$0.62</td><td>$0.69</td><td>$0.59</td><td>$0.51</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/3869" target="_blank" rel="noopener">#3869</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Prefetch sliding window 3/3] Load only KV cache in sliding window</td><td>learned</td><td>17</td><td class="o win">10</td><td class="s">6</td><td class="a">7</td><td class="c">3</td><td>$1.83</td><td>$1.66</td><td>$1.71</td><td>$1.10</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/3877" target="_blank" rel="noopener">#3877</a></td><td style="text-align:left;white-space:normal;min-width:16em">[MP][MUSA] add stage4-2 MP IPC event support</td><td>learned</td><td>4</td><td class="o win">4</td><td class="s win">4</td><td class="a">0</td><td class="c">0</td><td>$1.61</td><td>$1.42</td><td>$1.11</td><td>$0.61</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/4203" target="_blank" rel="noopener">#4203</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Serde] add ObjectKey to parameter</td><td>learned</td><td>2</td><td class="o win">1</td><td class="s win">1</td><td class="a win">1</td><td class="c win">1</td><td>$1.12</td><td>$0.68</td><td>$0.68</td><td>$0.72</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/4367" target="_blank" rel="noopener">#4367</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Fix] Align LazyMemoryAllocator's buffer base to align_bytes</td><td>learned</td><td>3</td><td class="o win">3</td><td class="s">1</td><td class="a">1</td><td class="c">0</td><td>$0.57</td><td>$0.55</td><td>$0.51</td><td>$0.48</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/4687" target="_blank" rel="noopener">#4687</a></td><td style="text-align:left;white-space:normal;min-width:16em">fix(mp): detect server restarts from heartbeat tokens</td><td>learned</td><td>5</td><td class="o win">5</td><td class="s">3</td><td class="a">3</td><td class="c">2</td><td>$0.71</td><td>$0.64</td><td>$0.67</td><td>$0.50</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/4729" target="_blank" rel="noopener">#4729</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Refactor]: vLLM LBHNC KVLayout metadata</td><td>unlearned</td><td>3</td><td class="o win">2</td><td class="s win">2</td><td class="a win">2</td><td class="c">1</td><td>$2.42</td><td>$2.42</td><td>$2.51</td><td>$1.55</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5045" target="_blank" rel="noopener">#5045</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Feature] Add raw-block I/O attempt metrics</td><td>unlearned</td><td>6</td><td class="o win">3</td><td class="s win">3</td><td class="a">2</td><td class="c">0</td><td>$1.34</td><td>$1.47</td><td>$1.02</td><td>$0.96</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5053" target="_blank" rel="noopener">#5053</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Perf][MP] Poll lookup status without blocking the scheduler</td><td>unlearned</td><td>4</td><td class="o win">4</td><td class="s win">4</td><td class="a win">4</td><td class="c">1</td><td>$0.93</td><td>$1.22</td><td>$1.10</td><td>$0.61</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5076" target="_blank" rel="noopener">#5076</a></td><td style="text-align:left;white-space:normal;min-width:16em">[feat][vllm] publish MP connector KV events</td><td>unlearned</td><td>2</td><td class="o win">1</td><td class="s win">1</td><td class="a">0</td><td class="c win">1</td><td>$0.94</td><td>$1.20</td><td>$0.81</td><td>$0.61</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5159" target="_blank" rel="noopener">#5159</a></td><td style="text-align:left;white-space:normal;min-width:16em">feat: step1-support pluggable MP server modules</td><td>unlearned</td><td>2</td><td class="o">0</td><td class="s">0</td><td class="a">0</td><td class="c">0</td><td>$1.53</td><td>$1.46</td><td>$1.17</td><td>$1.08</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5268" target="_blank" rel="noopener">#5268</a></td><td style="text-align:left;white-space:normal;min-width:16em">Fix scratch group blocking store metadata in hybrid models</td><td>unlearned</td><td>2</td><td class="o win">2</td><td class="s win">2</td><td class="a win">2</td><td class="c win">2</td><td>$0.69</td><td>$0.60</td><td>$0.48</td><td>$0.54</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5283" target="_blank" rel="noopener">#5283</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Refactor] Route GDS stream operations through platform</td><td>unlearned</td><td>4</td><td class="o win">4</td><td class="s win">4</td><td class="a win">4</td><td class="c win">4</td><td>$0.88</td><td>$0.86</td><td>$0.80</td><td>$0.65</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5478" target="_blank" rel="noopener">#5478</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Bugfix][MP] Prevent cache-load failures from stale lookup cleanup</td><td>unlearned</td><td>2</td><td class="o">0</td><td class="s">0</td><td class="a">0</td><td class="c">0</td><td>$1.33</td><td>$1.23</td><td>$1.33</td><td>$0.78</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5527" target="_blank" rel="noopener">#5527</a></td><td style="text-align:left;white-space:normal;min-width:16em">[serde] Add fused scaled FP8 KV serializer</td><td>unlearned</td><td>4</td><td class="o win">4</td><td class="s win">4</td><td class="a win">4</td><td class="c win">4</td><td>$0.83</td><td>$0.75</td><td>$0.65</td><td>$0.39</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5981" target="_blank" rel="noopener">#5981</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Example] Add CPU-only server Kubernetes example</td><td>unlearned</td><td>2</td><td class="o win">2</td><td class="s">0</td><td class="a win">2</td><td class="c">0</td><td>$0.77</td><td>$0.58</td><td>$0.66</td><td>$0.66</td></tr>
 </tbody></table></div>
 <p class="note">How samples were picked. Learned: training PRs whose human comments are all in the ledger, with at least 2 covered by rules. Unlearned: test PRs with no human comment in the ledger (#4729, the first sample we ran, is also in this group). All samples have at least 2 human points and at most 2,500 changed lines, one sample per PR, spread across modules where possible.</p>
 </section>
 
 <section>
-<h2>Missed by all three</h2>
-<p>lmreview missed 17 points, and /pr-review and /code-review missed all 17 as well. No point was caught by another reviewer and missed by lmreview.</p>
+<h2>Missed by all four</h2>
+<p>lmreview missed 17 points. 16 of them were missed by all three others as well; the remaining one (#3869: move the L2 → L1 duplicated-key handling into a separate PR, minor) was caught only by /anthropic-skills:pr-review.</p>
 <ul>
-<li><b>1 blocker</b>: after rebasing on dev, interface signatures no longer match and mypy fails (#5478). This needs the base branch's state at the time, which offline replay does not have.</li>
-<li><b>2 major</b>: a race where a key can be evicted between <code>reserve_write</code> and <code>reserve_read</code> (#3869); a flaky test caused by an async L2 read lock (#5478).</li>
-<li><b>8 minor</b>: mostly trade-offs that need project context, such as splitting into a separate PR, moving a function to its own file, two overlapping metrics, two sentences in a removed docstring that should stay, and not importing vllm in unit tests.</li>
-<li><b>6 nit</b>: matters of taste, such as renames (<code>num_groups</code> → <code>num_object_groups</code>, <code>rust_io</code>), using <code>itertools.groupby</code>, moving an import to the top, and reverting an unneeded rename.</li>
+<li><b>1 blocker</b>：after rebasing on dev, interface signatures no longer match and mypy fails (#5478). This needs the base branch’s state at the time, which offline replay does not have.</li>
+<li><b>2 major</b>：a race where a key can be evicted between <code>reserve_write</code> and <code>reserve_read</code> (#3869); a flaky test caused by an async L2 read lock (#5478).</li>
+<li><b>7 minor</b>：mostly trade-offs that need project context, such as moving a function to its own file, two overlapping metrics, two sentences in a removed docstring that should stay, and not importing vllm in unit tests.</li>
+<li><b>6 nit</b>：matters of taste, such as renames (<code>num_groups</code> → <code>num_object_groups</code>, <code>rust_io</code>), using <code>itertools.groupby</code>, moving an import to the top, and reverting an unneeded rename.</li>
 </ul>
-<p class="note">#3869 alone accounts for 7. Missed comments feed the learning loop and become rules; that is where the higher recall on learned PRs comes from.</p>
+<p class="note">#3869 alone accounts for 6 of the 16. Missed comments feed the learning loop and become rules; that is where the higher recall on learned PRs comes from.</p>
 </section>
 
 <section>
@@ -204,24 +200,25 @@ code{font-family:var(--mono);font-size:.85em}
 <tr><td>lmreview</td><td>blocker</td><td class="o">12</td><td class="o">8</td><td class="o">7</td></tr>
 <tr><td>lmreview</td><td>major</td><td class="o">78</td><td class="o">57</td><td class="o">55</td></tr>
 <tr><td>/pr-review</td><td>error (as major)</td><td class="s">56</td><td class="s">45</td><td class="s">45</td></tr>
+<tr><td>/anthropic-skills:pr-review</td><td>error (as major)</td><td class="a">47</td><td class="a">39</td><td class="a">36</td></tr>
 <tr><td>/code-review</td><td>important (as major)</td><td class="c">63</td><td class="c">57</td><td class="c">40</td></tr>
 </tbody></table></div>
-<p class="note">/pr-review has only error / warning / info, and /code-review only important / pre_existing / nit; neither has a blocker level, so each gets one row compared as major. "Judged valid" is the AI judge's call, not gold, and still needs a human check. Share judged valid: lmreview 95% (62/65), /pr-review 100% (45/45), /code-review 70% (40/57).</p>
+<p class="note">None of the other three has a blocker level, so each gets one row compared as major (/anthropic-skills:pr-review’s report categories were extracted as error / warning / info like /pr-review’s). "Judged valid" is the AI judge’s call, not gold, and still needs a human check. Share judged valid: lmreview 95% (62/65), /pr-review 100% (45/45), /anthropic-skills:pr-review 92% (36/39), /code-review 70% (40/57).</p>
 <div class="tw" style="margin-top:12px"><table>
-<thead><tr><th>What the blockers/majors are about</th><th>lmreview</th><th>/pr-review</th><th>/code-review</th></tr></thead>
+<thead><tr><th>What the blockers/majors are about</th><th>lmreview</th><th>/pr-review</th><th>/anthropic-skills:pr-review</th><th>/code-review</th></tr></thead>
 <tbody>
-<tr><td>Total</td><td class="o">90</td><td class="s">56</td><td class="c">63</td></tr>
-<tr><td>Words like crash, leak, race, corrupt</td><td class="o">48</td><td class="s">28</td><td class="c">39</td></tr>
-<tr><td>Follow-up on an earlier review's unfixed issue</td><td class="o">10</td><td class="s">0</td><td class="c">4</td></tr>
-<tr><td>Mentions vLLM</td><td class="o">20</td><td class="s">11</td><td class="c">17</td></tr>
-<tr><td>Standards (docstring, typing, naming, import)</td><td class="o">11</td><td class="s">12</td><td class="c">7</td></tr>
+<tr><td>Total</td><td class="o">90</td><td class="s">56</td><td class="a">47</td><td class="c">63</td></tr>
+<tr><td>Words like crash, leak, race, corrupt</td><td class="o">48</td><td class="s">28</td><td class="a">23</td><td class="c">39</td></tr>
+<tr><td>Follow-up on an earlier review’s unfixed issue</td><td class="o">10</td><td class="s">0</td><td class="a">3</td><td class="c">4</td></tr>
+<tr><td>Mentions vLLM</td><td class="o">20</td><td class="s">11</td><td class="a">10</td><td class="c">17</td></tr>
+<tr><td>Standards (docstring, typing, naming, import)</td><td class="o">11</td><td class="s">12</td><td class="a">5</td><td class="c">7</td></tr>
 </tbody></table></div>
 <p style="margin-top:10px">lmreview reports the most deep issues, for four reasons:</p>
 <ul>
-<li><b>Correctness first</b>: the prompt asks for every real problem, correctness first, and a regression test for each bug found.</li>
-<li><b>Follows up earlier reviews</b>: an issue raised before and still not fixed in this revision is reported again.</li>
-<li><b>Can read vLLM source</b>: to check the PR's assumptions about vLLM behavior.</li>
-<li><b>Severity levels</b>: blocker/major is reserved for wrong behavior. On standards issues the three are about even.</li>
+<li><b>Correctness first</b>：the prompt asks for every real problem, correctness first, and a regression test for each bug found.</li>
+<li><b>Follows up earlier reviews</b>：an issue raised before and still not fixed in this revision is reported again.</li>
+<li><b>Can read vLLM source</b>：to check the PR’s assumptions about vLLM behavior.</li>
+<li><b>Severity levels</b>：blocker/major is reserved for wrong behavior.</li>
 </ul>
 <p class="note">/code-review also hunts for bugs and reports plenty, but about 30% are judged invalid; without the PR description and project standards it has more false alarms.</p>
 </section>
@@ -229,164 +226,161 @@ code{font-family:var(--mono);font-size:.85em}
 <section>
 <h2>Configuration and side findings</h2>
 <ul>
-<li><b>lmreview</b>: <code>p990f2d2e+v0032@medium-rc</code>. Main review on Opus medium, with the /pr-review checklist, a design-doc check and batched reads, JSON output only. Rule check on medium, in parallel with the main review, without tools. Then one small Sonnet call removes rule-check findings that repeat a main-review finding.</li>
-<li><b>/pr-review</b>: <code>.claude/skills/pr-review/SKILL.md</code> plus <code>docs/coding_standards.md</code> from LMCache dev d0959e0, run offline.</li>
-<li><b>/code-review</b>: <code>/code-review medium</code>. Severity mapping: important → major, pre_existing → minor, nit → nit.</li>
-<li><b>High to medium</b> (6 samples, measured before this config): lmreview recall 70% → 70% with 25% lower cost; /pr-review recall 59% → 49%.</li>
-<li><b>Dedupe</b>: about $0.015 per PR. Checked one by one when the rule check ran on low: 25 of 72 findings removed, no human-point hit lost.</li>
+<li><b>lmreview</b>：<code>p990f2d2e+v0032@medium-rc</code>. Main review on Opus medium, with the /pr-review checklist, a design-doc check and batched reads, JSON output only. Rule check on medium, in parallel with the main review, without tools. Then one small Sonnet call removes rule-check findings that repeat a main-review finding.</li>
+<li><b>/pr-review</b>：<code>.claude/skills/pr-review/SKILL.md</code> plus <code>docs/coding_standards.md</code> from LMCache dev d0959e0, run offline.</li>
+<li><b>/anthropic-skills:pr-review</b>：its SKILL.md installed in place of the repo’s pr-review, run offline with the same adaptations as /pr-review.</li>
+<li><b>/code-review</b>：<code>/code-review medium</code>. Severity mapping: important → major, pre_existing → minor, nit → nit.</li>
+<li><b>High to medium</b> (6 samples, measured before this config)：lmreview recall 70% → 70% with 25% lower cost; /pr-review recall 59% → 49%.</li>
+<li><b>Dedupe</b>：about $0.015 per PR. Checked one by one when the rule check ran on low: 25 of 72 findings removed, no human-point hit lost.</li>
 </ul>
-<p class="note" style="margin-top:8px">Limits: only 10 samples per group; the unlearned PRs are all newer (#5000 and up) and the learned ones are #3200–#4700, so the gap between groups is mixed with time; #3869 alone has 17 of the learned group's points; grading is a blind AI judge. Data in <code>data/skill_compare/</code>, script <code>scripts/skill_compare.py</code>.</p>
+<p class="note" style="margin-top:8px">Limits: only 10 samples per group; the unlearned PRs are all newer (#5000 and up) and the learned ones are #3200–#4700, so the gap between groups is mixed with time; #3869 alone has 17 of the learned group’s points; grading is a blind AI judge. Data in <code>data/skill_compare/</code>, script <code>scripts/skill_compare.py</code>.</p>
 </section>
 </main>
 
 <main id="zh" lang="zh-CN" hidden>
 <header>
-<h1>lmreview 对比 /pr-review 和 /code-review</h1>
-<p class="sub">20 个历史 PR 样本：学过的 10 个，没学过的 10 个。三方都用 Opus 5.5 medium，离线回放，同一个盲评判分器。2026-11-26。</p>
+<h1>lmreview 对比 /pr-review、/anthropic-skills:pr-review 和 /code-review</h1>
+<p class="sub">20 个历史 PR 样本：学过的 10 个，没学过的 10 个。四方都用 Opus 5.5 medium，离线回放，同一个盲评判分器。2026-11-26。</p>
 </header>
 
 <section>
-<h2>比的是哪三个 review</h2>
+<h2>比的是哪四个 review</h2>
 <div class="tw"><table>
 <thead><tr><th>名称</th><th>来源</th><th>用的版本</th></tr></thead>
 <tbody>
 <tr><td><b>lmreview</b></td><td style="text-align:left;white-space:normal">我们自己的 reviewer（仓库 <code>BoJiang03/lmcache-review</code>）。主审之外还有 rule check，规则由 rulebook 提供；rulebook 是从 LMCache 维护者的历史评论里学出来的。</td><td style="text-align:left;white-space:normal">正式配置 <code>p990f2d2e+v0032@medium-rc</code>：主审 Opus medium；rule check medium，逐条对照 rulebook v0032 的 49 条规则，和主审并行运行。</td></tr>
 <tr><td><b>/pr-review</b></td><td style="text-align:left;white-space:normal">LMCache 仓库自带的 Claude Code skill：<code>.claude/skills/pr-review/SKILL.md</code>，它会读 <code>docs/coding_standards.md</code>。由 LMCache 维护者编写。</td><td style="text-align:left;white-space:normal">LMCache dev 分支 d0959e0（2026-11-09）里的版本：SKILL.md 最后修改于 bed12fc（2026-11-08），coding_standards.md 最后修改于 5b9db86（2026-11-06）。每个样本用的都是这一版，没有用 PR 当时的版本。</td></tr>
+<tr><td><b>/anthropic-skills:pr-review</b></td><td style="text-align:left;white-space:normal">我们 claude.ai 组织共享的通用 PR review skill，在 Claude Code 里叫 <code>/anthropic-skills:pr-review</code>。不针对 LMCache，不读 <code>coding_standards.md</code>。它会找改动目录下的 DESIGN.md / ARCHITECTURE.md，读 CLAUDE.md / AGENTS.md，然后检查设计文档、代码质量、正确性、线程安全和测试覆盖。</td><td style="text-align:left;white-space:normal">本机同步的版本（2026-09-21，SKILL.md sha256 15e064d3d8ce）。装进每个样本的工作区，替换仓库自带的 pr-review；和 /pr-review 一样离线运行：PR 信息写在提示里，diff 从本地 git 读，不用 <code>gh</code>。</td></tr>
 <tr><td><b>/code-review</b></td><td style="text-align:left;white-space:normal">Claude Code 内置的 skill，任何仓库里都能直接用 <code>/code-review</code> 调用，不针对 LMCache。</td><td style="text-align:left;white-space:normal">Claude Code 2.1.332 自带的版本，参数为 <code>/code-review medium</code>。按开发者在本地 review 改动的方式运行：PR 的改动作为未提交的改动，没有 PR 描述、历史评论和编码规范。</td></tr>
 </tbody></table></div>
 </section>
 
 <section>
-<h2>结论：三者对比</h2>
+<h2>结论</h2>
 <p class="sub">成本和时间都按每个样本平均。</p>
 <div class="tw"><table>
-<thead><tr><th></th><th>lmreview</th><th>/pr-review</th><th>/code-review</th></tr></thead>
+<thead><tr><th></th><th>lmreview</th><th>/pr-review</th><th>/anthropic-skills:pr-review</th><th>/code-review</th></tr></thead>
 <tbody>
-<tr><td colspan="4" style="text-align:left;color:var(--muted)">学过的 10 个 PR（47 个人类要点）</td></tr>
-<tr><td>命中</td><td class="o win">83%</td><td class="s">51%</td><td class="c">28%</td></tr>
-<tr><td>成本</td><td class="o">$0.96</td><td class="s">$0.87</td><td class="c win">$0.59</td></tr>
-<tr><td>时间</td><td class="o">90 s</td><td class="s">118 s</td><td class="c win">87 s</td></tr>
-<tr><td colspan="4" style="text-align:left;color:var(--muted)">没学过的 10 个 PR（31 个人类要点）</td></tr>
-<tr><td>命中</td><td class="o win">71%</td><td class="s">65%</td><td class="c">42%</td></tr>
-<tr><td>成本</td><td class="o">$1.16</td><td class="s">$1.18</td><td class="c win">$0.78</td></tr>
-<tr><td>时间</td><td class="o win">114 s</td><td class="s">159 s</td><td class="c">127 s</td></tr>
+<tr><td colspan="5" style="text-align:left;color:var(--muted)">学过的 10 个 PR（47 个人类要点）</td></tr>
+<tr><td>命中</td><td class="o win">83%</td><td class="s">51%</td><td class="a">49%</td><td class="c">28%</td></tr>
+<tr><td>成本</td><td class="o">$0.96</td><td class="s">$0.87</td><td class="a">$0.79</td><td class="c win">$0.59</td></tr>
+<tr><td>时间</td><td class="o">90 s</td><td class="s">118 s</td><td class="a">106 s</td><td class="c win">87 s</td></tr>
+<tr><td colspan="5" style="text-align:left;color:var(--muted)">没学过的 10 个 PR（31 个人类要点）</td></tr>
+<tr><td>命中</td><td class="o win">71%</td><td class="s">65%</td><td class="a">65%</td><td class="c">42%</td></tr>
+<tr><td>成本</td><td class="o">$1.16</td><td class="s">$1.18</td><td class="a">$1.05</td><td class="c win">$0.78</td></tr>
+<tr><td>时间</td><td class="o win">114 s</td><td class="s">159 s</td><td class="a">157 s</td><td class="c">127 s</td></tr>
 </tbody></table></div>
 <ul style="margin-top:12px">
-<li><b>命中</b>：lmreview 两组都是第一，学过的 PR 上优势最大（83% 对 51% 和 28%）。另外两方抓到的要点，lmreview 全都抓到了。三方 blocker 一样，差距在 major 及以下。</li>
-<li><b>成本</b>：/code-review 最便宜，它查得浅。lmreview 和 /pr-review 差不多：学过的组贵 $0.09，没学过的组便宜 $0.02。</li>
-<li><b>时间</b>：lmreview 和 /code-review 接近，/pr-review 最慢。</li>
-<li><b>对照目标</b>（没学过的追平、学过的超过，命中、成本、时间都算）：对 /pr-review 基本达标，只差学过组成本高 $0.09。对 /code-review，命中远超，成本还没追平。</li>
+<li><b>命中</b>：lmreview 两组都是第一，学过的 PR 上优势最大（83% 对 51%、49%、28%）。另外三方抓到的要点，lmreview 只漏了 1 个（一个 minor，只有 /anthropic-skills:pr-review 抓到）。四方 blocker 一样，差距在 major 及以下。两个 pr-review skill 差不多。</li>
+<li><b>成本</b>：/code-review 最便宜，它查得浅；其次是 /anthropic-skills:pr-review，然后是 /pr-review 和 lmreview。lmreview 比 /anthropic-skills:pr-review 学过的组贵 $0.17，没学过的组贵 $0.11。</li>
+<li><b>时间</b>：lmreview 和 /code-review 最快，两个 pr-review skill 最慢。</li>
+<li><b>对照目标</b>（没学过的追平、学过的超过，命中、成本、时间都算）：命中和时间对三方都达标。成本还没有：学过的组比 /pr-review 贵 $0.09，比 /anthropic-skills:pr-review 贵 $0.11–0.17，比 /code-review 贵 $0.37–0.38。</li>
 </ul>
 </section>
 
 <section>
 <h2>命中人类评论</h2>
-<div class="legend"><span class="lo">lmreview</span><span class="ls">/pr-review</span><span class="lc">/code-review</span></div>
+<div class="legend"><span class="lo">lmreview</span><span class="ls">/pr-review</span><span class="la">/anthropic-skills:pr-review</span><span class="lc">/code-review</span></div>
 <div class="bars">
 <div class="grp" style="grid-column:1/-1">学过的（47 个要点）</div>
 <span>lmreview（主审 + rule check）</span><div class="bar b-o" style="width:83%"></div><span>39/47 · 83%</span>
 <span>lmreview（主审）</span><div class="bar b-o" style="width:64%;opacity:.55"></div><span>30/47 · 64%</span>
 <span>/pr-review</span><div class="bar b-s" style="width:51%"></div><span>24/47 · 51%</span>
+<span>/anthropic-skills:pr-review</span><div class="bar b-a" style="width:49%"></div><span>23/47 · 49%</span>
 <span>/code-review</span><div class="bar b-c" style="width:28%"></div><span>13/47 · 28%</span>
 <div class="grp" style="grid-column:1/-1">没学过的（31 个要点）</div>
 <span>lmreview（主审 + rule check）</span><div class="bar b-o" style="width:71%"></div><span>22/31 · 71%</span>
 <span>lmreview（主审）</span><div class="bar b-o" style="width:65%;opacity:.55"></div><span>20/31 · 65%</span>
 <span>/pr-review</span><div class="bar b-s" style="width:65%"></div><span>20/31 · 65%</span>
+<span>/anthropic-skills:pr-review</span><div class="bar b-a" style="width:65%"></div><span>20/31 · 65%</span>
 <span>/code-review</span><div class="bar b-c" style="width:42%"></div><span>13/31 · 42%</span>
 </div>
-<div class="tw" style="margin-top:14px"><table>
-<thead><tr><th>只有一方抓到的要点</th><th>学过</th><th>没学过</th></tr></thead>
-<tbody>
-<tr><td>lmreview 有、/pr-review 没有</td><td class="o">15（major 5，minor 4，nit 6）</td><td class="o">2（minor 2）</td></tr>
-<tr><td>/pr-review 有、lmreview 没有</td><td>0</td><td>0</td></tr>
-<tr><td>lmreview 有、/code-review 没有</td><td class="o">26（major 8，minor 9，nit 9）</td><td class="o">9（major 3，minor 6）</td></tr>
-<tr><td>/code-review 有、lmreview 没有</td><td>0</td><td>0</td></tr>
-<tr><td>/pr-review 有、/code-review 没有</td><td class="s">14（major 5，minor 6，nit 3）</td><td class="s">7（major 3，minor 4）</td></tr>
-<tr><td>/code-review 有、/pr-review 没有</td><td class="c">3（major 2，minor 1）</td><td>0</td></tr>
-</tbody></table></div>
-<p class="note" style="margin-top:8px">提问类评论不计入命中。</p>
+<p style="margin-top:14px">只有一方抓到的要点：每格是"行抓到、列没抓到"的要点数。</p>
+<div class="tw" style="margin-top:12px"><table><thead><tr><th>学过</th><th>lmreview</th><th>/pr-review</th><th>/anthropic-skills:pr-review</th><th>/code-review</th></tr></thead><tbody><tr><td class="o">lmreview</td><td>–</td><td>15</td><td>17</td><td>26</td></tr><tr><td class="s">/pr-review</td><td>0</td><td>–</td><td>5</td><td>14</td></tr><tr><td class="a">/anthropic-skills:pr-review</td><td>1</td><td>4</td><td>–</td><td>11</td></tr><tr><td class="c">/code-review</td><td>0</td><td>3</td><td>1</td><td>–</td></tr></tbody></table></div>
+<div class="tw" style="margin-top:12px"><table><thead><tr><th>没学过</th><th>lmreview</th><th>/pr-review</th><th>/anthropic-skills:pr-review</th><th>/code-review</th></tr></thead><tbody><tr><td class="o">lmreview</td><td>–</td><td>2</td><td>2</td><td>9</td></tr><tr><td class="s">/pr-review</td><td>0</td><td>–</td><td>2</td><td>7</td></tr><tr><td class="a">/anthropic-skills:pr-review</td><td>0</td><td>2</td><td>–</td><td>8</td></tr><tr><td class="c">/code-review</td><td>0</td><td>0</td><td>1</td><td>–</td></tr></tbody></table></div>
+<p class="note" style="margin-top:8px">学过的组里 lmreview 多抓的：对 /pr-review 是 major 5、minor 4、nit 6；对 /anthropic-skills:pr-review 是 major 6、minor 4、nit 7；对 /code-review 是 major 8、minor 9、nit 9。提问类评论不计入命中。</p>
 </section>
 
 <section>
 <h2>按严重度看命中</h2>
 <div class="tw"><table>
-<thead><tr><th>严重度</th><th>lmreview</th><th>/pr-review</th><th>/code-review</th></tr></thead>
+<thead><tr><th>严重度</th><th>lmreview</th><th>/pr-review</th><th>/anthropic-skills:pr-review</th><th>/code-review</th></tr></thead>
 <tbody>
-<tr><td colspan="4" style="text-align:left;color:var(--muted)">学过的</td></tr>
-<tr><td>major</td><td class="o win">13/14</td><td class="s">8/14</td><td class="c">5/14</td></tr>
-<tr><td>minor</td><td class="o win">17/21</td><td class="s">13/21</td><td class="c">8/21</td></tr>
-<tr><td>nit</td><td class="o win">9/12</td><td class="s">3/12</td><td class="c">0/12</td></tr>
-<tr><td colspan="4" style="text-align:left;color:var(--muted)">没学过的</td></tr>
-<tr><td>blocker</td><td class="o">4/5</td><td class="s">4/5</td><td class="c">4/5</td></tr>
-<tr><td>major</td><td class="o">5/6</td><td class="s">5/6</td><td class="c">2/6</td></tr>
-<tr><td>minor</td><td class="o win">10/14</td><td class="s">8/14</td><td class="c">4/14</td></tr>
-<tr><td>nit</td><td class="o">3/6</td><td class="s">3/6</td><td class="c">3/6</td></tr>
-<tr><td colspan="4" style="text-align:left;color:var(--muted)">合计</td></tr>
-<tr><td>blocker</td><td class="o">4/5</td><td class="s">4/5</td><td class="c">4/5</td></tr>
-<tr><td>major</td><td class="o win">18/20</td><td class="s">13/20</td><td class="c">7/20</td></tr>
-<tr><td>minor</td><td class="o win">27/35</td><td class="s">21/35</td><td class="c">12/35</td></tr>
-<tr><td>nit</td><td class="o win">12/18</td><td class="s">6/18</td><td class="c">3/18</td></tr>
+<tr><td colspan="5" style="text-align:left;color:var(--muted)">学过的</td></tr>
+<tr><td>major</td><td class="o win">13/14</td><td class="s">8/14</td><td class="a">7/14</td><td class="c">5/14</td></tr>
+<tr><td>minor</td><td class="o win">17/21</td><td class="s">13/21</td><td class="a">14/21</td><td class="c">8/21</td></tr>
+<tr><td>nit</td><td class="o win">9/12</td><td class="s">3/12</td><td class="a">2/12</td><td class="c">0/12</td></tr>
+<tr><td colspan="5" style="text-align:left;color:var(--muted)">没学过的</td></tr>
+<tr><td>blocker</td><td class="o">4/5</td><td class="s">4/5</td><td class="a">4/5</td><td class="c">4/5</td></tr>
+<tr><td>major</td><td class="o">5/6</td><td class="s">5/6</td><td class="a">5/6</td><td class="c">2/6</td></tr>
+<tr><td>minor</td><td class="o win">10/14</td><td class="s">8/14</td><td class="a">8/14</td><td class="c">4/14</td></tr>
+<tr><td>nit</td><td class="o">3/6</td><td class="s">3/6</td><td class="a">3/6</td><td class="c">3/6</td></tr>
+<tr><td colspan="5" style="text-align:left;color:var(--muted)">合计</td></tr>
+<tr><td>blocker</td><td class="o">4/5</td><td class="s">4/5</td><td class="a">4/5</td><td class="c">4/5</td></tr>
+<tr><td>major</td><td class="o win">18/20</td><td class="s">13/20</td><td class="a">12/20</td><td class="c">7/20</td></tr>
+<tr><td>minor</td><td class="o win">27/35</td><td class="s">21/35</td><td class="a">22/35</td><td class="c">12/35</td></tr>
+<tr><td>nit</td><td class="o win">12/18</td><td class="s">6/18</td><td class="a">5/18</td><td class="c">3/18</td></tr>
 </tbody></table></div>
-<p class="note">学过的组里没有 blocker 级的人类评论。没学过的组里，lmreview 只在 minor 上领先 /pr-review；学过的组每一级都领先，nit 上差距最大（9/12 对 3/12），这正是从维护者评论里学到的口味。</p>
+<p class="note">学过的组里没有 blocker 级的人类评论。没学过的组里，lmreview 只在 minor 上领先两个 pr-review skill；学过的组每一级都领先，nit 上差距最大（9/12 对 3/12 和 2/12），这正是从维护者评论里学到的口味。</p>
 </section>
 
 <section>
 <h2>成本和速度（每个样本平均）</h2>
 <div class="tw"><table>
-<thead><tr><th></th><th>lmreview</th><th>/pr-review</th><th>/code-review</th></tr></thead>
+<thead><tr><th></th><th>lmreview</th><th>/pr-review</th><th>/anthropic-skills:pr-review</th><th>/code-review</th></tr></thead>
 <tbody>
-<tr><td colspan="4" style="text-align:left;color:var(--muted)">学过的</td></tr>
-<tr><td>成本</td><td class="o">$0.96</td><td class="s">$0.87</td><td class="c win">$0.59</td></tr>
-<tr><td>&nbsp;&nbsp;其中</td><td style="white-space:normal">主审 $0.58，rule check $0.36，去重 $0.01</td><td style="white-space:normal">抽成 JSON $0.10</td><td style="white-space:normal">抽成 JSON $0.08</td></tr>
-<tr><td>时间</td><td class="o">90 s</td><td class="s">118 s</td><td class="c win">87 s</td></tr>
-<tr><td colspan="4" style="text-align:left;color:var(--muted)">没学过的</td></tr>
-<tr><td>成本</td><td class="o">$1.16</td><td class="s">$1.18</td><td class="c win">$0.78</td></tr>
-<tr><td>&nbsp;&nbsp;其中</td><td style="white-space:normal">主审 $0.75，rule check $0.39，去重 $0.02</td><td style="white-space:normal">抽成 JSON $0.11</td><td style="white-space:normal">抽成 JSON $0.09</td></tr>
-<tr><td>时间</td><td class="o win">114 s</td><td class="s">159 s</td><td class="c">127 s</td></tr>
+<tr><td colspan="5" style="text-align:left;color:var(--muted)">学过的</td></tr>
+<tr><td>成本</td><td class="o">$0.96</td><td class="s">$0.87</td><td class="a">$0.79</td><td class="c win">$0.59</td></tr>
+<tr><td>&nbsp;&nbsp;其中</td><td style="white-space:normal">主审 $0.58，rule check $0.36，去重 $0.01</td><td style="white-space:normal">抽成 JSON $0.10</td><td style="white-space:normal">抽成 JSON $0.10</td><td style="white-space:normal">抽成 JSON $0.08</td></tr>
+<tr><td>时间</td><td class="o">90 s</td><td class="s">118 s</td><td class="a">106 s</td><td class="c win">87 s</td></tr>
+<tr><td colspan="5" style="text-align:left;color:var(--muted)">没学过的</td></tr>
+<tr><td>成本</td><td class="o">$1.16</td><td class="s">$1.18</td><td class="a">$1.05</td><td class="c win">$0.78</td></tr>
+<tr><td>&nbsp;&nbsp;其中</td><td style="white-space:normal">主审 $0.75，rule check $0.39，去重 $0.02</td><td style="white-space:normal">抽成 JSON $0.11</td><td style="white-space:normal">抽成 JSON $0.12</td><td style="white-space:normal">抽成 JSON $0.09</td></tr>
+<tr><td>时间</td><td class="o win">114 s</td><td class="s">159 s</td><td class="a">157 s</td><td class="c">127 s</td></tr>
 </tbody></table></div>
-<p class="note">lmreview 的主审和 rule check 并行运行，时间取两者中较长的。/pr-review 和 /code-review 输出的是 Markdown，统一用一次小调用抽成 JSON，这部分成本算在它们自己头上。</p>
+<p class="note">lmreview 的主审和 rule check 并行运行，时间取两者中较长的。另外三方输出的是 Markdown，统一用一次小调用抽成 JSON，这部分成本算在它们自己头上。</p>
 </section>
 
 <section>
 <h2>20 个 PR</h2>
-<p class="sub">要点 = 人类评论里应该由 reviewer 提出的要点数（不含提问）；三列命中是各方抓到的要点数，绿色为该 PR 最高。成本是每个 PR 的 review 成本。</p>
+<p class="sub">要点 = 人类评论里应该由 reviewer 提出的要点数（不含提问）；四列命中是各方抓到的要点数，绿色为该 PR 最高。成本是每个 PR 的 review 成本。</p>
 <div class="tw"><table>
-<thead><tr><th>PR</th><th style="text-align:left">标题</th><th>组</th><th>要点</th><th>lmreview</th><th>/pr-review</th><th>/code-review</th><th>lmreview 成本</th><th>/pr-review 成本</th><th>/code-review 成本</th></tr></thead>
+<thead><tr><th>PR</th><th style="text-align:left">标题</th><th>组</th><th>要点</th><th>lmreview</th><th>/pr-review</th><th>/anthropic-skills:pr-review</th><th>/code-review</th><th>lmreview 成本</th><th>/pr-review 成本</th><th>/anthropic-skills:pr-review 成本</th><th>/code-review 成本</th></tr></thead>
 <tbody>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/3210" target="_blank" rel="noopener">#3210</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Feature][RawBlock] Add multi-device sharding to the MP L2 adapter</td><td>学过</td><td>5</td><td class="o win">5</td><td class="s">3</td><td class="c">2</td><td>$1.10</td><td>$1.00</td><td>$0.51</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/3413" target="_blank" rel="noopener">#3413</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Perf] Avoid redundant PCIe transfer on leader rank during retrieve</td><td>学过</td><td>2</td><td class="o win">2</td><td class="s">1</td><td class="c">0</td><td>$0.57</td><td>$0.79</td><td>$0.50</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/3476" target="_blank" rel="noopener">#3476</a></td><td style="text-align:left;white-space:normal;min-width:16em">feat: Add MP server autostart for vLLM connector</td><td>学过</td><td>4</td><td class="o win">4</td><td class="s">0</td><td class="c">2</td><td>$1.03</td><td>$0.81</td><td>$0.58</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/3638" target="_blank" rel="noopener">#3638</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Bug] async_save_bytes_to_disk: add exception safety for write failures</td><td>学过</td><td>3</td><td class="o win">3</td><td class="s win">3</td><td class="c win">3</td><td>$0.48</td><td>$0.50</td><td>$0.40</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/3853" target="_blank" rel="noopener">#3853</a></td><td style="text-align:left;white-space:normal;min-width:16em">[GPU connector] Allow non-zero storage_offset in dim-0-padded layout</td><td>学过</td><td>2</td><td class="o win">2</td><td class="s win">2</td><td class="c">0</td><td>$0.62</td><td>$0.69</td><td>$0.51</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/3869" target="_blank" rel="noopener">#3869</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Prefetch sliding window 3/3] Load only KV cache in sliding window</td><td>学过</td><td>17</td><td class="o win">10</td><td class="s">6</td><td class="c">3</td><td>$1.83</td><td>$1.66</td><td>$1.10</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/3877" target="_blank" rel="noopener">#3877</a></td><td style="text-align:left;white-space:normal;min-width:16em">[MP][MUSA] add stage4-2 MP IPC event support</td><td>学过</td><td>4</td><td class="o win">4</td><td class="s win">4</td><td class="c">0</td><td>$1.61</td><td>$1.42</td><td>$0.61</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/4203" target="_blank" rel="noopener">#4203</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Serde] add ObjectKey to parameter</td><td>学过</td><td>2</td><td class="o win">1</td><td class="s win">1</td><td class="c win">1</td><td>$1.12</td><td>$0.68</td><td>$0.72</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/4367" target="_blank" rel="noopener">#4367</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Fix] Align LazyMemoryAllocator's buffer base to align_bytes</td><td>学过</td><td>3</td><td class="o win">3</td><td class="s">1</td><td class="c">0</td><td>$0.57</td><td>$0.55</td><td>$0.48</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/4687" target="_blank" rel="noopener">#4687</a></td><td style="text-align:left;white-space:normal;min-width:16em">fix(mp): detect server restarts from heartbeat tokens</td><td>学过</td><td>5</td><td class="o win">5</td><td class="s">3</td><td class="c">2</td><td>$0.71</td><td>$0.64</td><td>$0.50</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/4729" target="_blank" rel="noopener">#4729</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Refactor]: vLLM LBHNC KVLayout metadata</td><td>没学过</td><td>3</td><td class="o win">2</td><td class="s win">2</td><td class="c">1</td><td>$2.42</td><td>$2.42</td><td>$1.55</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/5045" target="_blank" rel="noopener">#5045</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Feature] Add raw-block I/O attempt metrics</td><td>没学过</td><td>6</td><td class="o win">3</td><td class="s win">3</td><td class="c">0</td><td>$1.34</td><td>$1.47</td><td>$0.96</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/5053" target="_blank" rel="noopener">#5053</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Perf][MP] Poll lookup status without blocking the scheduler</td><td>没学过</td><td>4</td><td class="o win">4</td><td class="s win">4</td><td class="c">1</td><td>$0.93</td><td>$1.22</td><td>$0.61</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/5076" target="_blank" rel="noopener">#5076</a></td><td style="text-align:left;white-space:normal;min-width:16em">[feat][vllm] publish MP connector KV events</td><td>没学过</td><td>2</td><td class="o win">1</td><td class="s win">1</td><td class="c win">1</td><td>$0.94</td><td>$1.20</td><td>$0.61</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/5159" target="_blank" rel="noopener">#5159</a></td><td style="text-align:left;white-space:normal;min-width:16em">feat: step1-support pluggable MP server modules</td><td>没学过</td><td>2</td><td class="o">0</td><td class="s">0</td><td class="c">0</td><td>$1.53</td><td>$1.46</td><td>$1.08</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/5268" target="_blank" rel="noopener">#5268</a></td><td style="text-align:left;white-space:normal;min-width:16em">Fix scratch group blocking store metadata in hybrid models</td><td>没学过</td><td>2</td><td class="o win">2</td><td class="s win">2</td><td class="c win">2</td><td>$0.69</td><td>$0.60</td><td>$0.54</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/5283" target="_blank" rel="noopener">#5283</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Refactor] Route GDS stream operations through platform</td><td>没学过</td><td>4</td><td class="o win">4</td><td class="s win">4</td><td class="c win">4</td><td>$0.88</td><td>$0.86</td><td>$0.65</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/5478" target="_blank" rel="noopener">#5478</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Bugfix][MP] Prevent cache-load failures from stale lookup cleanup</td><td>没学过</td><td>2</td><td class="o">0</td><td class="s">0</td><td class="c">0</td><td>$1.33</td><td>$1.23</td><td>$0.78</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/5527" target="_blank" rel="noopener">#5527</a></td><td style="text-align:left;white-space:normal;min-width:16em">[serde] Add fused scaled FP8 KV serializer</td><td>没学过</td><td>4</td><td class="o win">4</td><td class="s win">4</td><td class="c win">4</td><td>$0.83</td><td>$0.75</td><td>$0.39</td></tr>
-<tr><td><a href="https://github.com/LMCache/LMCache/pull/5981" target="_blank" rel="noopener">#5981</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Example] Add CPU-only server Kubernetes example</td><td>没学过</td><td>2</td><td class="o win">2</td><td class="s">0</td><td class="c">0</td><td>$0.77</td><td>$0.58</td><td>$0.66</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/3210" target="_blank" rel="noopener">#3210</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Feature][RawBlock] Add multi-device sharding to the MP L2 adapter</td><td>学过</td><td>5</td><td class="o win">5</td><td class="s">3</td><td class="a">3</td><td class="c">2</td><td>$1.10</td><td>$1.00</td><td>$0.75</td><td>$0.51</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/3413" target="_blank" rel="noopener">#3413</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Perf] Avoid redundant PCIe transfer on leader rank during retrieve</td><td>学过</td><td>2</td><td class="o win">2</td><td class="s">1</td><td class="a">1</td><td class="c">0</td><td>$0.57</td><td>$0.79</td><td>$0.53</td><td>$0.50</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/3476" target="_blank" rel="noopener">#3476</a></td><td style="text-align:left;white-space:normal;min-width:16em">feat: Add MP server autostart for vLLM connector</td><td>学过</td><td>4</td><td class="o win">4</td><td class="s">0</td><td class="a">3</td><td class="c">2</td><td>$1.03</td><td>$0.81</td><td>$0.71</td><td>$0.58</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/3638" target="_blank" rel="noopener">#3638</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Bug] async_save_bytes_to_disk: add exception safety for write failures</td><td>学过</td><td>3</td><td class="o win">3</td><td class="s win">3</td><td class="a win">3</td><td class="c win">3</td><td>$0.48</td><td>$0.50</td><td>$0.64</td><td>$0.40</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/3853" target="_blank" rel="noopener">#3853</a></td><td style="text-align:left;white-space:normal;min-width:16em">[GPU connector] Allow non-zero storage_offset in dim-0-padded layout</td><td>学过</td><td>2</td><td class="o win">2</td><td class="s win">2</td><td class="a">1</td><td class="c">0</td><td>$0.62</td><td>$0.69</td><td>$0.59</td><td>$0.51</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/3869" target="_blank" rel="noopener">#3869</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Prefetch sliding window 3/3] Load only KV cache in sliding window</td><td>学过</td><td>17</td><td class="o win">10</td><td class="s">6</td><td class="a">7</td><td class="c">3</td><td>$1.83</td><td>$1.66</td><td>$1.71</td><td>$1.10</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/3877" target="_blank" rel="noopener">#3877</a></td><td style="text-align:left;white-space:normal;min-width:16em">[MP][MUSA] add stage4-2 MP IPC event support</td><td>学过</td><td>4</td><td class="o win">4</td><td class="s win">4</td><td class="a">0</td><td class="c">0</td><td>$1.61</td><td>$1.42</td><td>$1.11</td><td>$0.61</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/4203" target="_blank" rel="noopener">#4203</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Serde] add ObjectKey to parameter</td><td>学过</td><td>2</td><td class="o win">1</td><td class="s win">1</td><td class="a win">1</td><td class="c win">1</td><td>$1.12</td><td>$0.68</td><td>$0.68</td><td>$0.72</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/4367" target="_blank" rel="noopener">#4367</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Fix] Align LazyMemoryAllocator's buffer base to align_bytes</td><td>学过</td><td>3</td><td class="o win">3</td><td class="s">1</td><td class="a">1</td><td class="c">0</td><td>$0.57</td><td>$0.55</td><td>$0.51</td><td>$0.48</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/4687" target="_blank" rel="noopener">#4687</a></td><td style="text-align:left;white-space:normal;min-width:16em">fix(mp): detect server restarts from heartbeat tokens</td><td>学过</td><td>5</td><td class="o win">5</td><td class="s">3</td><td class="a">3</td><td class="c">2</td><td>$0.71</td><td>$0.64</td><td>$0.67</td><td>$0.50</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/4729" target="_blank" rel="noopener">#4729</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Refactor]: vLLM LBHNC KVLayout metadata</td><td>没学过</td><td>3</td><td class="o win">2</td><td class="s win">2</td><td class="a win">2</td><td class="c">1</td><td>$2.42</td><td>$2.42</td><td>$2.51</td><td>$1.55</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5045" target="_blank" rel="noopener">#5045</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Feature] Add raw-block I/O attempt metrics</td><td>没学过</td><td>6</td><td class="o win">3</td><td class="s win">3</td><td class="a">2</td><td class="c">0</td><td>$1.34</td><td>$1.47</td><td>$1.02</td><td>$0.96</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5053" target="_blank" rel="noopener">#5053</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Perf][MP] Poll lookup status without blocking the scheduler</td><td>没学过</td><td>4</td><td class="o win">4</td><td class="s win">4</td><td class="a win">4</td><td class="c">1</td><td>$0.93</td><td>$1.22</td><td>$1.10</td><td>$0.61</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5076" target="_blank" rel="noopener">#5076</a></td><td style="text-align:left;white-space:normal;min-width:16em">[feat][vllm] publish MP connector KV events</td><td>没学过</td><td>2</td><td class="o win">1</td><td class="s win">1</td><td class="a">0</td><td class="c win">1</td><td>$0.94</td><td>$1.20</td><td>$0.81</td><td>$0.61</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5159" target="_blank" rel="noopener">#5159</a></td><td style="text-align:left;white-space:normal;min-width:16em">feat: step1-support pluggable MP server modules</td><td>没学过</td><td>2</td><td class="o">0</td><td class="s">0</td><td class="a">0</td><td class="c">0</td><td>$1.53</td><td>$1.46</td><td>$1.17</td><td>$1.08</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5268" target="_blank" rel="noopener">#5268</a></td><td style="text-align:left;white-space:normal;min-width:16em">Fix scratch group blocking store metadata in hybrid models</td><td>没学过</td><td>2</td><td class="o win">2</td><td class="s win">2</td><td class="a win">2</td><td class="c win">2</td><td>$0.69</td><td>$0.60</td><td>$0.48</td><td>$0.54</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5283" target="_blank" rel="noopener">#5283</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Refactor] Route GDS stream operations through platform</td><td>没学过</td><td>4</td><td class="o win">4</td><td class="s win">4</td><td class="a win">4</td><td class="c win">4</td><td>$0.88</td><td>$0.86</td><td>$0.80</td><td>$0.65</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5478" target="_blank" rel="noopener">#5478</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Bugfix][MP] Prevent cache-load failures from stale lookup cleanup</td><td>没学过</td><td>2</td><td class="o">0</td><td class="s">0</td><td class="a">0</td><td class="c">0</td><td>$1.33</td><td>$1.23</td><td>$1.33</td><td>$0.78</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5527" target="_blank" rel="noopener">#5527</a></td><td style="text-align:left;white-space:normal;min-width:16em">[serde] Add fused scaled FP8 KV serializer</td><td>没学过</td><td>4</td><td class="o win">4</td><td class="s win">4</td><td class="a win">4</td><td class="c win">4</td><td>$0.83</td><td>$0.75</td><td>$0.65</td><td>$0.39</td></tr>
+<tr><td><a href="https://github.com/LMCache/LMCache/pull/5981" target="_blank" rel="noopener">#5981</a></td><td style="text-align:left;white-space:normal;min-width:16em">[Example] Add CPU-only server Kubernetes example</td><td>没学过</td><td>2</td><td class="o win">2</td><td class="s">0</td><td class="a win">2</td><td class="c">0</td><td>$0.77</td><td>$0.58</td><td>$0.66</td><td>$0.66</td></tr>
 </tbody></table></div>
 <p class="note">选样标准：学过的 = 训练集里的 PR，人类评论都已进入 ledger，且至少 2 条被规则覆盖；没学过的 = 测试集里的 PR，没有一条人类评论进过 ledger（#4729 是先跑的那个样本，也放在这一组）。另外都要求至少 2 个人类要点、改动不超过 2500 行、每个 PR 一个样本，并尽量覆盖不同模块。</p>
 </section>
 
 <section>
-<h2>三方都漏掉的</h2>
-<p>lmreview 漏了 17 个要点，这 17 个 /pr-review 和 /code-review 也都漏了。没有哪个要点是别人抓到而 lmreview 没抓到的。</p>
+<h2>四方都漏掉的</h2>
+<p>lmreview 漏了 17 个要点，其中 16 个另外三方也都漏了；剩下 1 个（#3869 建议把 L2 → L1 重复 key 的处理拆成单独的 PR，minor）只有 /anthropic-skills:pr-review 抓到。</p>
 <ul>
 <li><b>blocker 1</b>：rebase 到 dev 之后接口签名不匹配，mypy 报错（#5478）。这需要知道当时 base 分支的状态，离线回放拿不到。</li>
 <li><b>major 2</b>：<code>reserve_write</code> 和 <code>reserve_read</code> 之间 key 可能被驱逐的竞态（#3869）；异步 L2 读锁导致的 flaky 测试（#5478）。</li>
-<li><b>minor 8</b>：大多是需要项目背景的取舍。比如拆成单独的 PR，把函数挪到单独文件，两个监控指标重叠，删掉的 docstring 里有两句该保留，单测里不要 import vllm。</li>
+<li><b>minor 7</b>：大多是需要项目背景的取舍。比如把函数挪到单独文件，两个监控指标重叠，删掉的 docstring 里有两句该保留，单测里不要 import vllm。</li>
 <li><b>nit 6</b>：口味型意见，比如改名（<code>num_groups</code> → <code>num_object_groups</code>、<code>rust_io</code>）、用 <code>itertools.groupby</code>、import 放顶部、撤回不必要的改名。</li>
 </ul>
-<p class="note">#3869 一个 PR 占了 7 个。这些漏掉的评论会进入学习流程，变成规则；学过的组命中更高，就是这么来的。</p>
+<p class="note">#3869 一个 PR 占了 16 个里的 6 个。这些漏掉的评论会进入学习流程，变成规则；学过的组命中更高，就是这么来的。</p>
 </section>
 
 <section>
@@ -397,24 +391,25 @@ code{font-family:var(--mono);font-size:.85em}
 <tr><td>lmreview</td><td>blocker</td><td class="o">12</td><td class="o">8</td><td class="o">7</td></tr>
 <tr><td>lmreview</td><td>major</td><td class="o">78</td><td class="o">57</td><td class="o">55</td></tr>
 <tr><td>/pr-review</td><td>error（当作 major）</td><td class="s">56</td><td class="s">45</td><td class="s">45</td></tr>
+<tr><td>/anthropic-skills:pr-review</td><td>error（当作 major）</td><td class="a">47</td><td class="a">39</td><td class="a">36</td></tr>
 <tr><td>/code-review</td><td>important（当作 major）</td><td class="c">63</td><td class="c">57</td><td class="c">40</td></tr>
 </tbody></table></div>
-<p class="note">/pr-review 只有 error / warning / info 三级，/code-review 只有 important / pre_existing / nit 三级，都没有 blocker，所以各列一行按 major 比。"判分模型认为成立"是 AI 的判断，不是 gold，还需要人逐条确认。成立的比例：lmreview 95%（62/65），/pr-review 100%（45/45），/code-review 70%（40/57）。</p>
+<p class="note">另外三方都没有 blocker 这一级，所以各列一行按 major 比（/anthropic-skills:pr-review 的报告和 /pr-review 一样，抽取时归为 error / warning / info）。"判分模型认为成立"是 AI 的判断，不是 gold，还需要人逐条确认。成立的比例：lmreview 95%（62/65），/pr-review 100%（45/45），/anthropic-skills:pr-review 92%（36/39），/code-review 70%（40/57）。</p>
 <div class="tw" style="margin-top:12px"><table>
-<thead><tr><th>blocker/major 的内容</th><th>lmreview</th><th>/pr-review</th><th>/code-review</th></tr></thead>
+<thead><tr><th>blocker/major 的内容</th><th>lmreview</th><th>/pr-review</th><th>/anthropic-skills:pr-review</th><th>/code-review</th></tr></thead>
 <tbody>
-<tr><td>总条数</td><td class="o">90</td><td class="s">56</td><td class="c">63</td></tr>
-<tr><td>带"崩溃、泄漏、竞态、数据错乱"这类字眼</td><td class="o">48</td><td class="s">28</td><td class="c">39</td></tr>
-<tr><td>跟进之前 review 里没修好的问题</td><td class="o">10</td><td class="s">0</td><td class="c">4</td></tr>
-<tr><td>提到 vLLM</td><td class="o">20</td><td class="s">11</td><td class="c">17</td></tr>
-<tr><td>规范类（docstring、类型、命名、import）</td><td class="o">11</td><td class="s">12</td><td class="c">7</td></tr>
+<tr><td>总条数</td><td class="o">90</td><td class="s">56</td><td class="a">47</td><td class="c">63</td></tr>
+<tr><td>带"崩溃、泄漏、竞态、数据错乱"这类字眼</td><td class="o">48</td><td class="s">28</td><td class="a">23</td><td class="c">39</td></tr>
+<tr><td>跟进之前 review 里没修好的问题</td><td class="o">10</td><td class="s">0</td><td class="a">3</td><td class="c">4</td></tr>
+<tr><td>提到 vLLM</td><td class="o">20</td><td class="s">11</td><td class="a">10</td><td class="c">17</td></tr>
+<tr><td>规范类（docstring、类型、命名、import）</td><td class="o">11</td><td class="s">12</td><td class="a">5</td><td class="c">7</td></tr>
 </tbody></table></div>
 <p style="margin-top:10px">lmreview 报的深层问题最多，原因有四个：</p>
 <ul>
 <li><b>侧重正确性</b>：prompt 要求报出所有真实问题，正确性排第一；发现 bug 时还要给出回归测试。</li>
 <li><b>跟进之前的 review</b>：之前评论过、这一版还没修好的问题，会再报一次。</li>
 <li><b>可以查 vLLM 源码</b>：用来核对 PR 对 vLLM 行为的假设。</li>
-<li><b>级别划分</b>：blocker/major 只给行为错误。规范类问题三方差不多。</li>
+<li><b>级别划分</b>：blocker/major 只给行为错误。</li>
 </ul>
 <p class="note">/code-review 也专找 bug，报得不少，但三成被判不成立；它没有 PR 描述和项目规范，误报更多。</p>
 </section>
@@ -424,6 +419,7 @@ code{font-family:var(--mono);font-size:.85em}
 <ul>
 <li><b>lmreview</b>：<code>p990f2d2e+v0032@medium-rc</code>。主审 Opus medium，带 /pr-review 的检查清单、设计文档检查、批量读取，只输出 JSON。rule check medium，和主审并行运行，不带工具。之后用一次 Sonnet 小调用，去掉 rule check 里和主审重复的条目。</li>
 <li><b>/pr-review</b>：LMCache dev d0959e0 里的 <code>.claude/skills/pr-review/SKILL.md</code> 加 <code>docs/coding_standards.md</code>，离线运行。</li>
+<li><b>/anthropic-skills:pr-review</b>：它的 SKILL.md 替换仓库自带的 pr-review，和 /pr-review 用同样的离线改法运行。</li>
 <li><b>/code-review</b>：<code>/code-review medium</code>。级别映射：important → major，pre_existing → minor，nit → nit。</li>
 <li><b>high 换成 medium</b>（6 个样本，换配置前测的）：lmreview 命中 70% → 70%，成本降 25%；/pr-review 命中 59% → 49%。</li>
 <li><b>去重</b>：每个 PR 约 $0.015。rule check 为 low 时逐条检查过：72 条去掉 25 条，没有误删人类评论的命中。</li>

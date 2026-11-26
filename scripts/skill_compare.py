@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import collections as C
 import filecmp
+import hashlib
 import json
 import os
 import pathlib
@@ -60,7 +61,10 @@ MAIN_FROM = os.environ.get("SC_MAIN_FROM")  # an -rc reviewer with the same main
 RC_FROM = os.environ.get("SC_RC_FROM")  # an -rc reviewer whose cached rule check (same prompt, book) is reused
 EFFORT = os.environ.get("SC_SKILL_EFFORT", "high")  # the skill arm's effort
 SKILL_SUB = "" if EFFORT == "high" else f"effort_{EFFORT}"  # other efforts are cached apart
-BASE_ARM = os.environ.get("SC_BASELINE", "skill")  # what lmreview is compared with: "skill" or "ccreview" (/code-review)
+BASE_ARM = os.environ.get("SC_BASELINE", "skill")  # compared with: "skill" (/pr-review), "ccreview" (/code-review), "askill"
+# "askill": the generic pr-review skill synced from the claude.ai org (/anthropic-skills:pr-review); not committed here
+ASKILL_SRC = pathlib.Path(os.environ.get("SC_ASKILL", next(iter(sorted(
+    (pathlib.Path.home() / ".claude" / "skills" / "synced").glob("*/pr-review/SKILL.md"))), "")))
 RES = TAG + (f"__{BASE_ARM}_{EFFORT}" if SKILL_SUB or BASE_ARM != "skill" else "")  # results: TAG against BASE_ARM at EFFORT
 SKILL_TOOLS = "Read,Grep,Glob,Bash,Agent"
 EXCLUDE_PRS = {6212}
@@ -70,7 +74,7 @@ FIXED_UNLEARNED = {(4729, "57800f07")}  # its comments were never distilled (ano
 OUT = pathlib.Path(__file__).resolve().parent.parent / "data" / "skill_compare"
 SKILL_FILES = (".claude/skills/pr-review/SKILL.md", "docs/coding_standards.md")
 # $ looked ahead before each step, so the cap is not crossed by the next call
-EST = {"ccreview": 3.0, "skill": 5.0, "extract": 0.2, "lmreview": 1.5, "judge": 1.2}
+EST = {"ccreview": 3.0, "skill": 5.0, "askill": 5.0, "extract": 0.2, "lmreview": 1.5, "judge": 1.2}
 
 SKILL_PROMPT = """Run LMCache's `pr-review` skill on PR #{number}: read `.claude/skills/pr-review/SKILL.md` in
 the working directory and follow its review process and output format, with these offline adaptations.
@@ -101,6 +105,25 @@ Report:
 >>>"""
 
 SKILL_SEV = {"error": "major", "warning": "minor", "info": "nit"}
+
+ASKILL_PROMPT = """Run the `pr-review` skill on PR #{number}: read `.claude/skills/pr-review/SKILL.md` in the
+working directory (the repository under review) and follow its steps and output format, with these offline
+adaptations.
+
+Offline rules (they override the skill where it says to use GitHub):
+- There is no network. Do not use `gh`, curl, WebFetch, pip or any other network access.
+- Instead of `gh pr view`, use the PR metadata below. Instead of `gh pr diff`, the PR's head is checked out
+  as HEAD and its diff is `git diff {base}...HEAD` (`--stat` / `--name-only` for the file list); the same
+  diff is also in `PR.diff`. Earlier review discussion on the PR, if any, is in `PR_HISTORY.md`.
+- Use git only to read (diff, show, log, grep); do not modify any files in the repository.
+- Subagents (Agent tool) are allowed; they are under the same rules.
+
+PR #{number}: {title}
+Base branch: {base_ref}
+PR description:
+<<<
+{body}
+>>>"""
 
 
 # ---------------------------------------------------------------- selection
@@ -253,19 +276,27 @@ def transcript_summary(wt: pathlib.Path) -> dict:
     return {"transcripts": len(files), "tools": dict(tools), "bash": bash, "agents": agents, "network_attempts": net}
 
 
-def run_skill(cfg: Config, s: dict, budget: Budget) -> dict:
-    """Arm A on sample `s`; cached in skill/runs/."""
-    p = OUT / "skill" / SKILL_SUB / "runs" / f"{key_of(s)}.json"
+def run_skill(cfg: Config, s: dict, budget: Budget, arm: str = "skill") -> dict:
+    """A skill arm on sample `s`: "skill" (LMCache's /pr-review) or "askill" (the org's generic pr-review,
+    installed over the repo's own); cached in <arm>/runs/."""
+    p = OUT / arm / SKILL_SUB / "runs" / f"{key_of(s)}.json"
     if p.exists():
         return json.loads(p.read_text())
     raw = cached_pr(cfg, s["pr"], s["time"])
-    budget.check("skill")
+    budget.check(arm)
     t0 = time.time()
-    with sample_workspace(cfg, s, "skill") as (wt, base):
-        installed = install_skill(cfg, wt)
+    with sample_workspace(cfg, s, arm) as (wt, base):
+        if arm == "askill":
+            dst = wt / ".claude" / "skills" / "pr-review" / "SKILL.md"
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ASKILL_SRC, dst)
+            installed = {"askill": hashlib.sha256(ASKILL_SRC.read_bytes()).hexdigest()[:12]}
+        else:
+            installed = install_skill(cfg, wt)
         git_head(cfg, wt, s, base)
-        prompt = SKILL_PROMPT.format(number=raw["number"], title=raw["title"], body=(raw.get("body") or "")[:4000],
-                                     base=base)
+        prompt = (ASKILL_PROMPT if arm == "askill" else SKILL_PROMPT).format(
+            number=raw["number"], title=raw["title"], body=(raw.get("body") or "")[:4000], base=base,
+            base_ref=raw.get("baseRefName") or raw.get("base") or "dev")
         r = llm.run(prompt, EFFORT, cwd=str(wt), tools=SKILL_TOOLS, sandbox="replay")
         secs = time.time() - t0
         trace = transcript_summary(wt)
@@ -283,7 +314,7 @@ def run_skill(cfg: Config, s: dict, budget: Budget) -> dict:
          "locations": [{"path": x["path"], "start": x["line"] if isinstance(x.get("line"), int) else None}]
          if x.get("path") else [], "skill_severity": x.get("severity")}
         for i, x in enumerate(items, 1)]
-    run = {"pr": s["pr"], "commit": s["commit"], "base": base, "arm": "skill", "findings": findings,
+    run = {"pr": s["pr"], "commit": s["commit"], "base": base, "arm": arm, "findings": findings,
            "json": how if items is not None else "none", "raw": r["text"], "cost": r["cost"], "turns": r["turns"],
            "denials": r["denials"], "usage": r.get("usage"), "model": r.get("model"), "secs": round(secs, 1),
            "extraction": ext, "installed": installed, "trace": trace, "n_subagents": len(trace["agents"])}
@@ -454,7 +485,7 @@ def metrics(run: dict, sc: dict, arm: str) -> dict:
          "valid_frac": round(v["True"] / n_ai, 2) if n_ai else None,
          "cost_review": round(run.get("cost") or 0, 3), "cost_judge": round(sc.get("cost") or 0, 3),
          "secs_review": run.get("secs"), "found_keys": sorted(pkey(h) for h in found)}
-    if arm in ("skill", "ccreview"):
+    if arm in ("skill", "askill", "ccreview"):
         m["cost_extract"] = round((run.get("extraction") or {}).get("cost") or 0, 3)
         m["n_subagents"] = run.get("n_subagents")
         m["models"] = sorted((run.get("usage") or {}))
@@ -475,7 +506,7 @@ def metrics(run: dict, sc: dict, arm: str) -> dict:
 def compare(cfg: Config, s: dict, budget: Budget) -> dict:
     """Both arms on sample `s`, judged; returns per-arm metrics and the overlap of found points."""
     res: dict = {"pr": s["pr"], "commit": s["commit"][:8]}
-    runs = {BASE_ARM: (run_ccreview if BASE_ARM == "ccreview" else run_skill)(cfg, s, budget),
+    runs = {BASE_ARM: run_ccreview(cfg, s, budget) if BASE_ARM == "ccreview" else run_skill(cfg, s, budget, BASE_ARM),
             "lmreview": run_lmreview(cfg, s, budget)}
     for arm, run in runs.items():
         if run.get("findings") is None:

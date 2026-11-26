@@ -5,7 +5,7 @@
 [review]
 # The four settings below are part of the reviewer's name (<prompt>+<book>@<effort>[x<n>][-rc][-sh]),
 # so runs made with other settings are never mixed with these in the cache.
-effort = "high"      # low | medium | high | xhigh | max
+effort = "medium"    # low | medium | high | xhigh | max. medium since 2026-11-26: same recall as high on 6 samples (26/37), -24% cost, -28% time; learning runs at this effort too
 rulecheck = true     # -rc: one more agent that gives a verdict on every applicable rule
 parallel = 1         # x<n>: main review agents run at once, then one merge agent
 shell = false        # -sh: the agents also get a sandboxed shell (needs bubblewrap and socat)

@@ -1395,39 +1395,6 @@ def _apply_regroup(rules: list[dict], act: dict, g: list[str], ents: list[dict],
     return ids
 
 
-def _apply_merge(rules: list[dict], g: list[str], d: dict, out: str, cm: dict, base_ids: set[str]) -> str:
-    """Replace the active entries `g` of `rules` by entry text `d` (a merge, as in _consolidate); returns the
-    new id."""
-    today = dt.date.today().isoformat()
-    by = {r["id"]: r for r in rules}
-    used, k = set(by), 0
-    while True:
-        k += 1
-        if f"{out}-{k:03d}" not in used:
-            break
-    rid = f"{out}-{k:03d}"
-    olds = [by[x] for x in g]
-    ev = _uniq([e for r in olds for e in r.get("evidence") or []])
-    kids = _uniq([m for r in olds for m in r.get("members") or [] if m not in g])
-    rep = _entry(d) | {"id": rid, "kind": d.get("kind") or "principle", "status": "active", "version": 1,
-                       "history": [], "evidence": ev, "concern": "consolidated",
-                       "replaces": [x for x in g if x in base_ids], "replaces_new": [x for x in g if x not in base_ids],
-                       "tests": [{**t, "from": r["id"]} for r in olds for t in r.get("tests") or []],
-                       "n_prs": len({cm[e]["pr"] for e in ev if e in cm}),
-                       "area": ",".join(sorted({cm[e].get("area") or "overall" for e in ev if e in cm}))}
-    if kids:
-        rep["members"] = kids
-    for r in olds:
-        r["status"] = "retired"
-        r["retired"] = {"date": today, "by": out, "replaced_by": rid, "why": "consolidated"}
-        r.pop("members", None)
-    for r in rules:
-        if r.get("principle") in g:
-            r["principle"] = rid
-    rules.append(rep)
-    return rid
-
-
 def _order(r: dict) -> int:
     """When an entry got its current text, as a version number: the candidate that wrote or last
     revised it (v0011c1-003 -> 11; revised by v0012c2 -> 12)."""

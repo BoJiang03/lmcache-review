@@ -222,11 +222,10 @@ def _params() -> dict:
 
 def prompt_params(version: str) -> dict:
     """The PARAMS values prompt version `version` was named with: kept in state/prompts/<id>.params.json
-    when the id was saved; the current config for the current version, a named one (v0b, ...) or an id
-    saved before params were kept.
+    when the id was saved; the current config for the current version before it is saved.
 
     Args:
-        version: a prompt version (p<sha8> or a named one).
+        version: a prompt version (p<sha8>).
 
     Returns:
         {setting: value} for every name in PARAMS.
@@ -236,24 +235,22 @@ def prompt_params(version: str) -> dict:
 
 
 def part_path(version: str, part: str) -> pathlib.Path:
-    """The `part` prompt ("rulecheck" or "rulepick") of prompt version `version`: kept in state/prompts for a
-    p<sha8> version; the current file for the current version and for the older named prompts (v0b, ...)."""
+    """The `part` prompt ("rulecheck" or "rulepick") of prompt version `version`: kept in state/prompts once
+    saved; the current file for the current version."""
     p = STATE / "prompts" / f"{version}.{part}.md"
-    if p.exists() or not re.fullmatch(r"p[0-9a-f]{8}", version) or version == prompt_id():
+    if p.exists() or version == prompt_id():
         return p if p.exists() else PROMPTS / f"{part}.md"
     raise FileNotFoundError(f"prompt {version} has no {p.name} in {STATE / 'prompts'}")
 
 
 def prompt_path(version: str) -> pathlib.Path:
-    """The prompt file of prompt version `version` (p<sha8> from state/prompts, else prompts/reviewer_<v>.md)."""
-    if re.fullmatch(r"p[0-9a-f]{8}", version):
-        p = STATE / "prompts" / f"{version}.md"
-        if p.exists():
-            return p
-        if version == prompt_id():
-            return PROMPTS / "reviewer.md"
-        raise FileNotFoundError(f"prompt {version} is neither in {STATE / 'prompts'} nor the current reviewer.md")
-    return PROMPTS / f"reviewer_{version}.md"
+    """The prompt file of prompt version `version` (p<sha8>): from state/prompts, else the current reviewer.md."""
+    p = STATE / "prompts" / f"{version}.md"
+    if p.exists():
+        return p
+    if version == prompt_id():
+        return PROMPTS / "reviewer.md"
+    raise FileNotFoundError(f"prompt {version} is neither in {STATE / 'prompts'} nor the current reviewer.md")
 
 
 def reviewer(book: str | None = None) -> str:
@@ -478,9 +475,7 @@ def status() -> str:
          f"candidate: {cand['name']} (attempt {cand.get('attempt')}, {len(cand.get('comments') or [])} comments), "
          f"run `lmreview vet`" if cand else "candidate: none",
          f"ledger: {len(rows)} comments on {len(samples)} samples: "
-         + ", ".join(f"{s} {len(by[s])}" for s in STATUSES)
-         + (f" ({n_leg} of them from before the ledger)" if (n_leg := sum(bool((r.get('resolved_by') or {}).get('legacy'))
-                                                                           or 'legacy' in (r.get('note') or '') for r in rows.values())) else ""),
+         + ", ".join(f"{s} {len(by[s])}" for s in STATUSES),
          f"samples: {len(solved)} solved by the book, {len(open_)} with comments to distill"]
     if n:
         L.append("size (active entries, words, comments explained; fewer words per comment = more general): "

@@ -13,7 +13,7 @@ import subprocess
 from . import github, llm
 from .annotate import cid_of
 from .ensemble import ensemble
-from .config import PROMPTS, Config
+from .config import Config
 from .settings import get
 from .state import book_path, part_path, prompt_params, prompt_path
 from .schema import SCHEMA_VERSION, SEVERITIES, Finding, SchemaError, cites, load_findings, parse_findings, to_dicts
@@ -70,32 +70,14 @@ def prompt_template(version: str) -> tuple[str, tuple[str, ...]]:
     """Prompt text of `version` and the extra workspace context it declares.
 
     A prompt may start with directive lines that are not sent to the model:
-    `<!-- context: vllm -->` (extra workspace context), `<!-- system: trimmed -->` (see
-    prompt_system) and `<!-- rules: examples -->` (see rule_examples).
+    `<!-- context: vllm -->` (extra workspace context) and `<!-- rules: nowhy -->` (see rule_why).
     """
     text, ctx = prompt_path(version).read_text(), ()
-    while m := re.match(r"<!--\s*(context|system|rules):\s*([\w, .-]*?)\s*-->\n", text):
+    while m := re.match(r"<!--\s*(context|rules):\s*([\w, .-]*?)\s*-->\n", text):
         if m[1] == "context":
             ctx = tuple(x.strip() for x in m[2].split(",") if x.strip())
         text = text[m.end():]
     return text, ctx
-
-
-def prompt_system(version: str) -> str | None:
-    """System prompt that prompt `version` asks for with `<!-- system: X -->` (prompts/system_X.md);
-    None keeps Claude Code's default."""
-    m = re.search(r"^<!--\s*system:\s*([\w.-]+)\s*-->$", prompt_path(version).read_text(), re.M)
-    return (PROMPTS / f"system_{m[1]}.md").read_text() if m else None
-
-
-def rule_examples(version: str) -> bool:
-    """Whether prompt `version` shows each rule's first example (`<!-- rules: examples -->`).
-
-    Off by default: examples carry the source PR's particulars (names, values), which are too specific
-    for the reviewer and leak the answer on the source PR. Only the older prompts (v0, v0b, v0c, v0d,
-    v0t) keep them, so their cached runs stay valid; v0e/v0f are v0b/v0c without them.
-    """
-    return bool(re.search(r"^<!--\s*rules:\s*examples\s*-->$", prompt_path(version).read_text(), re.M))
 
 
 def rule_why(version: str) -> bool:
@@ -140,29 +122,26 @@ def applicable(rules: list[dict], paths: list[str]) -> list[dict]:
     return [r for r in use if not r.get("paths") or any(fnmatch.fnmatch(p, g) for p in paths for g in r["paths"])]
 
 
-def rule_lines(use: list[dict], examples: bool = False, why: bool = True) -> list[str]:
+def rule_lines(use: list[dict], why: bool = True) -> list[str]:
     """One prompt line per rule: id, kind (and principle, if it is a specialization of one), text;
-    with `examples`, also the rule's first example (see rule_examples); with `why`, its why (rule_why)."""
+    with `why`, its why (rule_why)."""
     def text(r: dict) -> str:
         t = f"When {r['when']}: {r['expect']}" if r.get("expect") else r.get("rule", "")
-        t = t.rstrip(".") + "." + (f" Why: {r['why']}" if why and r.get("why") else "")
-        return t + (f" E.g. {r['examples'][0]}" if examples and r.get("examples") else "")
+        return t.rstrip(".") + "." + (f" Why: {r['why']}" if why and r.get("why") else "")
     return [f"- [{r['id']}] ({r.get('kind', 'principle')}" + (f", under {r['principle']}" if r.get("principle") else "")
             + f") {text(r)}" for r in use]
 
 
-def rules_section(rules: list[dict], paths: list[str], examples: bool = False, why: bool = True) -> str:
+def rules_section(rules: list[dict], paths: list[str], why: bool = True) -> str:
     """The prompt section with the active rules that apply to `paths` (rules without paths always apply)."""
     use = applicable(rules, paths)
     if not use:
         return ""
-    lines = rule_lines(use, examples, why)
+    lines = rule_lines(use, why)
     return ("\n\nTeam rules distilled from past LMCache reviews. Check the change against the ones "
             "that apply; when a finding follows from a rule, put its id in the finding's \"rule\" "
             "field. A rule finding must be about code this PR adds or changes: do not raise a rule "
-            "against behavior the PR leaves as it was."
-            + (" A rule's example shows one instance, not a checklist item: apply the rule's condition, "
-               "not the example's particulars." if examples else "") + "\n"
+            "against behavior the PR leaves as it was.\n"
             + "\n".join(lines) + "\n")
 
 
@@ -236,17 +215,16 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER,
             raise ValueError("only= is for rule-only (-ro) reviewers")
         use = [r for r in use if r["id"] in only]
     if rules:
-        sec = rules_section(load_rules(rules), changed_paths(wt), rule_examples(version), rule_why(version))
+        sec = rules_section(load_rules(rules), changed_paths(wt), rule_why(version))
         prompt = prompt.replace("\nFinish with one JSON block", sec + "\nFinish with one JSON block", 1) \
             if "\nFinish with one JSON block" in prompt else prompt + sec
-    system = prompt_system(version)
     meta = {"schema_version": SCHEMA_VERSION, "effort": effort, "version": version, "rules": rules,
             "reviewer": reviewer}
     n, rc, ro = 1, rulecheck_of(reviewer) and bool(use), ruleonly_of(reviewer)
     tools = TOOLS
 
     def once() -> dict:
-        return _parsed(llm.run(prompt, effort, cwd=str(wt), tools=tools, system=system))
+        return _parsed(llm.run(prompt, effort, cwd=str(wt), tools=tools))
 
     def side_by_side(ok: list[dict]) -> dict:  # no merge call, ids made unique as "<run>.<id>"
         main = [f for x in ok if x.get("kind") != "rulecheck" for f in x["findings"]]
@@ -260,24 +238,18 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER,
         return {"findings": fs, "error": None, "raw": "", "cost": cost, "turns": 0, "denials": [], "usage": {}}
 
     def rulecheck() -> dict:
-        """The rule-check agent: a verdict per rule, so a long rulebook cannot crowd rules out. With the
-        current prompt it reads the diff and discussion without tools, on a long book after a picking
-        stage (rule_stage); an older prompt version reads the workspace with tools."""
+        """The rule-check agent: a verdict per rule, so a long rulebook cannot crowd rules out. It reads the
+        diff and discussion without tools, on a long book after a picking stage (rule_stage)."""
         t = part_path(version, "rulecheck").read_text()
-        if "{context}" not in t and "{shared}" not in t:  # an older prompt: the agent reads the workspace with tools
-            p = t.format(rules="\n".join(rule_lines(use, rule_examples(version), rule_why(version))), **pr_meta(raw))
-            return _parsed(llm.run(p, effort, cwd=str(wt), tools=tools, system=system), rulecheck=True)
-        if not re.fullmatch(r"p[0-9a-f]{8}", version):  # a named prompt would silently get today's check
-            raise ValueError(f"prompt {version} predates the tool-less rule check; use a p<sha8> version")
-        ctx = rulecheck_context(wt, symbols="SYMBOLS" in t)  # older prompt versions: as they ran
+        ctx = rulecheck_context(wt)
         rce = str(prompt_params(version)["rulecheck_effort"])  # its own effort, part of the prompt id
-        rsys = system
+        rsys = None
         if "{shared}" in t:  # the PR and its context go in the system prompt, the same for the picking stage and
             # the check, so the check reads them from the cache the pick wrote instead of paying for them again
-            rsys = ((system or "") + "\n\n" + SHARED_HEAD.format(**pr_meta(raw)) + ctx).strip()
+            rsys = (SHARED_HEAD.format(**pr_meta(raw)) + ctx).strip()
         def one(rules_: list[dict]) -> dict:
             check, pick = rule_stage(version, rules_, ctx, raw, rce, rsys)
-            p = t.format(rules="\n".join(rule_lines(check, rule_examples(version), rule_why(version))), context=ctx, shared="", **pr_meta(raw))
+            p = t.format(rules="\n".join(rule_lines(check, rule_why(version))), context=ctx, shared="", **pr_meta(raw))
             r = _parsed(llm.run(p, rce, cwd=str(wt), tools="", system=rsys), rulecheck=True)
             if pick:  # rules left out in stage 1 get a verdict too: not applicable
                 left = [x["id"] for x in rules_ if x not in check]
@@ -391,13 +363,12 @@ def symbol_context(wt: pathlib.Path, diff: str) -> str:
 SHARED_HEAD = "You review pull request #{number} of LMCache ({title}). Its diff and context:\n\n"
 
 
-def rulecheck_context(wt: pathlib.Path, symbols: bool = True) -> str:
+def rulecheck_context(wt: pathlib.Path) -> str:
     """What the tool-less rule check reads: the PR's diff, the review discussion so far, and where the
     names the diff defines or its docs mention are defined and used in the repository (symbol_context).
 
     Args:
         wt: the sample's workspace (PR.diff, PR_HISTORY.md, the source tree at the commit).
-        symbols: add the SYMBOLS section (prompt versions whose rule check part reads it).
 
     Returns:
         The prompt text, as markdown sections.
@@ -407,7 +378,7 @@ def rulecheck_context(wt: pathlib.Path, symbols: bool = True) -> str:
     h = wt / "PR_HISTORY.md"
     if h.exists():
         parts.append("# PR_HISTORY.md (the review discussion so far)\n" + h.read_text(errors="replace"))
-    sym = symbol_context(wt, diff) if symbols else ""
+    sym = symbol_context(wt, diff)
     if sym:
         parts.append("# SYMBOLS (grep of the repository at this commit: where names from the diff and its docs are "
                      "defined and used; may be incomplete)\n```\n" + sym + "\n```")
@@ -425,7 +396,7 @@ def rule_stage(version: str, use: list[dict], ctx: str, raw: dict, effort: str,
         ctx: the diff and discussion (rulecheck_context).
         raw: the PR, for its number and title.
         effort: thinking effort of the call.
-        system: the system prompt of the prompt version.
+        system: the system prompt of the rule check (the PR and its context).
 
     Returns:
         (the rules to check in full, the picking call's {"cost", "usage"} or None when not staged; a

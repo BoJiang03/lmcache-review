@@ -202,12 +202,44 @@ def _primary_path(f: dict) -> str | None:
     return locs[0].get("path") if locs else None
 
 
-def drop_repeats(main: list[dict], rulecheck: list[dict]) -> list[dict]:
-    """The rule check's findings without those the main review already raised: same rule and same primary
-    file as a main finding (the main review sees the rulebook too). Free; on 2026-11-25's 26 compare runs it
-    dropped 26 findings and no matched human point."""
-    seen = {(f.get("rule"), _primary_path(f)) for f in main if f.get("rule")}
-    return [f for f in rulecheck if (f.get("rule"), _primary_path(f)) not in seen]
+SAME_PROMPT = """Below are pairs of code review findings on the same file, citing the same team rule. For
+each pair, answer whether B raises the same problem as A (so B can be dropped as a repeat), or a
+different problem that only falls under the same rule. Answer with one ```json block:
+[{{"pair": <n>, "same": true | false}}, ...]
+
+{pairs}"""
+
+
+def drop_repeats(main: list[dict], rulecheck: list[dict], confirm: bool = True) -> tuple[list[dict], float]:
+    """The rule check's findings without those the main review already raised (the main review sees the
+    rulebook too). Candidates: same rule and same primary file as a main finding. With `confirm`, one
+    small tool-less call ([review] dedupe_model, low effort) checks the candidates and keeps those that
+    raise a different problem under a broad rule; on failure every candidate is kept.
+
+    Returns:
+        (the rule-check findings kept, the call's cost).
+    """
+    by_key: dict = {}
+    for f in main:
+        if f.get("rule"):
+            by_key.setdefault((f.get("rule"), _primary_path(f)), []).append(f)
+    cand = [(k, f) for k, f in enumerate(rulecheck) if (f.get("rule"), _primary_path(f)) in by_key]
+    if not cand:
+        return list(rulecheck), 0.0
+    drop, cost = {k for k, _ in cand}, 0.0
+    if confirm:
+        brief = lambda f: f"{f.get('title', '')}: {f.get('body', '')}"  # noqa: E731
+        pairs = "\n\n".join(
+            f"Pair {n}:\n" + "\n".join(f"A: {brief(g)}" for g in by_key[(f.get('rule'), _primary_path(f))])
+            + f"\nB: {brief(f)}" for n, (_, f) in enumerate(cand, 1))
+        r = llm.run(SAME_PROMPT.format(pairs=pairs), "low", model=str(get("review", "dedupe_model")))
+        cost = r.get("cost") or 0.0
+        try:
+            same = {int(x["pair"]) for x in llm.extract_json(r.get("text") or "") if x.get("same") is True}
+            drop = {k for n, (k, _) in enumerate(cand, 1) if n in same}
+        except (ValueError, TypeError, KeyError):
+            drop = set()
+    return [f for k, f in enumerate(rulecheck) if k not in drop], cost
 
 
 def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, live: bool = False,
@@ -262,11 +294,14 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER, 
 
     def side_by_side(ok: list[dict]) -> dict:  # -ms / rc_merge off: no merge call, ids made unique as "<run>.<id>"
         main = [f for x in ok if x.get("kind") != "rulecheck" for f in x["findings"]]
+        cost, kept = 0.0, {}
+        for i, x in enumerate(ok):
+            if x.get("kind") == "rulecheck":
+                kept[i], c = drop_repeats(main, x["findings"])
+                cost += c
         fs = [{**f, "id": f"{i}.{f.get('id') or k}", "support": 1}
-              for i, x in enumerate(ok, 1)
-              for k, f in enumerate(drop_repeats(main, x["findings"]) if x.get("kind") == "rulecheck"
-                                    else x["findings"], 1)]
-        return {"findings": fs, "error": None, "raw": "", "cost": 0.0, "turns": 0, "denials": [], "usage": {}}
+              for i, x in enumerate(ok, 1) for k, f in enumerate(kept.get(i - 1, x["findings"]), 1)]
+        return {"findings": fs, "error": None, "raw": "", "cost": cost, "turns": 0, "denials": [], "usage": {}}
 
     def rulecheck() -> dict:
         """The rule-check agent: a verdict per rule, so a long rulebook cannot crowd rules out. With the

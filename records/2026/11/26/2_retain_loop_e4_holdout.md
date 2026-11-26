@@ -58,3 +58,10 @@
   30 × 3 again: 2/30 differ; 2 majorities changed (a docstring-wording nit → learnable 3/3; "LMCache?" → learnable 2/3, debatable).
   The 8 loop-dropped comments, 2 runs: itertools.groupby → learnable 2/2; inline constants → learnable 2/2;
   README promo → context 2/2; #4004 docs questions → unclear 2/2; #3869 "keep docstring" and #3210 → not_issue / unclear.
+
+## covered points through attribute (new criteria, no ledger change; $1.53)
+- 141 covered points (110 comments): learnable 120 (85%), unclear 7, context 6, not_issue 4, rejected 3, contested 1.
+  Saved in data/retention/covered_attr.json. The earlier "6 of 14 sampled covered look like non-issues" was an
+  old-prompt, small-sample estimate: withdrawn.
+- Pilot/holdout barely move: pilot drops 1 covered point (75.4→75.0%, v0034 86.2→85.9%); holdout drops 2 (#4548
+  README promo): 77.8→79.4%, v0033h 69.4→73.5%.

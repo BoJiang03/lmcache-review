@@ -70,7 +70,7 @@ def main(argv: list[str] | None = None) -> None:
     cp.add_argument("--stage", choices=["trim", "merge"], default="merge",
                     help="trim: rewrite long entries shorter; merge: merge or regroup entries")
     cp.add_argument("--repair", action="store_true", help="rewrite only what vet undid on this stage's last candidate")
-    i = sub.add_parser("init", help="start the state from rules/<book>.jsonl as v0001")
+    i = sub.add_parser("init", help="start the state as v0001 from a rulebook .jsonl (an empty file: no entries)")
     i.add_argument("book")
     i.add_argument("--note", default="")
 

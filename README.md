@@ -99,7 +99,7 @@ bin/lmreview round 3359 3461:a58f5c9c     # review + judge + distill + vet on th
 bin/lmreview judge | distill | vet        # one step at a time
 bin/lmreview retain                       # re-check learned points; unstable ones go back to to_distill
 bin/lmreview compress [--stage trim|merge] [--repair]   # shrink the book in use into a candidate (then vet)
-bin/lmreview init BOOK | rollback v0001 | discard        # start / move the state
+bin/lmreview init BOOK.jsonl | rollback v0001 | discard        # start / move the state
 bin/lmreview sync                         # update the dataset from GitHub (free)
 ```
 

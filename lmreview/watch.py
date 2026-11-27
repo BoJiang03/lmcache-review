@@ -339,12 +339,53 @@ def post_review(repo: str, n: int, out: pathlib.Path) -> tuple[str | None, str]:
         if not payload.exists():
             why = f"{payload.name} missing"
             continue
-        p = subprocess.run(["gh", "api", "-X", "POST", f"repos/{repo}/pulls/{n}/reviews", "--input", str(payload)],
-                           capture_output=True, text=True)
-        if p.returncode == 0:
-            return json.loads(p.stdout).get("html_url"), why
-        why = (p.stderr or p.stdout).strip()[:300]
+        r, why = post_payload(repo, n, json.loads(payload.read_text()))
+        if r:
+            return r.get("html_url"), why
     return None, why
+
+
+def post_payload(repo: str, n: int, payload: dict) -> tuple[dict | None, str]:
+    """Post a ghreview.build payload. Mentions of other findings first read as their titles; once GitHub has
+    given the inline comments their URLs, the texts that mention one are edited to link to it (a finding in
+    the summary: to the review).
+
+    Returns:
+        (GitHub's review object or None, what went wrong).
+    """
+    from .ghreview import FINDING_MARK, REF, render_refs
+    titles = payload.get("refs") or {}
+    send = {k: v for k, v in payload.items() if k != "refs"}
+    send["body"] = render_refs(send["body"], titles)
+    send["comments"] = [c | {"body": render_refs(c["body"], titles)} for c in send.get("comments", [])]
+    p = subprocess.run(["gh", "api", "-X", "POST", f"repos/{repo}/pulls/{n}/reviews", "--input", "-"],
+                       input=json.dumps(send), capture_output=True, text=True)
+    if p.returncode:
+        return None, (p.stderr or p.stdout).strip()[:300]
+    review = json.loads(p.stdout)
+    texts = [payload["body"]] + [c["body"] for c in payload.get("comments", [])]
+    if not any(REF.search(t) for t in texts):
+        return review, ""
+    q = subprocess.run(["gh", "api", "--paginate", f"repos/{repo}/pulls/{n}/reviews/{review['id']}/comments"],
+                       capture_output=True, text=True)
+    posted = json.loads(q.stdout) if q.returncode == 0 else []
+    urls = {fid: review.get("html_url") for fid in titles}  # in the summary unless found inline below
+    by_id = {}
+    for c in posted:
+        m = re.search(FINDING_MARK.format(r"([\w.]+)"), c.get("body") or "")
+        if m:
+            urls[m[1]] = c["html_url"]
+            by_id[m[1]] = c
+    bad = 0
+    for c in payload.get("comments", []):
+        m = re.search(FINDING_MARK.format(r"([\w.]+)"), c["body"])
+        if m and REF.search(c["body"]) and m[1] in by_id:
+            bad += subprocess.run(["gh", "api", "-X", "PATCH", f"repos/{repo}/pulls/comments/{by_id[m[1]]['id']}",
+                                   "-f", f"body={render_refs(c['body'], titles, urls)}"], capture_output=True).returncode != 0
+    if REF.search(payload["body"]):
+        bad += subprocess.run(["gh", "api", "-X", "PUT", f"repos/{repo}/pulls/{n}/reviews/{review['id']}",
+                               "-f", f"body={render_refs(payload['body'], titles, urls)}"], capture_output=True).returncode != 0
+    return review, (f"{bad} links to other findings not added" if bad else "")
 
 
 RETRACTED = "*This AI review was retracted.*"

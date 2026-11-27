@@ -235,20 +235,57 @@ def test_post_review_falls_back() -> None:
     home, _ = new_home()
     out = home / "reviews" / "1-abc"
     out.parent.mkdir()
-    for name in (".ghreview.json", ".ghreview-flat.json"):
-        pathlib.Path(str(out) + name).write_text("{}")
+    for name, tag in ((".ghreview.json", "inline"), (".ghreview-flat.json", "flat")):
+        pathlib.Path(str(out) + name).write_text(json.dumps({"body": tag, "comments": [], "refs": {}}))
+    sent = []
+
+    def fake_run(cmd, **kw):
+        tag = json.loads(kw["input"])["body"]
+        sent.append(tag)
+        ok = tag == "flat"
+        return subprocess.CompletedProcess(cmd, 0 if ok else 1, '{"id": 5, "html_url": "U"}' if ok else "", "" if ok else "422 line")
+    real, watch.subprocess.run = watch.subprocess.run, fake_run
+    try:
+        assert watch.post_review("o/r", 1, out) == ("U", "")
+    finally:
+        watch.subprocess.run = real
+    assert sent == ["inline", "flat"]
+
+
+def test_refs_link_to_comments() -> None:
+    """'root cause of f1' in a finding becomes the title of finding f1 of the same run, linked to its comment."""
+    from lmreview import ghreview
+    from lmreview.schema import parse_findings
+    fs = parse_findings([
+        {"id": "1.f1", "severity": "major", "scope": "line", "title": "First [one]", "body": "b",
+         "locations": [{"path": "a.py", "start": 11}]},
+        {"id": "1.f2", "severity": "minor", "scope": "line", "title": "Second", "suggestion": "see f1",
+         "body": "the root cause of f1; not `f1` in code, nor r1 or f9", "locations": [{"path": "a.py", "start": 12}]},
+        {"id": "2.r1", "severity": "nit", "scope": "pr", "title": "Third", "body": "like f1", "locations": []}])
+    p = ghreview.build({"commit": "c" * 40, "reviewer": "x", "cost": 0}, fs, DIFF, {}, "o/r")
+    second = p["comments"][1]["body"]
+    assert "the root cause of [[ref:1.f1]]; not `f1` in code, nor r1 or f9" in second and "see [[ref:1.f1]]" in second
+    assert "like f1" in p["body"]  # the rule check's own run has no f1
     calls = []
 
     def fake_run(cmd, **kw):
-        calls.append(cmd[-1])
-        ok = cmd[-1].endswith("flat.json")
-        return subprocess.CompletedProcess(cmd, 0 if ok else 1, '{"html_url": "U"}' if ok else "", "" if ok else "422 line")
+        calls.append(cmd)
+        if "POST" in cmd:
+            assert "[[ref:" not in kw["input"] and "*First (one)*" in kw["input"] and '"refs"' not in kw["input"]
+            return subprocess.CompletedProcess(cmd, 0, '{"id": 9, "html_url": "R"}', "")
+        if "GET" in cmd or "--paginate" in cmd:
+            cs = [{"id": 100 + i, "html_url": f"C{i}", "body": c["body"]} for i, c in enumerate(p["comments"])]
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(cs), "")
+        return subprocess.CompletedProcess(cmd, 0, "{}", "")
     real, watch.subprocess.run = watch.subprocess.run, fake_run
     try:
-        assert watch.post_review("o/r", 1, out) == ("U", "422 line")
+        review, why = watch.post_payload("o/r", 1, p)
     finally:
         watch.subprocess.run = real
-    assert [pathlib.Path(c).name for c in calls] == ["1-abc.ghreview.json", "1-abc.ghreview-flat.json"]
+    patches = [c for c in calls if "PATCH" in c]
+    assert review["id"] == 9 and why == "" and len(patches) == 1 and patches[0][4].endswith("/comments/101")
+    assert "the root cause of [First (one)](C0)" in patches[0][-1] and "see [First (one)](C0)" in patches[0][-1]
+    assert not [c for c in calls if "PUT" in c]  # the summary mentions no other finding
 
 
 def test_env_and_repo_name() -> None:

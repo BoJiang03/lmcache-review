@@ -115,8 +115,8 @@ The reviewer sees each rule's id, kind, when, expect and why, never its `example
 
 ### Commands
 
-Paid commands take `--max-cost` (`round` takes one per step). They stop starting new LLM calls once
-they reach it, and `0` prints the plan only.
+Paid commands take `--max-cost` (`round` takes one per step; the defaults in `[budget]` are $1000, i.e. no
+cap in effect). They stop starting new LLM calls once they reach it, and `0` prints the plan only.
 
 | Command | What it does |
 | --- | --- |

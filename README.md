@@ -104,8 +104,8 @@ bin/lmreview sync                         # update the dataset from GitHub (free
 ```
 
 A bare PR number in `round` means its commits that still have a missed comment (all of them if none
-has been judged yet). Paid commands take a cost cap and stop starting new LLM calls when they reach
-it (`--max-cost 0` prints the plan). Every run prints timestamped progress and is logged to `data/logs/`.
+has been judged yet). Paid commands take a cost cap (default: none in effect, $1000) and stop starting new LLM calls when they
+reach it (`--max-cost 0` prints the plan). Every run prints timestamped progress and is logged to `data/logs/`.
 
 ## Data
 

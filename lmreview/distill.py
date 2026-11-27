@@ -73,9 +73,15 @@ after it: every reply with who wrote it, and whether the thread was resolved and
   "nit" does not make it "not_issue". An author who agrees with the point but defers the change (adds a
   TODO, promises a follow-up, says "not now") accepts the standard: that is "learnable", not
   "rejected" or "contested".
-- "context": it needs knowledge outside the code (an offline decision, roadmap, where code should live
-  across projects, another PR's state). Decide this before "contested": an author's reply does not make
-  a roadmap question a code standard.
+  A standing project policy that a maintainer states and that applies to future pull requests is
+  "learnable" too (written later as project knowledge): a mode, API or component that is deprecated or no
+  longer takes new work, where new work of a kind should go instead, which platforms or paths are
+  supported. In "asks", state the policy and what it asks of a change it applies to.
+- "context": it needs knowledge outside the code that holds only for this change or this moment: an
+  offline decision about this PR, another PR's state or CI, a follow-up deferred by agreement, an idea
+  for later, where code should live across projects, an organizational choice. Decide this before
+  "contested": an author's reply does not make a roadmap question a code standard. A standing policy
+  (above) is not "context" even though it comes from a roadmap.
 - "not_issue": a question, praise, or nothing actionable; also an ask whose motivation the thread does
   not state and the code does not make evident (a bare preference, or a question the thread never
   answers with a problem in the code).

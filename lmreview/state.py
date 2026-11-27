@@ -373,7 +373,8 @@ def tested_entries(r: dict, book: dict, text: Callable) -> set[str]:
 
 
 def requeue_parked(max_cost: float = 0.5, cfg: Config | None = None) -> set[int]:
-    """Give parked (needs_human) comments another chance when the workflow has changed where it matters,
+    """Give parked (needs_human) comments, and "context" not_rulable ones, another chance when the workflow
+    has changed where it matters,
     at most MAX_REQUEUES times each; returns the PRs of the comments put back to to_distill.
 
     - the distill prompts (attribute, write, consolidate) changed since it was parked;
@@ -388,12 +389,16 @@ def requeue_parked(max_cost: float = 0.5, cfg: Config | None = None) -> set[int]
     cfg, rows = cfg or Config(), ledger()
     parked = [r for r in rows.values() if r["status"] == "needs_human" and r.get("requeues", 0) < MAX_REQUEUES
               and not str(r.get("note") or "").startswith("human")]
-    if not parked or not head():
+    pid = distill_prompt_id()
+    # "context" not_rulable comments: what counts as context is the attribute prompt's call, so they get
+    # another chance when the distill prompts change (rows from before this field: an older prompt)
+    ctx = [r for r in rows.values() if r["status"] == "not_rulable" and str(r.get("note") or "").startswith("context")
+           and r.get("attributed") != pid and r.get("requeues", 0) < MAX_REQUEUES]
+    if not (parked or ctx) or not head():
         return set()
     book = {r["id"]: r for r in load_book(vname(head())) if r.get("status", "active") == "active"}
     text = lambda r: (r.get("when"), r.get("expect"), r.get("examples"))  # noqa: E731
-    back: dict = {}
-    pid = distill_prompt_id()
+    back: dict = {r["comment"]: "context, and the distill prompts changed since it was attributed" for r in ctx}
     for r in parked:
         if (r.get("parked") or {}).get("prompt") != pid:
             back[r["comment"]] = "the distill prompts changed since it was parked"
@@ -418,7 +423,7 @@ def requeue_parked(max_cost: float = 0.5, cfg: Config | None = None) -> set[int]
         return set()
     with lock():  # re-read under the lock: another command may have written the ledger meanwhile
         rows = ledger()
-        back = {c: w for c, w in back.items() if c in rows and rows[c]["status"] == "needs_human"}
+        back = {c: w for c, w in back.items() if c in rows and rows[c]["status"] in ("needs_human", "not_rulable")}
         for c, why in back.items():
             _requeue(rows[c], why)
         save_ledger(rows)
@@ -617,7 +622,8 @@ def distill_step(prs: set[int] | None = None, limit: int | None = None, effort: 
         for a in map(json.loads, att.open()) if att.exists() else []:
             r = rows.get(a.get("id"))
             if r and a.get("kind") in ("context", "not_issue", "rejected"):  # two calls agreed (distill.py)
-                r.update(status="not_rulable", note=f"{a['kind']}: {a.get('reason') or a.get('why') or ''}"[:300])
+                r.update(status="not_rulable", note=f"{a['kind']}: {a.get('reason') or a.get('why') or ''}"[:300],
+                         attributed=distill_prompt_id())  # a "context" one is retried when the prompts change
                 n_out += 1
             elif r and a.get("kind") in ("contested", "unclear"):  # only the PR author objected, or the two
                 # attribution calls disagreed on whether it is learnable: a person decides

@@ -16,6 +16,32 @@ from .history import AI_MARK
 from .schema import SEVERITIES, Finding, Location
 
 HUNK = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+# A finding's text names other findings by their id in its run ("root cause of f1", "see r2"); outside code
+# spans these become REF markers, and render_refs turns them into the other finding's title, linked to its
+# comment once the review is posted (watch.post_review).
+_ID_IN_TEXT = re.compile(r"(?<![\w.`-])([fr]\d+)(?![\w-])")
+REF = re.compile(r"\[\[ref:([\w.]+)\]\]")
+FINDING_MARK = "<!-- lmreview: finding {} -->"  # in each inline comment, to find its URL after posting
+
+
+def mark_refs(text: str, f: Finding, ids: set[str]) -> str:
+    """`text` of finding `f` with its mentions of other findings (ids of the same run, outside `code`) as REF
+    markers. Merged runs prefix ids with the run ("1.f2"): a mention means the finding of its own run."""
+    run = f.id.rsplit(".", 1)[0] + "." if "." in f.id else ""
+    parts = text.split("`")
+    for i in range(0, len(parts), 2):  # even parts are outside code spans
+        parts[i] = _ID_IN_TEXT.sub(lambda m: f"[[ref:{run + m[1]}]]" if run + m[1] in ids and run + m[1] != f.id
+                                   else m[0], parts[i])
+    return "`".join(parts)
+
+
+def render_refs(text: str, titles: dict[str, str], urls: dict[str, str] | None = None) -> str:
+    """REF markers as the findings' titles, linked to their comments when `urls` has them."""
+    def one(m: re.Match) -> str:
+        t = titles.get(m[1], m[1]).replace("[", "(").replace("]", ")")
+        u = (urls or {}).get(m[1])
+        return f"[{t}]({u})" if u else f"*{t}*"
+    return REF.sub(one, text)
 
 
 def commentable(diff: str) -> dict[tuple[str, str], dict[int, int]]:
@@ -87,10 +113,10 @@ def _link(repo: str, commit: str, loc: Location) -> str:
 
 
 def finding_text(f: Finding, rules: dict[str, dict], repo: str, commit: str, heading: str,
-                 at: Location | None = None) -> str:
+                 at: Location | None = None, ids: set[str] = frozenset()) -> str:
     """The markdown of one finding (an inline comment, or a section of the summary); `at`: the location the
-    inline comment is on (every other location is linked)."""
-    out = [f"{heading}**[{f.severity}] {f.title}** · <sub>{basis(f)}</sub>", "", f.body]
+    inline comment is on (every other location is linked); `ids`: the review's finding ids (see mark_refs)."""
+    out = [f"{heading}**[{f.severity}] {f.title}** · <sub>{basis(f)}</sub>", "", mark_refs(f.body, f, ids)]
     where = [l for l in f.locations if l.role != "related" and l is not at]
     if where and not at:  # a finding in the summary: where it is stays in view
         out += ["", "**Where:** " + ", ".join(_link(repo, commit, l) for l in where)]
@@ -98,7 +124,7 @@ def finding_text(f: Finding, rules: dict[str, dict], repo: str, commit: str, hea
     # reads, has all of it)
     more, parts = [], []
     if f.suggestion:
-        more += ["", f"**Suggestion:** {f.suggestion}"]
+        more += ["", f"**Suggestion:** {mark_refs(f.suggestion, f, ids)}"]
         parts.append("suggestion")
     rids = f.rules or ([f.rule] if f.rule else [])
     for rid in rids:
@@ -125,17 +151,21 @@ def build(r: dict, fs: list[Finding], diff: str, rules: dict[str, dict], repo: s
         inline: False puts every finding in the summary (when GitHub refuses the inline comments).
 
     Returns:
-        {"commit_id", "event": "COMMENT", "body", "comments": [{path, line, side, [start_line, start_side], body}]}
+        {"commit_id", "event": "COMMENT", "body", "comments": [{path, line, side, [start_line, start_side], body}],
+         "refs": {finding id: title}}. Bodies hold REF markers: post_payload renders them, and "refs" is
+        not sent to GitHub.
     """
     commit = r["commit"]
     lines = commentable(diff) if inline else {}
     fs = sorted(fs, key=lambda f: SEVERITIES.index(f.severity))
+    ids = {f.id for f in fs}
     comments, rest = [], []
     for f in fs:
         p = f.primary()
         a = anchor(p, lines) if p and f.scope == "line" else None
         if a:
-            comments.append(a | {"body": AI_MARK + "\n" + finding_text(f, rules, repo, commit, "", p)})
+            comments.append(a | {"body": AI_MARK + "\n" + FINDING_MARK.format(f.id) + "\n"
+                                 + finding_text(f, rules, repo, commit, "", p, ids)})
         else:
             rest.append(f)
     counts = ", ".join(f"{k} {s}" for s in SEVERITIES if (k := sum(f.severity == s for f in fs)))
@@ -147,9 +177,10 @@ def build(r: dict, fs: list[Finding], diff: str, rules: dict[str, dict], repo: s
         body.append(f"**{len(fs)} findings**: {counts}." + (f" {len(comments)} are inline comments on the diff." if comments else ""))
         if rest:
             body += ["", "### Not tied to a line of the diff" if comments else "### Findings"]
-            body += ["\n" + finding_text(f, rules, repo, commit, "") for f in rest]
+            body += ["\n" + finding_text(f, rules, repo, commit, "", None, ids) for f in rest]
     body += ["", "<sub>An AI first-round review: it can be wrong, so reply on a comment that is, or resolve it. "
              + "Each finding says what it rests on: a team rule (learned from this team's past reviews) or "
                "general review (the reviewer's own judgement). "
              + f"Reviewer {r.get('reviewer', '')} · ${float(r.get('cost') or 0):.2f}</sub>"]
-    return {"commit_id": commit, "event": "COMMENT", "body": "\n".join(body), "comments": comments}
+    return {"commit_id": commit, "event": "COMMENT", "body": "\n".join(body), "comments": comments,
+            "refs": {f.id: f.title for f in fs}}

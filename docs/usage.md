@@ -19,14 +19,14 @@ GitHub (a review on the PR, and with `--book-repo` the published rulebook).
 4. Install lmreview as a Claude Code plugin. In Claude Code, type:
 
 ```
-/plugin install lmreview --marketplace BoJiang03/lmcache-review
+/plugin install lmreview --marketplace BoJiang03/lmreview
 ```
 
 Answer `y` to add the marketplace, then pick a scope (user is the default). Or just tell Claude Code
-"安装这个 plugin: https://github.com/BoJiang03/lmcache-review" and it runs the same two steps
-(`claude plugin marketplace add BoJiang03/lmcache-review` and `claude plugin install lmreview@lmcache-review`).
+"安装这个 plugin: https://github.com/BoJiang03/lmreview" and it runs the same two steps
+(`claude plugin marketplace add BoJiang03/lmreview` and `claude plugin install lmreview@lmreview`).
 The plugin bundles the Python package (standard library only), so there is no pip step.
-Update later with `claude plugin update lmreview@lmcache-review`.
+Update later with `claude plugin update lmreview@lmreview`.
 
 Without the plugin, the CLI also works on its own: `pip install git+<this repo>`, or `bin/lmreview` from a checkout.
 

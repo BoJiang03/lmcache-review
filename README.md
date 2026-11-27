@@ -8,7 +8,7 @@ to the comments it was learned from.
 It runs with your own `gh` login and your own logged-in Claude Code. Two repositories use it today:
 [LMCache/LMCache](https://github.com/LMCache/LMCache) (its rulebook is the one in `lmreview/state/`) and
 [LMCache/LMCache_inprocess](https://github.com/LMCache/LMCache_inprocess) (followed with `lmreview watch`).
-The repository is called lmcache-review because it started with LMCache: this checkout's defaults
+It started with LMCache, so this checkout's defaults
 (`lmreview/config.toml`, `lmreview/state/`) are LMCache's, and any other repository gets its own with
 `lmreview watch add`.
 
@@ -33,7 +33,7 @@ A review takes 5–15 minutes and costs about $0.70 (median of 110 reviews; p90 
 In Claude Code, install the plugin and ask "lmreview <PR link>":
 
 ```
-/plugin install lmreview --marketplace BoJiang03/lmcache-review
+/plugin install lmreview --marketplace BoJiang03/lmreview
 ```
 
 From a checkout: `bin/lmreview review <PR number or link> [--commit C] [--format md|json]`. A PR of a

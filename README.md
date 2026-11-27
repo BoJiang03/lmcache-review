@@ -116,7 +116,10 @@ bin/lmreview watch add OWNER/NAME [--since DATE] [--backfill] [--book B.jsonl] [
 bin/lmreview watch run [OWNER/NAME ...] [--once] [--interval 600] [--dry-run]
 bin/lmreview watch set OWNER/NAME --post | --no-learn | --settle-hours 12 | --max-reviews 3 | --round-cost 20 ...
 bin/lmreview watch status
+bin/lmreview watch start [OWNER/NAME ...] [--interval 600] | stop   # run in the background, detached
 ```
+
+`--review-since now` (add / set) leaves a backlog of open PRs not updated since alone.
 
 Each cycle reviews every open PR whose head changed (drafts and bots skipped; at most `max_reviews`), keeps
 the review in the repository's home (`reviews/`), and posts it as a PR comment only with `--post`. Then it

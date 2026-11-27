@@ -39,6 +39,7 @@ import os
 import pathlib
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -57,7 +58,8 @@ SOURCE_GLOBS = ["*.py", "*.pyi", "*.c", "*.cc", "*.cpp", "*.cu", "*.cuh", "*.h",
                 "*.kt", "*.scala", "*.js", "*.jsx", "*.ts", "*.tsx", "*.mjs", "*.rb", "*.php", "*.cs", "*.swift",
                 "*.m", "*.sh", "*.sql", "*.proto", "*.md", "*.rst", "*.toml", "*.yaml", "*.yml", "*.json"]
 DEFAULTS = {"review": True, "learn": True, "post": False, "drafts": False, "settle_hours": 24.0,
-            "max_reviews": 5, "max_learn": 3, "round_cost": None}
+            "max_reviews": 5, "max_learn": 3, "round_cost": None,
+            "review_since": None}  # ISO time: open PRs last updated before it are not reviewed (a backlog)
 MAX_FAILS = 3  # review attempts on one head before it is skipped until the PR is pushed again
 
 OPEN_Q = """
@@ -280,6 +282,8 @@ def to_review(w: dict, prs: list[dict]) -> list[dict]:
     for pr in prs:
         if (pr["isDraft"] and not s["drafts"]) or is_bot(pr):
             continue
+        if s.get("review_since") and pr["updatedAt"] < s["review_since"]:
+            continue
         r = w["reviewed"].get(str(pr["number"])) or {}
         if r.get("commit") == pr["headRefOid"] and (r.get("ok") or r.get("fails", 0) >= MAX_FAILS):
             continue
@@ -436,9 +440,65 @@ def run(repos: list[str] | None = None, once: bool = False, interval: int = 600,
         time.sleep(interval)
 
 
+def _pidfile() -> pathlib.Path:
+    return root() / "watch.pid"
+
+
+def running() -> int | None:
+    """The pid of the background watcher started by `start`, if it is still alive."""
+    try:
+        pid = int(_pidfile().read_text().split()[0])
+        os.kill(pid, 0)
+        return pid
+    except (FileNotFoundError, ValueError, ProcessLookupError, PermissionError):
+        return None
+
+
+def start(repos: list[str] | None = None, interval: int = 600) -> str:
+    """Run `watch run` in the background, detached from the terminal (its own session: closing the
+    terminal or the SSH connection does not stop it). Output goes to <root>/watch.log."""
+    if pid := running():
+        raise RuntimeError(f"a watcher is already running (pid {pid}); `lmreview watch stop` first")
+    bad = preflight()
+    if bad:
+        raise RuntimeError("cannot watch: " + "; ".join(bad))
+    root().mkdir(parents=True, exist_ok=True)
+    log = root() / "watch.log"
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(PKG_ROOT) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    with open(log, "a") as f:
+        p = subprocess.Popen([sys.executable, "-u", "-m", "lmreview", "watch", "run", *(repos or []),
+                              "--interval", str(interval)], stdout=f, stderr=subprocess.STDOUT,
+                             stdin=subprocess.DEVNULL, env=env, start_new_session=True)
+    _pidfile().write_text(f"{p.pid} {_iso(_now())} {' '.join(repos or ['(all)'])}\n")
+    time.sleep(2)
+    if p.poll() is not None:
+        raise RuntimeError(f"the watcher exited at once (code {p.returncode}); see {log}")
+    return f"watcher started (pid {p.pid}, every {interval}s); log: {log}; stop: lmreview watch stop"
+
+
+def stop() -> str:
+    """Stop the background watcher and what it is running (a review or round in progress is lost)."""
+    pid = running()
+    if pid is None:
+        _pidfile().unlink(missing_ok=True)
+        return "no watcher running"
+    os.killpg(pid, signal.SIGTERM)  # its session: the watcher and the lmreview / claude processes under it
+    for _ in range(20):
+        if running() is None:
+            break
+        time.sleep(0.5)
+    else:
+        os.killpg(pid, signal.SIGKILL)
+    _pidfile().unlink(missing_ok=True)
+    return f"watcher {pid} stopped"
+
+
 def status() -> str:
-    """One block per watched repository."""
-    out = []
+    """The background watcher, then one block per watched repository."""
+    pid = running()
+    out = [f"watcher: running (pid {pid}; {_pidfile().read_text().strip()}); log {root() / 'watch.log'}" if pid
+           else "watcher: not running (`lmreview watch start`)"]
     for h in homes():
         w = load(h)
         head = h / "state" / "HEAD.json"
@@ -447,7 +507,8 @@ def status() -> str:
         out.append(f"{w['repo']} ({h})\n  book {v}; {len(w['reviewed'])} PRs reviewed, {len(w['learned'])} samples "
                    f"learned; spent review ${w['spent']['review']:.2f}, learn ${w['spent']['learn']:.2f}; "
                    f"{w['cycles']} cycles, last {w['last_cycle'] or 'never'}\n  review {s['review']} (post {s['post']}, "
-                   f"drafts {s['drafts']}, at most {s['max_reviews']}/cycle); learn {s['learn']} (from {w['learn_from']}, "
+                   f"drafts {s['drafts']}, at most {s['max_reviews']}/cycle"
+                   + (f", PRs updated since {s['review_since']}" if s.get("review_since") else "") + "); learn {s['learn']} (from {w['learn_from']}, "
                    f"settle {s['settle_hours']}h, at most {s['max_learn']} samples/cycle, round cap "
                    f"{'default' if s['round_cost'] is None else '$' + str(s['round_cost'])})")
-    return "\n".join(out) or f"nothing watched under {root()}"
+    return "\n".join(out + ([] if len(out) > 1 else [f"nothing watched under {root()}"]))

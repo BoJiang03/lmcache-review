@@ -48,6 +48,8 @@ def test_to_review() -> None:
     assert [p["number"] for p in watch.to_review(w, prs)] == [7, 2, 4]  # oldest update first
     w["settings"]["drafts"] = True
     assert 5 in [p["number"] for p in watch.to_review(w, prs)]
+    w["settings"]["review_since"] = "2026-11-25T12:00:00Z"  # a backlog left alone
+    assert [p["number"] for p in watch.to_review(w, prs)] == [4, 5]
 
 
 def put_dataset(home: pathlib.Path, prs: list[dict], comments: list[dict], samples: list[dict]) -> None:

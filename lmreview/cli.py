@@ -65,13 +65,19 @@ def main(argv: list[str] | None = None) -> None:
         p_.add_argument("--max-reviews", type=int, help="reviews per cycle per repository (default 5)")
         p_.add_argument("--max-learn", type=int, help="samples per round per cycle (default 3)")
         p_.add_argument("--round-cost", type=float, help="cap ($) for each step of a round (default: round's own)")
+        p_.add_argument("--review-since", help="ISO time (e.g. 2026-11-27T21:00:00Z) or 'now': open PRs last updated "
+                        "before it are not reviewed, so a backlog of old PRs is left alone")
     wr = ws.add_parser("run", help="cycle: review + learn on every watched repository (or these)")
     wr.add_argument("repos", nargs="*")
     wr.add_argument("--once", action="store_true", help="one cycle, then exit")
     wr.add_argument("--interval", type=int, default=600, help="seconds between cycles (default 600)")
     wr.add_argument("--dry-run", action="store_true", help="list what would be reviewed and learned; no LLM calls, "
                     "nothing posted (sync still updates the local dataset)")
-    ws.add_parser("status", help="watched repositories and their progress (free)")
+    wst = ws.add_parser("start", help="run the watcher in the background, detached from the terminal (log: <watch root>/watch.log)")
+    wst.add_argument("repos", nargs="*")
+    wst.add_argument("--interval", type=int, default=600, help="seconds between cycles (default 600)")
+    ws.add_parser("stop", help="stop the background watcher")
+    ws.add_parser("status", help="the background watcher, watched repositories and their progress (free)")
 
     sub.add_parser("status", help="book in use, candidate, ledger counts (free)")
     j = sub.add_parser("judge", help="judge the current reviewer's runs and file the comments in the ledger (paid, cached)")
@@ -129,14 +135,20 @@ def main(argv: list[str] | None = None) -> None:
         note(f"lmreview {' '.join(argv if argv is not None else sys.argv[1:])} | log: {tee(a.cmd, Config().data)}")
     if a.cmd == "watch":
         from . import watch
-        keys = ("review", "learn", "post", "drafts", "settle_hours", "max_reviews", "max_learn", "round_cost")
+        keys = ("review", "learn", "post", "drafts", "settle_hours", "max_reviews", "max_learn", "round_cost", "review_since")
         opts = {k: getattr(a, k) for k in keys if getattr(a, k, None) is not None}
+        if opts.get("review_since") == "now":
+            opts["review_since"] = watch._iso(watch._now())
         if a.action == "add":
             print(watch.add(a.repo, a.since, a.book, a.backfill, a.prompts, **opts))
         elif a.action == "set":
             print(watch.set_(a.repo, **opts))
         elif a.action == "run":
             watch.run(a.repos or None, a.once, a.interval, a.dry_run)
+        elif a.action == "start":
+            print(watch.start(a.repos or None, a.interval))
+        elif a.action == "stop":
+            print(watch.stop())
         else:
             print(watch.status())
     elif a.cmd == "sync":

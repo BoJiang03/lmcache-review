@@ -312,6 +312,39 @@ def test_rule_sources() -> None:
     assert quiet("see #12 and @al, not `@x #3` or a&#39;b; `cut") == "see `#12` and `@al`, not `@x #3` or a&#39;b; `cut`"
 
 
+def test_book_links() -> None:
+    """With a published book, the summary links the book and each cited rule links its section."""
+    from lmreview import ghreview
+    from lmreview.schema import parse_findings
+    fs = parse_findings([{"id": "1.f1", "severity": "major", "scope": "line", "title": "T", "body": "b", "rule": "Ab-1",
+                          "locations": [{"path": "a.py", "start": 11}]}])
+    p = ghreview.build({"commit": "c" * 40, "reviewer": "x", "cost": 0, "rules_label": "o/r v0002"}, fs, DIFF,
+                       {"Ab-1": {"when": "W"}}, "o/r", book_url="https://b/o__r/v0002.md")
+    assert "[**o/r v0002**](https://b/o__r/v0002.md)" in p["body"]
+    assert p["comments"][0]["body"].count("[`Ab-1`](https://b/o__r/v0002.md#ab-1)") == 2  # the label and the rule's text
+    home, _ = new_home(book_repo="me/pub")
+    assert watch.env_for(home, "o/r")["LMREVIEW_BOOK_URL"] == f"https://github.com/me/pub/blob/rulebooks/{home.name}"
+    home2, _ = new_home()
+    assert "LMREVIEW_BOOK_URL" not in watch.env_for(home2, "o/r")
+
+
+def test_public_book() -> None:
+    home, _ = new_home()
+    (home / "config.toml").write_text(watch.overlay("main", "2026-11-20"))
+    seed = home / "seed.jsonl"
+    seed.write_text(json.dumps({"id": "r-1", "when": "W", "expect": "E", "why": "Y", "evidence": [2], "tests": "secret"})
+                    + "\n" + json.dumps({"id": "r-0", "when": "old", "status": "retired"}) + "\n")
+    (home / "state").mkdir()
+    (home / "state" / "sources.json").write_text(json.dumps({"2": {"repo": "x/y", "pr": 9, "author": "cy", "url": "U", "quote": "q"}}))
+    code = ("import sys; sys.path.insert(0, '.'); from lmreview import state, provenance; state.init(sys.argv[1]); "
+            "print(provenance.public_book('v0001', state.book_label('v0001')))")
+    out = subprocess.run([sys.executable, "-c", code, str(seed)], cwd=ROOT, env={**os.environ, **watch.env_for(home, "o/r")},
+                         capture_output=True, text=True)
+    md = out.stdout
+    assert "# Team review rules: o/r v0001" in md and "## r-1" in md and "**Expect** E" in md and "**Why** Y" in md, out.stderr
+    assert '- [x/y#9](U) · cy: "q"' in md and "r-0" not in md and "secret" not in md
+
+
 def test_env_and_repo_name() -> None:
     home, _ = new_home()
     env = watch.env_for(home, "o/r")

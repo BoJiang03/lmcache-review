@@ -486,7 +486,10 @@ def github_review(r: dict, inline: bool = True, cfg: Config | None = None) -> di
     rules = {k: x | {"_sources": sources(x, cfg)} for k, x in rules.items()}  # where each rule was learned (ghreview)
     diff = subprocess.run(["git", "-C", str(cfg.repo), "diff", "-U3", "-M", "--no-color", r["base"], r["commit"]],
                           capture_output=True, text=True, check=True).stdout
-    return ghreview.build(r, load_findings(r) or [], diff, rules, r.get("repo") or f"{github.REPO_OWNER}/{github.REPO_NAME}", inline)
+    # $LMREVIEW_BOOK_URL: where `lmreview watch` publishes this repository's rulebooks (<url>/<vNNNN>.md)
+    base = os.environ.get("LMREVIEW_BOOK_URL")
+    return ghreview.build(r, load_findings(r) or [], diff, rules, r.get("repo") or f"{github.REPO_OWNER}/{github.REPO_NAME}",
+                          inline, f"{base}/{book}.md" if base and book else None)
 
 
 def to_markdown(r: dict) -> str:

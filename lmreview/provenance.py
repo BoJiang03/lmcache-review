@@ -84,3 +84,27 @@ def write_sources(book: list[dict], comments: pathlib.Path, dest: pathlib.Path) 
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(old, indent=1, sort_keys=True) + "\n")
     return len(old)
+
+
+def public_book(name: str, label: str) -> str:
+    """Rulebook version `name` as a page anyone can read: each active entry under its id (the anchor a review
+    links to) with when / expect / why and every comment it was learned from. Nothing internal (tests,
+    history, examples)."""
+    from .state import load_book
+    act = [e for e in load_book(name) if e.get("status", "active") == "active"]
+    out = [f"# Team review rules: {label}", "",
+           f"{len(act)} rules an AI reviewer checks pull requests against. Each was learned from this team's own "
+           "review comments, listed under it. A review that cites a rule links here.", ""]
+    for e in sorted(act, key=lambda e: e["id"]):
+        out += [f"## {e['id']}", "", f"**When** {e.get('when') or e.get('rule', '')}", ""]
+        if e.get("expect"):
+            out += [f"**Expect** {e['expect']}", ""]
+        if e.get("why"):
+            out += [f"**Why** {e['why']}", ""]
+        src = sources(e)
+        if src:
+            out += ["Learned from:", ""]
+            out += [f"- [{s['repo'] + '#' if s.get('repo') else '#'}{s['pr']}]({s['url']}) · {s['author']}: \"{s['quote']}"
+                    f"{'…' if len(s['quote']) >= QUOTE else ''}\"" for s in src]
+            out.append("")
+    return "\n".join(out)

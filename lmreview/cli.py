@@ -66,6 +66,8 @@ def main(argv: list[str] | None = None) -> None:
         p_.add_argument("--max-reviews", type=int, help="reviews per cycle per repository (default 5)")
         p_.add_argument("--max-learn", type=int, help="samples per round per cycle (default 3)")
         p_.add_argument("--round-cost", type=float, help="cap ($) for each step of a round (default: round's own)")
+        p_.add_argument("--book-repo", help="OWNER/NAME of a public repository to publish the rulebook to (branch "
+                        "rulebooks), so posted reviews link their rules; '' = off")
         p_.add_argument("--review-since", help="ISO time (e.g. 2026-11-27T21:00:00Z) or 'now': open PRs last updated "
                         "before it are not reviewed, so a backlog of old PRs is left alone")
     wr = ws.add_parser("run", help="cycle: review + learn on every watched repository (or these)")
@@ -147,8 +149,11 @@ def main(argv: list[str] | None = None) -> None:
         note(f"lmreview {' '.join(argv if argv is not None else sys.argv[1:])} | log: {tee(a.cmd, Config().data)}")
     if a.cmd == "watch":
         from . import watch
-        keys = ("review", "learn", "post", "drafts", "settle_hours", "max_reviews", "max_learn", "round_cost", "review_since")
+        keys = ("review", "learn", "post", "drafts", "settle_hours", "max_reviews", "max_learn", "round_cost", "review_since",
+                "book_repo")
         opts = {k: getattr(a, k) for k in keys if getattr(a, k, None) is not None}
+        if opts.get("book_repo") == "":
+            opts["book_repo"] = None
         if opts.get("review_since") == "now":
             opts["review_since"] = watch._iso(watch._now())
         if a.action == "add":

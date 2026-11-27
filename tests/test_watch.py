@@ -157,6 +157,20 @@ def test_generic_project() -> None:
     assert (path, name, left) == (str(home / "prompts"), "Foo", "False") and pid != base[1], (out.stdout, out.stderr, base)
 
 
+def test_book_label() -> None:
+    """A seeded book is v0001 of its own repository, and its label says where it came from."""
+    home, _ = new_home()
+    seed = home / "seed.jsonl"
+    seed.write_text('{"id": "a", "when": "w", "expect": "e"}\n')
+    (home / "config.toml").write_text(watch.overlay("main", "2026-11-20"))
+    code = ("import sys; sys.path.insert(0, '.'); from lmreview import state; "
+            "n = state.init(sys.argv[1], 'x', 'LMCache/LMCache v0036'); print(state.vname(n)); print(state.book_label('v0001'))")
+    env = {**os.environ, **watch.env_for(home, "LMCache/LMCache_inprocess")}
+    out = subprocess.run([sys.executable, "-c", code, str(seed)], cwd=ROOT, env=env, capture_output=True, text=True)
+    assert out.stdout.splitlines() == ["v0001", "LMCache/LMCache_inprocess v0001 (seeded from LMCache/LMCache v0036)"], \
+        out.stdout + out.stderr
+
+
 def test_env_and_repo_name() -> None:
     home, _ = new_home()
     env = watch.env_for(home, "o/r")

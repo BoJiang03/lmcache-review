@@ -470,14 +470,17 @@ def review_pr(pr: int, commit: str | None = None, reviewer: str = DEFAULT_REVIEW
     raw = github.fetch_pr(pr)
     with live_workspace(cfg, raw, commit, reviewer_context(reviewer)) as (wt, c, base):
         out = run_reviewer(wt, raw, reviewer)
-    return {"pr": pr, "title": raw["title"], "commit": c, "base": base, **out}
+    from .state import book_label
+    return {"pr": pr, "title": raw["title"], "commit": c, "base": base, "repo": f"{github.REPO_OWNER}/{github.REPO_NAME}",
+            "rules_label": book_label(parse_reviewer((out.get("reviewer") or reviewer).split("#")[0])[1]), **out}
 
 
 def to_markdown(r: dict) -> str:
     """Render a review: blocker/major in full, minor/nit folded; each item shows scope and places."""
     head = [f"# AI review of #{r['pr']}: {r.get('title', '')}", "",
             f"commit `{r['commit'][:10]}` vs base `{r['base'][:10]}` · reviewer "
-            f"{r.get('reviewer') or str(r.get('version')) + '@' + str(r.get('effort'))} · ${r['cost']:.2f}", ""]
+            f"{r.get('reviewer') or str(r.get('version')) + '@' + str(r.get('effort'))}"
+            + (f" · rules: {r['rules_label']}" if r.get("rules_label") else "") + f" · ${r['cost']:.2f}", ""]
     fs = load_findings(r)
     if fs is None:
         return "\n".join(head + [f"Could not parse the reviewer output ({r.get('error')}):", "", r["raw"]])
@@ -488,7 +491,7 @@ def to_markdown(r: dict) -> str:
     rules = {x["id"]: x for x in load_rules(book)} if book else {}
     cited = [f for f in fs if f.rule or f.rules]
     if cited:
-        head += [f"{len(cited)} of {len(fs)} findings follow a team rule ({book or 'no rulebook'}).", ""]
+        head += [f"{len(cited)} of {len(fs)} findings follow a team rule ({r.get('rules_label') or book or 'no rulebook'}).", ""]
 
     def rule_line(rule: str) -> str:
         x = rules.get(rule)

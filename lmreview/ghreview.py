@@ -178,7 +178,7 @@ def build(r: dict, fs: list[Finding], diff: str, rules: dict[str, dict], repo: s
         else:
             rest.append(f)
     counts = ", ".join(f"{k} {s}" for s in SEVERITIES if (k := sum(f.severity == s for f in fs)))
-    body = [AI_MARK, "## AI review (first round)", "",
+    body = [AI_MARK, "## AI review", "",
             f"Commit `{commit[:10]}`, checked against the team rules of **{r.get('rules_label') or 'no rulebook'}**.", ""]
     if not fs:
         body.append("No findings.")
@@ -187,7 +187,7 @@ def build(r: dict, fs: list[Finding], diff: str, rules: dict[str, dict], repo: s
         if rest:
             body += ["", "### Not tied to a line of the diff" if comments else "### Findings"]
             body += ["\n" + finding_text(f, rules, repo, commit, "", None, ids) for f in rest]
-    body += ["", "<sub>An AI first-round review: it can be wrong, so reply on a comment that is, or resolve it. "
+    body += ["", "<sub>An AI review: it can be wrong, so reply on a comment that is, or resolve it. "
              + "Each finding says what it rests on: a team rule (learned from this team's past reviews) or "
                "general review (the reviewer's own judgement). "
              + f"Reviewer {r.get('reviewer', '')} · ${float(r.get('cost') or 0):.2f}</sub>"]

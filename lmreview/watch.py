@@ -232,7 +232,7 @@ def add(repo: str, since: str | None = None, book: str | None = None, backfill: 
         render_prompts(src, home / "prompts", name, about)
     (home / "config.toml").write_text(overlay(branch, since, (name, about) if src else None,
                                               home / "prompts" if src else None))
-    note = f"lmreview watch add {repo}"
+    note, number = f"lmreview watch add {repo}", None
     if book is None and src is None:  # the LMCache prompts: start from the LMCache team's book in use
         from . import state
         n = state.head()
@@ -240,10 +240,12 @@ def add(repo: str, since: str | None = None, book: str | None = None, backfill: 
             book = str(home / f"seed-{state.vname(n)}.jsonl")
             shutil.copy(state.book_path(state.vname(n)), book)
             note += f"; seeded from {state.STATE} {state.vname(n)}"
+            number = n  # the same book keeps its name: the reviewer is <prompt>+v<n>, as in the source state
     if book is None:
         book = str(home / "empty-book.jsonl")
         pathlib.Path(book).write_text("")
-    code, out = lmreview(home, repo, ["init", str(pathlib.Path(book).resolve()), "--note", note], "init")
+    code, out = lmreview(home, repo, ["init", str(pathlib.Path(book).resolve()), "--note", note]
+                         + (["--version", str(number)] if number else []), "init")
     if code:
         raise RuntimeError(f"init failed:\n{out}")
     w = {"repo": info["nameWithOwner"], "branch": branch, "since": since, "prompts": prompts,

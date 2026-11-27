@@ -57,6 +57,7 @@ def sync(since: str | None = None, cfg: Config | None = None) -> str:
     """Run the three steps; returns a one-paragraph summary."""
     cfg = cfg or Config()
     state = cfg.data / "raw" / "sync_state.json"
+    (cfg.data / "raw" / "pr").mkdir(parents=True, exist_ok=True)  # a new home may collect no PR yet
     now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     if since is None:
         raws = list((cfg.data / "raw" / "pr").glob("*.json"))

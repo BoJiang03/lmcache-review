@@ -1,8 +1,8 @@
-# Rulebook v0033
+# Rulebook v0041
 
-56 active entries, 3638 words (when + expect; the reviewer sees these, not why or examples). Generated from book.jsonl; do not edit.
+74 active entries, 5307 words (when + expect; the reviewer sees these, not why or examples). Generated from book.jsonl; do not edit.
 
-## Principle (47)
+## Principle (61)
 
 ### cx05k1-005
 
@@ -266,13 +266,13 @@
 
 ### v0020c1-001
 
-**When** A change adds or moves definitions out of the layout below, e.g. a private helper between public methods.
+**When** A change adds definitions to a new module, or to a module or class whose existing definitions already follow the layout below, and places them out of that order (e.g. a private helper between public methods of a class that keeps private methods last).
 
-**Expect** Ask (nit) to move them into this order: imports; private `_` helpers and classes; public classes (`__init__`, public methods, private `_` methods last); public module-level functions used by other modules.
+**Expect** Ask (nit) to move them into this order: imports; private `_` helpers and classes; public classes (`__init__`, public methods, private `_` methods last); public module-level functions used by other modules. Do not flag additions to a file or class that does not already follow this order.
 
-*Why (record only)*: A predictable layout lets readers find the public surface first and the helpers in one known place.
+*Why (record only)*: A consistent layout makes the public surface easy to find. Imposing it on files organized differently is noise.
 
-<sub>v3 · nit severity · area distributed,platform · 2 comments from 2 PRs</sub>
+<sub>v4 · nit severity · area distributed,platform · 2 comments from 2 PRs</sub>
 
 ### v0021c1-001
 
@@ -283,16 +283,6 @@
 *Why (record only)*: Ragged or damaged wrapping left behind by a rewording makes doc sources inconsistent and harder to read. It also makes later diffs noisy.
 
 <sub>v2 · nit severity · area docs · 1 comments from 1 PRs</sub>
-
-### v0022c1-001
-
-**When** A test explicitly selects the implementation under test (e.g. imports a fallback backend) yet gates, skips or reroutes cases on device, platform or what another implementation (e.g. compiled ops) supports.
-
-**Expect** Ask to remove that gating and its comments and run the cases unconditionally; keep only guards for a requirement of the selected implementation itself.
-
-*Why (record only)*: Guards tied to a different backend silently drop coverage of the code the test exists to check. They also mislead readers about what the test depends on.
-
-<sub>v2 · minor severity · area tests · 1 comments from 1 PRs</sub>
 
 ### v0023c1-002
 
@@ -482,17 +472,157 @@ This applies to private helpers too.
 
 <sub>v1 · minor severity · area gpu-connector · 2 comments from 1 PRs</sub>
 
-## Knowledge (9)
+### v0034c1-003
 
-### cx08k1-001
+**When** A change edits shared test data (a fixture or config file several tests load) for one mode or variant, or changes the externally visible value of a field or output (normalized, defaulted, reformatted, removed). Existing tests, possibly outside the diff, load that data or assert the old value.
 
-**When** Code re-implements what the standard library or LMCache already provides: manual grouping, counting or deduplicating loops; logic repeating another function's; an LMCache capability (e.g. eviction, MP server health checks) rebuilt or reached through another channel.
+**Expect** Name each existing test that breaks. Ask to restore what the other consumers need or to split the fixture per variant. Ask to assert the new value, or to keep the original value if the change is not meant to be externally visible.
 
-**Expect** Name the library function or existing code and ask to reuse it. Known: eviction policies live in lmcache/v1/distributed/eviction_policy/; MP server health checks and communication go over the ZMQ MessageQueueClient, as in the health-monitoring thread in vllm_multi_process_adapter.py.
+*Why (record only)*: Edits made for one mode silently break tests that share the data or rely on the old contract, on paths the author did not run.
 
-*Why (record only)*: Reused code is shorter, familiar and maintained once.
+<sub>v1 · major severity · area overall · 2 comments from 1 PRs</sub>
 
-<sub>v2 · major severity · area distributed,docs,mp,vllm-integration · 5 comments from 3 PRs</sub>
+### v0034c1-004
+
+**When** A change whose purpose is performance replaces a slow path (per-item calls, extra copies, round trips) with a faster one, and its tests would still pass if the code fell back to the slow path.
+
+**Expect** Ask for a small regression test asserting that the fast path is taken and the slow one is not, e.g. a spy or call count showing the per-item operation is never invoked.
+
+*Why (record only)*: A silent fallback keeps results correct while losing the optimization, so only a test that asserts which path runs catches it.
+
+<sub>v1 · minor severity · area overall · 1 comments from 1 PRs</sub>
+
+### v0034c1-005
+
+**When** Code infers a shared item's state from an earlier operation's result, error code or check (e.g. 'cannot lock for write' taken to mean 'present'). It then acts on that inference in a separate, later operation, while concurrent actors (eviction, other requests, threads) can change the item in between.
+
+**Expect** Raise the race as its own point, naming both operations and what can intervene. Ask to close the gap (one atomic operation, or a hold kept across both). Otherwise, ask that a failure of the later operation take the path used when the inferred state is false (e.g. reload from the backing tier). A failure branch that only skips the item or logs does not count as handling it.
+
+*Why (record only)*: State inferred from an earlier outcome can be invalidated before it is acted on. Silently dropping the item turns a hit into a miss or lost work.
+
+<sub>v2 · major severity · area distributed · 1 comments from 1 PRs</sub>
+
+### v0034c1-006
+
+**When** A doc, docstring or help text states a default: what happens 'by default', a default value, mode or backend, or a fallback that applies when nothing is configured.
+
+**Expect** Look up the actual default where the code sets it (config or enum default, selection or routing logic). If the text differs, raise it as its own point, even when other points on the same text are raised. Ask to state the actual default and, if it is an automatic selector, what it resolves to in each case.
+
+*Why (record only)*: Users rely on documented defaults. A wrong default misleads them about behavior they never chose.
+
+<sub>v1 · minor severity · area docs · 1 comments from 1 PRs</sub>
+
+### v0034c1-007
+
+**When** A change adds a boolean field or parameter that selects one variant of a concept (a layout, format or mode) that has, or foreseeably will have, more than two variants.
+
+**Expect** Ask to replace the flag with a single field whose values name each variant explicitly (a closed set of named choices), covering the foreseeable variants the boolean cannot express, so that supporting a new variant means adding a value to that field rather than adding another flag.
+
+*Why (record only)*: Boolean flags multiply and combine ambiguously as variants are added; a named variant field extends cleanly.
+
+<sub>v1 · minor severity · area gpu-connector · 1 comments from 1 PRs</sub>
+
+### v0034c1-008
+
+**When** Code hands another process or an asynchronous consumer a handle to a local object (IPC handle, pointer, exported event). It keeps the object only in a slot a later operation can overwrite or drop, or releases it before the consumer finishes.
+
+**Expect** Ask to tie the object's lifetime to the in-flight operation, retaining it on that operation's future or handle until completion. As a separate point, ask for a test issuing two operations that reuse the slot, asserting the first object stays alive while its operation is in flight.
+
+*Why (record only)*: A consumer that uses a handle to a freed or overwritten object reads or signals invalid memory.
+
+<sub>v1 · major severity · area mp · 2 comments from 1 PRs</sub>
+
+### v0035c1-003
+
+**When** Code exports a handle to a local object to another process or an asynchronous consumer. The change keeps the in-flight operation alive (its future, task or request), but the exported object itself is held only where a later operation can overwrite or drop it.
+
+**Expect** Raise as its own point that retaining the operation does not keep the exported object alive. Ask to attach the object to the retained operation's future or handle until that operation completes. Raise this even when the diff's purpose is fixing the operation's own lifetime.
+
+*Why (record only)*: The consumer uses the exported object through its handle. Retaining the future alone lets an overwrite of the slot free that object mid-operation.
+
+<sub>v1 · major severity · area mp · 1 comments from 1 PRs</sub>
+
+### v0035c1-004
+
+**When** A change adds or fixes the lifetime of a local object whose handle another process or asynchronous consumer uses while an operation is in flight. The object lives in a slot that a later operation for the same key can reuse.
+
+**Expect** Ask, as its own point, for a test that issues two operations reusing the same slot while the first is still in flight. The test must assert that the first operation's exported object itself, not only its future, stays alive and unreleased until that operation completes. A test with one operation, or one checking only futures, does not count.
+
+*Why (record only)*: Only a same-slot overlap reproduces the overwrite. A test that checks futures passes with the bug present.
+
+<sub>v1 · minor severity · area mp · 1 comments from 1 PRs</sub>
+
+### v0036c2-003
+
+**When** A change starts relying on an existing component to handle a kind of input it was not previously exercised or tested with.
+
+**Expect** Ask for a unit test of that component with exactly that input case. The test must assert that the component handles the case correctly, for example that data round-trips intact, and must fail if the component does not support it.
+
+*Why (record only)*: The change's correctness depends on an unverified assumption about another component. If the assumption is wrong, the failure is silent and far from the code the diff touches.
+
+<sub>v1 · major severity · area overall · 1 comments from 1 PRs</sub>
+
+### v0038c1-003
+
+**When** A test gates, skips or reroutes cases on device, platform or capability in a way that does not match what the implementation under test itself requires. One case is gating on what another implementation supports. The other is an ad-hoc or generic condition where the implementation needs a specific device.
+
+**Expect** Ask to gate on exactly that requirement. Remove unneeded gating and its comments, and run those cases unconditionally. Express a real device requirement with the repository's device marker instead of an ad-hoc skip condition.
+
+*Why (record only)*: Gating that misstates the requirement either hides coverage or obscures why a test is skipped.
+
+<sub>v1 · minor severity · area tests · 2 comments from 2 PRs</sub>
+
+### v0038c1-004
+
+**When** A change gives a batched or multi-step operation all-or-nothing or rollback semantics, and its tests inject failure only before the operation starts or only check part of the state.
+
+**Expect** Ask for a test where a fake dependency fails after accepting part of the batch. The test must assert that all state returns to its pre-call value, including in-process bookkeeping (maps, counters, locks, allocations), not only the backing writes.
+
+*Why (record only)*: Partial completion is the case that exercises rollback. A failure before the batch begins tests nothing.
+
+<sub>v1 · major severity · area overall · 1 comments from 1 PRs</sub>
+
+### v0038c1-005
+
+**When** A fix adds a step that must accompany a shared operation (release, teardown, reclaim) at several call sites, as a separate call callers must remember, or as a rule stated in a docstring, although every affected path already goes through one shared routine.
+
+**Expect** Ask to perform the step once inside that shared routine and to remove the per-site calls and the caller obligation. If a constraint prevents that, ask for a single helper in one place with the constraint stated there.
+
+*Why (record only)*: A fix in the common path is smaller, covers every caller, and cannot be forgotten at a new call site.
+
+<sub>v1 · major severity · area overall · 1 comments from 1 PRs</sub>
+
+### v0038c1-007
+
+**When** A change handles a failure or fallback in a per-item state machine whose methods a caller may invoke repeatedly. It does so by clearing or resetting the item's state, or by inferring the condition from other fields, instead of recording it.
+
+**Expect** Ask for an explicit named failed or bypass state that the item enters on the failure. That state must return the same fallback answer on every later call until a defined end of the item's lifecycle, instead of returning to a state that re-triggers the operation.
+
+*Why (record only)*: Resetting or inferring the failure lets a repeated call redo lookups or take resources again after the failure.
+
+<sub>v1 · major severity · area overall · 1 comments from 1 PRs</sub>
+
+### v0039c1-002
+
+**When** A change alters what a method returns or does for an item, and an external driver (scheduler, engine, poller, retrying caller) may call that method again for the same item before the companion call that advances the item's state, for example after a failure, fallback or deferral.
+
+**Expect** As its own point, ask for a regression test that calls the method twice in a row for the same item, with no companion call between them. The test asserts that the second call gives the same answer and repeats no side effects, such as a lookup, a lock acquire or release, or a load submission.
+
+*Why (record only)*: Drivers may re-query before advancing state. Tests that cover only the normal call sequence miss re-lookup, double-release and stale-state bugs.
+
+<sub>v1 · minor severity · area overall · 1 comments from 1 PRs</sub>
+
+### v0041c1-001
+
+**When** A diff removes or replaces a call or other use of a function, method, class or setting defined elsewhere, possibly outside the diff, so it may have no remaining user.
+
+**Expect** Search for remaining users. Unless another is visible, raise it as its own point: name the definition, ask the author to check for other callers and, if none remain, delete it in the same PR along with code only it serves. Ask even without proof that it was the last caller.
+
+*Why (record only)*: A fix that drops the last call silently leaves dead code behind that must still be maintained and reasoned about, unless someone asks about the callee that is no longer called.
+
+<sub>v1 · minor severity · area distributed · 1 comments from 1 PRs</sub>
+
+## Knowledge (13)
 
 ### v0011c1-003
 
@@ -574,7 +704,60 @@ This applies to private helpers too.
 
 <sub>v2 · minor severity · area core-other · 1 comments from 1 PRs</sub>
 
-## Retired (62)
+### v0035c1-001
+
+**When** Code re-implements what the standard library or LMCache already provides, even when the existing function is outside the diff. This covers manual grouping, counting or deduplicating loops, and logic repeating another function's, including hand-written tensor view, permute or stride manipulation. It also covers an LMCache capability rebuilt or reached through another channel.
+
+**Expect** Name the library function or existing code and ask to reuse it. Known locations:
+- eviction policies: lmcache/v1/distributed/eviction_policy/
+- MP server health checks and communication: the ZMQ MessageQueueClient, as in the health-monitoring thread in vllm_multi_process_adapter.py
+- re-viewing a strided or permuted tensor in memory order: attempt_permute_to_contiguous_view in lmcache/v1/gpu_connector/kv_format/contiguity.py
+
+*Why (record only)*: Duplicated logic drifts from the maintained implementation and bypasses tested helpers.
+
+<sub>v1 · major severity · area distributed,docs,mp,vllm-integration · 6 comments from 4 PRs</sub>
+
+### v0037c1-001
+
+**When** A diff adds or edits tests, as a new file or as cases in an existing file, in a location that does not match their scope. One case is a test folder outside the top-level tests tree, such as one inside the package. Another is platform- or vendor-specific cases in a shared, platform-neutral test file or folder.
+
+**Expect** LMCache keeps all tests under the top-level tests/ tree, mirroring the source path, with platform-specific tests under tests/v1/platform/<device>/. Ask to move the new cases, or the touched file, there. Raise this even when the file or folder existed before the PR, or when sibling cases for other devices follow the same pattern. Deferring the move to a follow-up PR is acceptable.
+
+*Why (record only)*: Tests in stray folders or mixed into shared files are hard to find and to run per platform. An existing misplacement is not a precedent.
+
+<sub>v1 · minor severity · area tests · 2 comments from 2 PRs</sub>
+
+### v0039c1-001
+
+**When** An added or edited line uses a vendor device namespace such as `torch.cuda` directly (a call, a constructor, a type annotation) outside the platform code that implements the device abstraction. This includes engine integration modules and files that already use CUDA.
+
+**Expect** LMCache code reaches device APIs only through the torch_dev device abstraction, which keeps it device-agnostic, and a CQ check enforces this. Flag each direct use and ask for the torch_dev equivalent. Do not exempt a module because it already uses CUDA or targets one engine.
+
+*Why (record only)*: Direct torch.cuda use breaks non-CUDA devices and fails the CQ check that enforces the device abstraction.
+
+<sub>v1 · major severity · area vllm-integration · 1 comments from 1 PRs</sub>
+
+### v0040c1-002
+
+**When** A diff changes code that only a specific CI lane, or no lane, exercises. Examples are native sources or raw-pointer paths also built with HIP for AMD/ROCm, and a mode or transport the CI jobs never select. This also applies when such a PR is rebased.
+
+**Expect** Before approval, ask for a passing run of each lane exercising the changed path on the exact head commit. After any rebase, ask to rerun that lane and the focused tests. Older-commit or failed runs do not count. Where no job exercises the path, ask for a smoke test that does. Known facts: only the AMD lane builds HIP, and the K3 engine-driven jobs force SHM transport.
+
+*Why (record only)*: A fix is unverified on any path that no CI job runs on the head commit.
+
+<sub>v1 · major severity · area overall · 3 comments from 2 PRs</sub>
+
+### v0040c1-003
+
+**When** A test replaces a method on an object or class by plain attribute assignment (e.g. `obj.method = MagicMock(...)`).
+
+**Expect** LMCache's mypy check covers tests and rejects assignment to a method with `Cannot assign to a method [method-assign]`. Flag each such assignment. Ask to use `unittest.mock.patch.object(obj, 'method', ...)` instead, as a context manager, decorator or fixture.
+
+*Why (record only)*: Direct method assignment fails the repository's mypy CQ check.
+
+<sub>v1 · minor severity · area tests · 1 comments from 1 PRs</sub>
+
+## Retired (65)
 
 - cx05k1-002: regrouped
 - cx05k1-004: regrouped
@@ -582,6 +765,7 @@ This applies to private helpers too.
 - cx06k1-001: regrouped
 - cx06k1-002: regrouped
 - cx06k1-004: regrouped
+- cx08k1-001: regrouped
 - v0003c1-001: Group sibling implementations and shared base abstractions into their own subpackage folders
 - v0003c1-003: Workers-to-coordinator events carry monotonic sequence numbers
 - v0003c1-004: Reuse existing eviction policy implementations instead of writing new ones
@@ -625,6 +809,7 @@ This applies to private helpers too.
 - v0020c1-002: no silent fallbacks; fail clearly
 - v0020c1-003: uniform representation instead of special-casing the trivial case
 - v0020c1-004: use library utilities instead of hand-written equivalents
+- v0022c1-001: tests that pin one implementation gate cases on unrelated device or backend availability
 - v0023c1-001: names must state exactly what the thing is, without clashing or breaking sibling conventions
 - v0023c1-003: reuse LMCache's existing shared implementation or channel instead of a parallel one
 - v0023c1-007: new code duplicates logic already present in another function
@@ -638,3 +823,4 @@ This applies to private helpers too.
 - v0026c1-013: merge redundant overlapping CI or end-to-end test variants
 - v0027c1-001: Keep vendor/engine specifics out of the generic layer, in code and in its text
 - v0031c1-003: deferred work must stay bound to the registration it captured
+- v0038c1-006: AMD/HIP CI result on the exact head for HIP-built code

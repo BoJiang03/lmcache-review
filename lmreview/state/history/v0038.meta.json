@@ -1,0 +1,35 @@
+{
+ "version": 38,
+ "parent": 37,
+ "date": "2026-11-27T22:24:32+00:00",
+ "settings": {
+  "review": {
+   "effort": "medium",
+   "rulecheck_stage_words": 6000,
+   "dedupe_model": "claude-sonnet-5-5",
+   "rulecheck_effort": "medium"
+  },
+  "judge": {
+   "effort": "high",
+   "second_opinion": true
+  },
+  "annotate": {
+   "effort": "high"
+  },
+  "distill": {
+   "effort": "high",
+   "consolidate_drafts": 3,
+   "min_signal_prs": 2,
+   "specificity": true,
+   "max_requeues": 2
+  },
+  "vet": {
+   "side_per_entry": 2,
+   "reps": 1
+  }
+ },
+ "by": "vet",
+ "from": "v0038c1",
+ "verdict": "PARTLY KEPT",
+ "report": "reports/vet_v0038c1.md"
+}

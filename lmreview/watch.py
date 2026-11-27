@@ -3,7 +3,8 @@
 Each cycle, per repository:
 
   review  every open PR whose head changed since its last review is reviewed once (`lmreview review`);
-          the review is kept in <home>/reviews/, and posted as a PR comment only with `post` on
+          the review is kept in <home>/reviews/, and with `post` on posted as a GitHub review: a summary
+          and an inline comment per finding on the diff (ghreview.py)
   learn   `lmreview sync` collects the human reviews; every sample (PR, commit a human reviewed) that
           has settled is learned from with `lmreview round PR:commit`. A sample settles when the PR is
           closed, the commit is no longer its head, or no human commented on it for `settle_hours`.
@@ -48,7 +49,6 @@ from collections.abc import Iterator
 from .config import _CACHE
 from . import github
 from .github import gh_graphql
-from .history import AI_MARK
 from .settings import get
 
 PKG_ROOT = pathlib.Path(__file__).resolve().parent.parent  # what `python -m lmreview` needs on PYTHONPATH
@@ -320,13 +320,31 @@ def review_one(home: pathlib.Path, w: dict, pr: dict, post: bool) -> str:
     w["spent"]["review"] += rec["cost"]
     line = f"#{n} {c[:8]}: {rec['findings']} findings, ${rec['cost']:.2f} -> {out}.md"
     if post:
-        body = f"{AI_MARK}\n" + out.with_suffix(".md").read_text()
-        p = subprocess.run(["gh", "pr", "comment", str(n), "--repo", w["repo"], "--body-file", "-"],
-                           input=body, capture_output=True, text=True)
-        rec["posted"] = p.stdout.strip() if p.returncode == 0 else None
-        line += f"; posted {rec['posted']}" if rec["posted"] else f"; post FAILED: {p.stderr.strip()[:200]}"
+        rec["posted"], why = post_review(w["repo"], n, out)
+        line += f"; posted {rec['posted']}" if rec["posted"] else f"; post FAILED: {why}"
     w["reviewed"][str(n)] = rec
     return line
+
+
+def post_review(repo: str, n: int, out: pathlib.Path) -> tuple[str | None, str]:
+    """Post <out>.ghreview.json as a review of PR `n`; if GitHub refuses its inline comments (a line not in
+    the diff it computes, 422), post <out>.ghreview-flat.json (every finding in the summary) instead.
+
+    Returns:
+        (the review's URL or None, what went wrong).
+    """
+    why = ""
+    for name in (".ghreview.json", ".ghreview-flat.json"):
+        payload = pathlib.Path(str(out) + name)
+        if not payload.exists():
+            why = f"{payload.name} missing"
+            continue
+        p = subprocess.run(["gh", "api", "-X", "POST", f"repos/{repo}/pulls/{n}/reviews", "--input", str(payload)],
+                           capture_output=True, text=True)
+        if p.returncode == 0:
+            return json.loads(p.stdout).get("html_url"), why
+        why = (p.stderr or p.stdout).strip()[:300]
+    return None, why
 
 
 def _jsonl(p: pathlib.Path) -> list[dict]:

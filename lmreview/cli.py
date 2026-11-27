@@ -163,8 +163,11 @@ def main(argv: list[str] | None = None) -> None:
         md = to_markdown(out)
         if a.out and out["findings"] is not None:
             import pathlib
+            from .reviewer import github_review
             pathlib.Path(a.out + ".json").write_text(json.dumps(out, indent=1))
             pathlib.Path(a.out + ".md").write_text(md)
+            for name, inline in ((".ghreview.json", True), (".ghreview-flat.json", False)):  # flat: if GitHub refuses inline
+                pathlib.Path(a.out + name).write_text(json.dumps(github_review(out, inline), indent=1))
         print(json.dumps(out, indent=1) if a.format == "json" else md)
         if out["findings"] is None:
             sys.exit(1)

@@ -288,6 +288,27 @@ def test_refs_link_to_comments() -> None:
     assert not [c for c in calls if "PUT" in c]  # the summary mentions no other finding
 
 
+def test_rule_sources() -> None:
+    """A rule lists the comments it was learned from, from the dataset or the state's sources.json, mentions quieted."""
+    home, _ = new_home()
+    (home / "config.toml").write_text(watch.overlay("main", "2026-11-20"))
+    ds = home / "data" / "dataset"
+    ds.mkdir(parents=True)
+    (ds / "comments.jsonl").write_text(json.dumps({"id": 1, "pr": 5, "author": "al", "body": "hi @bob, avoid this",
+                                                   "url": "https://github.com/o/r/pull/5#discussion_r1"}) + "\n")
+    (home / "state").mkdir()
+    (home / "state" / "sources.json").write_text(json.dumps({"2": {"repo": "x/y", "pr": 9, "author": "cy", "url": "U", "quote": "q"}}))
+    code = ("import sys, json; sys.path.insert(0, '.'); from lmreview.provenance import sources; "
+            "print(json.dumps(sources({'evidence': [1, '2:0', 3, 1]})))")
+    out = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env={**os.environ, **watch.env_for(home, "o/r")},
+                         capture_output=True, text=True)
+    got = json.loads(out.stdout or "null") if out.returncode == 0 else out.stderr
+    assert [(s["repo"], s["pr"], s["author"]) for s in got] == [("o/r", 5, "al"), ("x/y", 9, "cy")], got
+    assert got[0]["quote"] == "hi `@bob`, avoid this", got
+    from lmreview.provenance import quiet
+    assert quiet("see #12 and @al, not `@x #3` or a&#39;b; `cut") == "see `#12` and `@al`, not `@x #3` or a&#39;b; `cut`"
+
+
 def test_env_and_repo_name() -> None:
     home, _ = new_home()
     env = watch.env_for(home, "o/r")

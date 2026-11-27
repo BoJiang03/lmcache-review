@@ -481,6 +481,8 @@ def github_review(r: dict, inline: bool = True, cfg: Config | None = None) -> di
     cfg = cfg or Config()
     book = parse_reviewer(r["reviewer"].split("#")[0])[1] if r.get("reviewer") else None
     rules = {x["id"]: x for x in load_rules(book)} if book else {}
+    from .provenance import sources
+    rules = {k: x | {"_sources": sources(x, cfg)} for k, x in rules.items()}  # where each rule was learned (ghreview)
     diff = subprocess.run(["git", "-C", str(cfg.repo), "diff", "-U3", "-M", "--no-color", r["base"], r["commit"]],
                           capture_output=True, text=True, check=True).stdout
     return ghreview.build(r, load_findings(r) or [], diff, rules, r.get("repo") or f"{github.REPO_OWNER}/{github.REPO_NAME}", inline)

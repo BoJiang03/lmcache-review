@@ -13,8 +13,10 @@ from __future__ import annotations
 import re
 
 from .history import AI_MARK
+from .provenance import QUOTE
 from .schema import SEVERITIES, Finding, Location
 
+SHOW_SOURCES = 3  # source comments listed per rule
 HUNK = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 # A finding's text names other findings by their id in its run ("root cause of f1", "see r2"); outside code
 # spans these become REF markers, and render_refs turns them into the other finding's title, linked to its
@@ -130,6 +132,13 @@ def finding_text(f: Finding, rules: dict[str, dict], repo: str, commit: str, hea
     for rid in rids:
         x = rules.get(rid)
         more += ["", f"**Team rule** `{rid}`" + (f" applies when: {x.get('when') or x.get('rule', '')}" if x else "")]
+        src = (x or {}).get("_sources") or []
+        if src:
+            more += ["", "Learned from these team review comments:"]
+            more += [f"- [{s['repo'] + '#' if s.get('repo') else '#'}{s['pr']}]({s['url']}) · {s['author']}: "
+                     f"\"{s['quote']}{'…' if len(s['quote']) >= QUOTE else ''}\"" for s in src[:SHOW_SOURCES]]
+            if len(src) > SHOW_SOURCES:
+                more.append(f"- and {len(src) - SHOW_SOURCES} more")
     if rids:
         parts.append("team rule")
     rel = [l for l in f.locations if l.role == "related"] + (where if at else [])

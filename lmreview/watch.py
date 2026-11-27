@@ -238,8 +238,13 @@ def add(repo: str, since: str | None = None, book: str | None = None, backfill: 
         from . import state
         n = state.head()
         if n:
+            from .config import Config
+            from .provenance import write_sources
             book = str(home / f"seed-{state.vname(n)}.jsonl")
             shutil.copy(state.book_path(state.vname(n)), book)
+            # the comments behind the copied rules, so a review here can link a rule to where it was learned
+            write_sources(state.load_book(state.vname(n)), Config().data / "dataset" / "comments.jsonl",
+                          home / "state" / "sources.json")
             seed = f"{github.REPO_OWNER}/{github.REPO_NAME} {state.vname(n)}"  # this process's repository
             note += f"; seeded from {state.STATE} {state.vname(n)}"
     if book is None:

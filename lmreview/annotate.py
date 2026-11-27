@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from . import llm
 from .config import Config
+from .project import localize_module
 from .workspace import TOOLS, cached_pr, pr_meta, sample_workspace
 
 ANNOTATOR = "a2"  # annotation prompt version; another version is never mixed in
@@ -200,3 +201,5 @@ def point_comments(cfg: Config, cm: dict) -> dict[str, dict]:
                     "id": key(int(cid), k, len(ps)), "point": k, "comment": c["id"],
                     "body": f"(point {k + 1} of {len(ps)} in this review) {p['text']}\n\nthe whole review:\n{c['body']}"}
     return out
+
+localize_module(globals())  # the prompts above name the project of [project] (project.py)

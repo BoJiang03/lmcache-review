@@ -11,6 +11,8 @@ import copy
 import datetime as dt
 import subprocess
 
+from .settings import get
+
 UNAVAILABLE = "(this text was edited later; the version at review time is no longer on GitHub)"
 
 
@@ -75,7 +77,7 @@ def commit_at(raw: dict, t: str, hint: str, repo: str) -> str | None:
     end = later[0]["before"] if later else raw["headRefOid"]
     if git("cat-file", "-e", f"{end}^{{commit}}").returncode and git("fetch", "-q", "origin", end).returncode:
         return None
-    dev = git("rev-list", "-1", f"--before={t}", "origin/dev").stdout.strip()
+    dev = git("rev-list", "-1", f"--before={t}", f"origin/{get('dataset', 'branch')}").stdout.strip()
     for line in git("log", "--first-parent", "--format=%H %cI", "-n", "500", end).stdout.splitlines():
         h, when = line.split()
         if utc(when) <= t:

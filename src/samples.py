@@ -27,8 +27,8 @@ from lmreview.asof import commit_at  # noqa: E402
 from lmreview.config import Config  # noqa: E402
 from lmreview.history import format_history  # noqa: E402
 
-DS = ROOT / "data" / "dataset"
-RAW = ROOT / "data" / "raw" / "pr"
+DS = Config().data / "dataset"
+RAW = Config().data / "raw" / "pr"
 MIN_BODY = 80  # a review body alone counts as gold only if it says something
 
 

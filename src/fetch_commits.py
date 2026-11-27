@@ -9,10 +9,15 @@ from __future__ import annotations
 import json
 import pathlib
 import subprocess
+import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-RAW = ROOT / "data" / "raw" / "pr"
-GIT = ROOT / "data" / "LMCache"
+sys.path.insert(0, str(ROOT))
+from lmreview.config import Config  # noqa: E402
+
+DATA = Config().data
+RAW = DATA / "raw" / "pr"
+GIT = Config().repo
 BATCH = 40
 
 
@@ -53,7 +58,7 @@ def main() -> None:
                                capture_output=True)
         print(f"  {min(i + BATCH, len(missing))}/{len(missing)}", flush=True)
     still = [o for o in missing if not have(o)]
-    (ROOT / "data" / "unrecoverable_commits.txt").write_text("\n".join(still))
+    (DATA / "unrecoverable_commits.txt").write_text("\n".join(still))
     print(f"unrecoverable: {len(still)}")
 
 

@@ -15,6 +15,7 @@ from .annotate import cid_of
 from .ensemble import ensemble
 from .config import Config
 from .settings import get
+from .project import NAME, localize_module
 from .state import book_path, part_path, prompt_params, prompt_path
 from .schema import SCHEMA_VERSION, SEVERITIES, Finding, SchemaError, cites, load_findings, parse_findings, to_dicts
 from .workspace import TOOLS, live_workspace, pr_meta
@@ -138,7 +139,7 @@ def rules_section(rules: list[dict], paths: list[str], why: bool = True) -> str:
     if not use:
         return ""
     lines = rule_lines(use, why)
-    return ("\n\nTeam rules distilled from past LMCache reviews. Check the change against the ones "
+    return (f"\n\nTeam rules distilled from past {NAME} reviews. Check the change against the ones "
             "that apply; when a finding follows from a rule, put its id in the finding's \"rule\" "
             "field. A rule finding must be about code this PR adds or changes: do not raise a rule "
             "against behavior the PR leaves as it was.\n"
@@ -289,7 +290,7 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER,
 
 SYMBOLS_MAX, SYMBOL_LINES, SYMBOLS_CHARS = 25, 8, 14000  # names looked up, lines per name, section size
 SYMBOL_FILES = 12  # files listed per name beyond its shown lines
-_SRC = ("*.py", "*.pyi", "*.c", "*.cc", "*.cpp", "*.cu", "*.cuh", "*.h", "*.hpp", "*.md", "*.rst", "*.toml", "*.yaml")
+_SRC = tuple(get("project", "source_globs"))
 _COMMON = {"self", "None", "True", "False", "return", "import", "from", "class", "def", "init", "main", "test",
            "args", "kwargs", "data", "value", "name", "type", "list", "dict", "self.", "config"}
 
@@ -519,3 +520,5 @@ def to_markdown(r: dict) -> str:
         out += [f"<details><summary>{len(rest)} minor/nit findings</summary>", ""]
         out += [x for f in rest for x in item(f)] + ["</details>"]
     return "\n".join(out)
+
+localize_module(globals())  # the prompts above name the project of [project] (project.py)

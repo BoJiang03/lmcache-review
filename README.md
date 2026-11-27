@@ -107,6 +107,29 @@ A bare PR number in `round` means its commits that still have a missed comment (
 has been judged yet). Paid commands take a cost cap (default: none in effect, $1000) and stop starting new LLM calls when they
 reach it (`--max-cost 0` prints the plan). Every run prints timestamped progress and is logged to `data/logs/`.
 
+## Watch a GitHub repository
+
+`lmreview watch` follows any repository the `gh` login can read, with the logged-in `claude`:
+
+```
+bin/lmreview watch add OWNER/NAME [--since DATE] [--backfill] [--book B.jsonl] [--prompts auto|lmcache|generic|DIR] [--post]
+bin/lmreview watch run [OWNER/NAME ...] [--once] [--interval 600] [--dry-run]
+bin/lmreview watch set OWNER/NAME --post | --no-learn | --settle-hours 12 | --max-reviews 3 | --round-cost 20 ...
+bin/lmreview watch status
+```
+
+Each cycle reviews every open PR whose head changed (drafts and bots skipped; at most `max_reviews`), keeps
+the review in the repository's home (`reviews/`), and posts it as a PR comment only with `--post`. Then it
+syncs the human reviews and runs `round` on the samples that settled (PR closed, commit no longer the
+head, or no human comment for `settle_hours`), at most `max_learn` per cycle. Only samples reviewed after
+`add` are learned, unless `--backfill`.
+
+Every repository has its own home (`~/.cache/lmreview/watch/<owner>__<name>/`: clone, dataset, runs, book,
+logs), so repositories never share a book or a cache. A repository outside the LMCache organization gets
+the generic prompts (`lmreview/prompts/generic/`, rendered into its home with its name and GitHub
+description, to edit for its conventions), and `[project]` names it in the learning prompts. `--dry-run`
+lists what would be reviewed and learned without an LLM call. See lmreview/watch.py.
+
 ## Data
 
 `lmreview sync` collects recently updated PRs from GitHub into `data/raw/pr/`, then runs:

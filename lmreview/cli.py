@@ -49,7 +49,8 @@ def main(argv: list[str] | None = None) -> None:
     wa.add_argument("repo")
     wa.add_argument("--since", help="collect PRs created from this date (YYYY-MM-DD); default today")
     wa.add_argument("--backfill", action="store_true", help="also learn from samples before now (from --since)")
-    wa.add_argument("--book", help="rulebook .jsonl to start from (default: no entries)")
+    wa.add_argument("--book", help="rulebook .jsonl to start from (default: with the lmcache prompts, the LMCache "
+                    "book in use; else no entries)")
     wa.add_argument("--prompts", default="auto", help="lmcache | generic | DIR with reviewer.md, rulecheck.md, rulepick.md; "
                     "auto (default): lmcache for the LMCache organization's repositories, else generic")
     for p_ in (wa, ws.add_parser("set", help="change the settings of a watched repository")):

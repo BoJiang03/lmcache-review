@@ -225,6 +225,9 @@ def test_ghreview() -> None:
     assert "<sub>team rule `x1`</sub>" in out["body"] and "`x1` applies when: W" in out["body"] and "o/r v0001" in out["body"]
     assert "<sub>general review</sub>" in out["comments"][0]["body"] and "found by" not in out["body"]
     assert "blob/" + "c" * 40 + "/b.py#L3" in out["comments"][0]["body"]
+    c0 = out["comments"][0]["body"]
+    assert c0.index("<details><summary>Other places</summary>") < c0.index("b.py#L3") and c0.rstrip().endswith("</details>")
+    assert "**Where:**" in out["body"] and "<summary>Team rule</summary>" in out["body"]
     assert ghreview.build(r, fs, DIFF, {}, "o/r", inline=False)["comments"] == []
 
 

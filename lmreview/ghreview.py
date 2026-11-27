@@ -91,17 +91,28 @@ def finding_text(f: Finding, rules: dict[str, dict], repo: str, commit: str, hea
     """The markdown of one finding (an inline comment, or a section of the summary); `at`: the location the
     inline comment is on (every other location is linked)."""
     out = [f"{heading}**[{f.severity}] {f.title}** · <sub>{basis(f)}</sub>", "", f.body]
-    if f.suggestion:
-        out += ["", f"**Suggestion:** {f.suggestion}"]
-    for rid in f.rules or ([f.rule] if f.rule else []):
-        x = rules.get(rid)
-        out += ["", f"**Team rule** `{rid}`" + (f" applies when: {x.get('when') or x.get('rule', '')}" if x else "")]
     where = [l for l in f.locations if l.role != "related" and l is not at]
-    rel = [l for l in f.locations if l.role == "related"]
-    if where:
-        out += ["", ("**Also at:** " if at else "**Where:** ") + ", ".join(_link(repo, commit, l) for l in where)]
+    if where and not at:  # a finding in the summary: where it is stays in view
+        out += ["", "**Where:** " + ", ".join(_link(repo, commit, l) for l in where)]
+    # the rest supports the finding: folded, so a long review stays short (the raw markdown, which an agent
+    # reads, has all of it)
+    more, parts = [], []
+    if f.suggestion:
+        more += ["", f"**Suggestion:** {f.suggestion}"]
+        parts.append("suggestion")
+    rids = f.rules or ([f.rule] if f.rule else [])
+    for rid in rids:
+        x = rules.get(rid)
+        more += ["", f"**Team rule** `{rid}`" + (f" applies when: {x.get('when') or x.get('rule', '')}" if x else "")]
+    if rids:
+        parts.append("team rule")
+    rel = [l for l in f.locations if l.role == "related"] + (where if at else [])
     if rel:
-        out += ["", "**Related:** " + ", ".join(_link(repo, commit, l) for l in rel)]
+        more += ["", "**Other places:** " + ", ".join(_link(repo, commit, l) for l in rel)]
+        parts.append("other places")
+    if more:
+        label = ", ".join(parts)
+        out += ["", f"<details><summary>{label[0].upper() + label[1:]}</summary>", *more, "", "</details>"]
     return "\n".join(out)
 
 

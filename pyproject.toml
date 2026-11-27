@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "lmreview"
 version = "0.1.0"
-description = "AI first-round PR review for LMCache (library + CLI)"
+description = "AI pull-request review for any GitHub repository, with rules learned from its reviewers (library + CLI)"
 requires-python = ">=3.10"
 dependencies = []  # needs the `claude` and `gh` CLIs on PATH, and git
 
@@ -16,6 +16,6 @@ lmreview = "lmreview.cli:main"
 packages = ["lmreview", "lmreview._vendor", "lmreview._vendor.tomli"]
 
 [tool.setuptools.package-data]
-lmreview = ["prompts/*.md", "rules/*.jsonl", "rules/*.md", "config.toml", "state/*.json", "state/*.jsonl",
+lmreview = ["prompts/*.md", "prompts/generic/*.md", "rules/*.jsonl", "rules/*.md", "config.toml", "state/*.json", "state/*.jsonl",
             "state/history/*", "state/prompts/*.md",
             "_vendor/tomli/LICENSE", "_vendor/tomli/py.typed"]

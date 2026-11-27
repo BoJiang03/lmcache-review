@@ -7,10 +7,11 @@
     compress [--stage S] [--repair]      trim / merge the book in use -> a candidate (then vet)
     round PR ...                         all four on these samples, distill + vet until settled; compress + vet when the book is over [compress] words
     status | rollback vN | discard       look at / move the state
+    watch add|set|run|status             follow a GitHub repository: review its open PRs, learn from its reviews
 
 A reviewer is named <prompt>[+<book>][@<effort>][-rc|-ro]; the default is the current prompt
 (prompts/reviewer.md) with the book in use. Paid commands stop starting new LLM calls once
---max-cost is reached (0 = print the plan). Nothing is posted to GitHub.
+--max-cost is reached (0 = print the plan). Only `watch` with --post writes to GitHub.
 """
 
 from __future__ import annotations
@@ -25,6 +26,33 @@ from .settings import get
 EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 
 
+def _review_target(a: argparse.Namespace, argv: list[str] | None) -> int:
+    """The PR number of `review`. When the PR (a link, or --repo) belongs to another repository than this
+    state's, rerun the command in that repository's `watch` home (its own book, prompts and clone) and exit."""
+    import os
+    import re
+    import subprocess
+    from . import github
+    m = re.fullmatch(r"(?:https?://)?github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)(?:[/?#].*)?", a.pr.strip())
+    if not m and not a.pr.isdigit():
+        sys.exit(f"not a PR number or link: {a.pr}")
+    repo, n = (m[1], int(m[2])) if m else (a.repo, int(a.pr))
+    repo = repo or a.repo
+    here = f"{github.REPO_OWNER}/{github.REPO_NAME}"
+    if not repo or repo.lower() == here.lower():
+        return n
+    from . import watch
+    home = watch.home_of(repo)
+    if not (home / "watch.json").exists():
+        sys.exit(f"{repo} has no lmreview state yet: run `lmreview watch add {repo}` first (free; it sets up its "
+                 f"own rulebook, prompts and clone), then review again")
+    rest = list(argv if argv is not None else sys.argv[1:])
+    rest = [x for i, x in enumerate(rest) if x != a.pr and x != "--repo" and (i == 0 or rest[i - 1] != "--repo")
+            and not x.startswith("--repo=")]
+    rest.insert(rest.index("review") + 1, str(n))
+    sys.exit(subprocess.run([sys.executable, "-m", "lmreview", *rest], env=watch.env_for(home, watch.load(home)["repo"])).returncode)
+
+
 def main(argv: list[str] | None = None) -> None:
     """Parse arguments and dispatch to the library."""
     ap = argparse.ArgumentParser(prog="lmreview", description=__doc__,
@@ -35,10 +63,63 @@ def main(argv: list[str] | None = None) -> None:
         "--since", help="ISO date/time; default: last sync")
 
     r = sub.add_parser("review", help="review one PR now (paid)")
-    r.add_argument("pr", type=int, help="review this PR as it is now (local output only)")
+    r.add_argument("pr", help="PR number, or its link (https://github.com/OWNER/NAME/pull/N): review it as it is "
+                   "now (local output only)")
+    r.add_argument("--repo", help="OWNER/NAME of the PR (default: the link's, else this state's repository); a "
+                   "repository other than this state's must have been added with `lmreview watch add`")
     r.add_argument("--commit", help="with a PR: review this commit instead of the head")
     r.add_argument("--format", default="md", choices=["md", "json"])
     r.add_argument("--reviewer", default=DEFAULT_REVIEWER)
+    r.add_argument("--out", help="also write the review to OUT.json and OUT.md")
+
+    w = sub.add_parser("watch", help="follow GitHub repositories with the gh login: review open PRs when their head "
+                                     "changes, learn from human reviews once they settle (paid; see lmreview/watch.py)")
+    ws = w.add_subparsers(dest="action", required=True)
+    wa = ws.add_parser("add", help="start watching OWNER/NAME: its own home, settings overlay and book (free)")
+    wa.add_argument("repo")
+    wa.add_argument("--since", help="collect PRs created from this date (YYYY-MM-DD); default today")
+    wa.add_argument("--backfill", action="store_true", help="also learn from samples before now (from --since)")
+    wa.add_argument("--book", help="rulebook .jsonl to start from (default: with the lmcache prompts, the LMCache "
+                    "book in use; else no entries)")
+    wa.add_argument("--prompts", default="auto", help="lmcache | generic | DIR with reviewer.md, rulecheck.md, rulepick.md; "
+                    "auto (default): lmcache for the LMCache organization's repositories, else generic")
+    for p_ in (wa, ws.add_parser("set", help="change the settings of a watched repository")):
+        if p_ is not wa:
+            p_.add_argument("repo")
+        p_.add_argument("--review", action=argparse.BooleanOptionalAction, default=None, help="review open PRs")
+        p_.add_argument("--learn", action=argparse.BooleanOptionalAction, default=None, help="learn from human reviews")
+        p_.add_argument("--post", action=argparse.BooleanOptionalAction, default=None,
+                        help="post each review as a PR comment from the gh account (default: off, local only)")
+        p_.add_argument("--drafts", action=argparse.BooleanOptionalAction, default=None, help="also review draft PRs")
+        p_.add_argument("--settle-hours", type=float, help="a sample of an open PR is learned once its commit is not the "
+                        "head, or no human commented on it for this long (default 24)")
+        p_.add_argument("--max-reviews", type=int, help="reviews per cycle per repository (default 5)")
+        p_.add_argument("--max-learn", type=int, help="samples per round per cycle (default 3)")
+        p_.add_argument("--round-cost", type=float, help="cap ($) for each step of a round (default: round's own)")
+        p_.add_argument("--book-repo", help="OWNER/NAME of a public repository to publish the rulebook to (branch "
+                        "rulebooks), so posted reviews link their rules; '' = off")
+        p_.add_argument("--review-since", help="ISO time (e.g. 2026-11-27T21:00:00Z) or 'now': open PRs last updated "
+                        "before it are not reviewed, so a backlog of old PRs is left alone")
+    wr = ws.add_parser("run", help="cycle: review + learn on every watched repository (or these)")
+    wr.add_argument("repos", nargs="*")
+    wr.add_argument("--once", action="store_true", help="one cycle, then exit")
+    wr.add_argument("--interval", type=int, default=600, help="seconds between cycles (default 600)")
+    wr.add_argument("--prs", type=int, nargs="+", help="one cycle that reviews just these PRs (again, if reviewed)")
+    wr.add_argument("--dry-run", action="store_true", help="list what would be reviewed and learned; no LLM calls, "
+                    "nothing posted (sync still updates the local dataset)")
+    wst = ws.add_parser("start", help="run the watcher in the background, detached from the terminal (log: <watch root>/watch.log)")
+    wst.add_argument("repos", nargs="*")
+    wst.add_argument("--interval", type=int, default=600, help="seconds between cycles (default 600)")
+    ws.add_parser("stop", help="stop the background watcher")
+    wt = ws.add_parser("retract", help="take back the AI reviews on a PR: delete their inline comments, "
+                                       "replace the summary, minimize the review (GitHub cannot delete a submitted review)")
+    wt.add_argument("repo")
+    wt.add_argument("pr", type=int)
+    wt.add_argument("--review", type=int, help="only this review id (default: every AI review on the PR)")
+    wp = ws.add_parser("repost", help="post the saved review of a PR's head again, in the current format (no new review)")
+    wp.add_argument("repo")
+    wp.add_argument("pr", type=int)
+    ws.add_parser("status", help="the background watcher, watched repositories and their progress (free)")
 
     sub.add_parser("status", help="book in use, candidate, ledger counts (free)")
     j = sub.add_parser("judge", help="judge the current reviewer's runs and file the comments in the ledger (paid, cached)")
@@ -73,6 +154,8 @@ def main(argv: list[str] | None = None) -> None:
     i = sub.add_parser("init", help="start the state as v0001 from a rulebook .jsonl (an empty file: no entries)")
     i.add_argument("book")
     i.add_argument("--note", default="")
+    i.add_argument("--seeded-from", help="where the book comes from, when it is another repository's "
+                   "(e.g. 'LMCache/LMCache v0036'); shown with the reviewer")
 
     d = sub.add_parser("distill", help="ledger to_distill comments -> candidate book (paid)")
     d.add_argument("--compress", action="store_true", help="run even with nothing to_distill, "
@@ -94,13 +177,47 @@ def main(argv: list[str] | None = None) -> None:
         from .config import Config
         from .progress import note, tee
         note(f"lmreview {' '.join(argv if argv is not None else sys.argv[1:])} | log: {tee(a.cmd, Config().data)}")
-    if a.cmd == "sync":
+    if a.cmd == "watch":
+        from . import watch
+        keys = ("review", "learn", "post", "drafts", "settle_hours", "max_reviews", "max_learn", "round_cost", "review_since",
+                "book_repo")
+        opts = {k: getattr(a, k) for k in keys if getattr(a, k, None) is not None}
+        if opts.get("book_repo") == "":
+            opts["book_repo"] = None
+        if opts.get("review_since") == "now":
+            opts["review_since"] = watch._iso(watch._now())
+        if a.action == "add":
+            print(watch.add(a.repo, a.since, a.book, a.backfill, a.prompts, **opts))
+        elif a.action == "set":
+            print(watch.set_(a.repo, **opts))
+        elif a.action == "run":
+            watch.run(a.repos or None, a.once, a.interval, a.dry_run, set(a.prs or []) or None)
+        elif a.action == "start":
+            print(watch.start(a.repos or None, a.interval))
+        elif a.action == "stop":
+            print(watch.stop())
+        elif a.action == "retract":
+            print(watch.retract(a.repo, a.pr, a.review))
+        elif a.action == "repost":
+            print(watch.repost(a.repo, a.pr))
+        else:
+            print(watch.status())
+    elif a.cmd == "sync":
         from .sync import sync
         print(sync(a.since))
     elif a.cmd == "review":
+        a.pr = _review_target(a, argv)
         from .reviewer import review_pr, to_markdown
         out = review_pr(a.pr, a.commit, a.reviewer)
-        print(json.dumps(out, indent=1) if a.format == "json" else to_markdown(out))
+        md = to_markdown(out)
+        if a.out and out["findings"] is not None:
+            import pathlib
+            from .reviewer import github_review
+            pathlib.Path(a.out + ".json").write_text(json.dumps(out, indent=1))
+            pathlib.Path(a.out + ".md").write_text(md)
+            for name, inline in ((".ghreview.json", True), (".ghreview-flat.json", False)):  # flat: if GitHub refuses inline
+                pathlib.Path(a.out + name).write_text(json.dumps(github_review(out, inline), indent=1))
+        print(json.dumps(out, indent=1) if a.format == "json" else md)
         if out["findings"] is None:
             sys.exit(1)
     elif a.cmd in ("status", "judge", "round", "rollback", "discard", "init"):
@@ -117,7 +234,7 @@ def main(argv: list[str] | None = None) -> None:
         elif a.cmd == "discard":
             print(state.discard())
         else:
-            print(f"book in use: {state.vname(state.init(a.book, a.note))}")
+            print(f"book in use: {state.vname(state.init(a.book, a.note, a.seeded_from))}")
     elif a.cmd == "retain":
         if a.covered and not a.reviewer:
             sys.exit("retain --covered needs --reviewer with the main review: a rule check alone cannot find covered points")

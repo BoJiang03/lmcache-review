@@ -51,25 +51,41 @@ reps = 1               # runs per replayed case and book
 # "Learned" means the production reviewer catches it every time (2026-11-26): `lmreview retain` (and round,
 # after each judge and vet) re-runs the rule check of the current prompt and book (-ro, see state.retain_reviewer)
 # on the samples of covered / resolved points `reps` times, judges against every point, and sends a point
-# caught in fewer than all runs back to to_distill.
+# caught in fewer than all runs back to to_distill. After a compress passes vet, every retained point behind an
+# entry it changed is retained again (vet replays only side_per_entry of them, once).
 on = true
 reps = 2
 
 # Default cost caps in dollars (each command's --max-cost / round's --*-cost).
-[budget]
-judge = 10.0
-distill = 5.0
-vet = 30.0
-retain = 30.0           # `lmreview retain`: production re-reviews (2 per sample) and their judge
-compress = 3.0          # `lmreview compress`: drafts and final texts (vet is separate)
+[budget]  # default caps ($) of paid commands: effectively none (costs converge; state the estimate,
+          # report the spend). Pass a lower --max-cost / --*-cost to cap one run; 0 = plan only.
+judge = 1000.0
+distill = 1000.0
+vet = 1000.0
+retain = 1000.0           # `lmreview retain`: production re-reviews (2 per sample) and their judge
+compress = 1000.0          # `lmreview compress`: drafts and final texts (vet is separate)
 
 [budget.round]
-review = 30.0
-judge = 10.0
-confirm = 10.0       # a second review (and judge) of the samples with new misses, before distill (state.confirm_misses)
-distill = 5.0
-retain = 20.0        # production re-reviews of what a round learned (state.retain_step)
-vet = 30.0
+review = 1000.0
+judge = 1000.0
+confirm = 1000.0       # a second review (and judge) of the samples with new misses, before distill (state.confirm_misses)
+distill = 1000.0
+retain = 1000.0        # production re-reviews of what a round learned (state.retain_step)
+vet = 1000.0
+
+[project]  # the project under review; these defaults are this checkout's own, LMCache. A watched repository's
+           # home sets its own (lmreview/project.py: the built-in prompts' mentions of LMCache become these)
+name = "LMCache"
+about = "a KV-cache layer for LLM inference engines such as vLLM"   # one line; "" = none
+# files the rule check greps for where names from the diff are defined and used (SYMBOLS)
+source_globs = ["*.py", "*.pyi", "*.c", "*.cc", "*.cpp", "*.cu", "*.cuh", "*.h", "*.hpp", "*.md", "*.rst", "*.toml", "*.yaml"]
+
+[dataset]  # what `lmreview sync` collects and how PRs are split (by PR creation date, UTC)
+start = "2026-05-01"         # PRs created before this are not collected
+branch = "dev"               # the repository's main branch (origin/<branch>: "what had landed" at a time)
+train_before = "2026-09-01"  # created before: train (learned from)
+test_before = "2026-11-01"   # then, before this: test (held out)
+after = "new"                # created on/after test_before: this split ("train" to learn from new PRs, as `watch` homes do)
 
 # Paths. "" = automatic: a checkout uses its data/ dir, an installed copy ~/.cache/lmreview/.
 # The env vars LMREVIEW_REPO / _DATA / _VLLM / _SANDBOX / _STATE win over these.
@@ -79,6 +95,8 @@ data = ""
 vllm = ""
 state = ""                                 # "" = lmreview/state/ in the package
 sandbox = "/var/tmp/lmreview-{uid}/sandbox"  # agent workspaces; outside $HOME and /tmp (see llm.py)
+prompts = ""                               # reviewer.md / rulecheck.md / rulepick.md dir; "" = lmreview/prompts
+watch = ""                                 # `lmreview watch` homes, one per repository; "" = ~/.cache/lmreview/watch
 
 [compress]
 stages = ["trim", "merge"]  # passes of a round's compress, in order (each: full pass + vet, then repairs)

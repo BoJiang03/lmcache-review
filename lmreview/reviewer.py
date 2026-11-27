@@ -15,6 +15,7 @@ from .annotate import cid_of
 from .ensemble import ensemble
 from .config import Config
 from .settings import get
+from .project import NAME, localize_module
 from .state import book_path, part_path, prompt_params, prompt_path
 from .schema import SCHEMA_VERSION, SEVERITIES, Finding, SchemaError, cites, load_findings, parse_findings, to_dicts
 from .workspace import TOOLS, live_workspace, pr_meta
@@ -138,7 +139,7 @@ def rules_section(rules: list[dict], paths: list[str], why: bool = True) -> str:
     if not use:
         return ""
     lines = rule_lines(use, why)
-    return ("\n\nTeam rules distilled from past LMCache reviews. Check the change against the ones "
+    return (f"\n\nTeam rules distilled from past {NAME} reviews. Check the change against the ones "
             "that apply; when a finding follows from a rule, put its id in the finding's \"rule\" "
             "field. A rule finding must be about code this PR adds or changes: do not raise a rule "
             "against behavior the PR leaves as it was.\n"
@@ -289,7 +290,7 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER,
 
 SYMBOLS_MAX, SYMBOL_LINES, SYMBOLS_CHARS = 25, 8, 14000  # names looked up, lines per name, section size
 SYMBOL_FILES = 12  # files listed per name beyond its shown lines
-_SRC = ("*.py", "*.pyi", "*.c", "*.cc", "*.cpp", "*.cu", "*.cuh", "*.h", "*.hpp", "*.md", "*.rst", "*.toml", "*.yaml")
+_SRC = tuple(get("project", "source_globs"))
 _COMMON = {"self", "None", "True", "False", "return", "import", "from", "class", "def", "init", "main", "test",
            "args", "kwargs", "data", "value", "name", "type", "list", "dict", "self.", "config"}
 
@@ -469,14 +470,35 @@ def review_pr(pr: int, commit: str | None = None, reviewer: str = DEFAULT_REVIEW
     raw = github.fetch_pr(pr)
     with live_workspace(cfg, raw, commit, reviewer_context(reviewer)) as (wt, c, base):
         out = run_reviewer(wt, raw, reviewer)
-    return {"pr": pr, "title": raw["title"], "commit": c, "base": base, **out}
+    from .state import book_label, book_seed
+    return {"pr": pr, "title": raw["title"], "commit": c, "base": base, "repo": f"{github.REPO_OWNER}/{github.REPO_NAME}",
+            "rules_label": book_label(parse_reviewer((out.get("reviewer") or reviewer).split("#")[0])[1]),
+            "rules_seed": book_seed(), **out}
+
+
+def github_review(r: dict, inline: bool = True, cfg: Config | None = None) -> dict:
+    """review_pr's result `r` as a GitHub review payload (ghreview.build): a summary and inline comments."""
+    from . import ghreview
+    cfg = cfg or Config()
+    book = parse_reviewer(r["reviewer"].split("#")[0])[1] if r.get("reviewer") else None
+    rules = {x["id"]: x for x in load_rules(book)} if book else {}
+    from .provenance import sources
+    rules = {k: x | {"_sources": sources(x, cfg)} for k, x in rules.items()}  # where each rule was learned (ghreview)
+    diff = subprocess.run(["git", "-C", str(cfg.repo), "diff", "-U3", "-M", "--no-color", r["base"], r["commit"]],
+                          capture_output=True, text=True, check=True).stdout
+    # $LMREVIEW_BOOK_URL: where `lmreview watch` publishes this repository's rulebooks (<url>/<vNNNN>.md)
+    base = os.environ.get("LMREVIEW_BOOK_URL")
+    return ghreview.build(r, load_findings(r) or [], diff, rules, r.get("repo") or f"{github.REPO_OWNER}/{github.REPO_NAME}",
+                          inline, f"{base}/{book}.md" if base and book else None)
 
 
 def to_markdown(r: dict) -> str:
     """Render a review: blocker/major in full, minor/nit folded; each item shows scope and places."""
     head = [f"# AI review of #{r['pr']}: {r.get('title', '')}", "",
             f"commit `{r['commit'][:10]}` vs base `{r['base'][:10]}` · reviewer "
-            f"{r.get('reviewer') or str(r.get('version')) + '@' + str(r.get('effort'))} · ${r['cost']:.2f}", ""]
+            f"{r.get('reviewer') or str(r.get('version')) + '@' + str(r.get('effort'))}"
+            + (f" · rules: {r['rules_label']}" if r.get("rules_label") else "")
+            + (f" (seeded from {r['rules_seed']})" if r.get("rules_seed") else "") + f" · ${r['cost']:.2f}", ""]
     fs = load_findings(r)
     if fs is None:
         return "\n".join(head + [f"Could not parse the reviewer output ({r.get('error')}):", "", r["raw"]])
@@ -487,7 +509,7 @@ def to_markdown(r: dict) -> str:
     rules = {x["id"]: x for x in load_rules(book)} if book else {}
     cited = [f for f in fs if f.rule or f.rules]
     if cited:
-        head += [f"{len(cited)} of {len(fs)} findings follow a team rule ({book or 'no rulebook'}).", ""]
+        head += [f"{len(cited)} of {len(fs)} findings follow a team rule ({r.get('rules_label') or book or 'no rulebook'}).", ""]
 
     def rule_line(rule: str) -> str:
         x = rules.get(rule)
@@ -519,3 +541,5 @@ def to_markdown(r: dict) -> str:
         out += [f"<details><summary>{len(rest)} minor/nit findings</summary>", ""]
         out += [x for f in rest for x in item(f)] + ["</details>"]
     return "\n".join(out)
+
+localize_module(globals())  # the prompts above name the project of [project] (project.py)

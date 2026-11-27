@@ -67,7 +67,24 @@ def test_vet_tolerates_nit_losses() -> None:
     assert J["lost"] == [("e2", 62), ("e3", "63:1")], J
 
 
+def test_compress_hit() -> None:
+    """Retained resolved rows behind entries a compress merged, retired or rewrote; not those behind kept text."""
+    old = {"a": {"id": "a", "when": "w", "expect": "e", "evidence": [1]},
+           "b": {"id": "b", "when": "w", "expect": "e", "evidence": [2]},
+           "c": {"id": "c", "when": "w", "expect": "e", "evidence": [3]},
+           "d": {"id": "d", "when": "w", "expect": "e", "evidence": [4]}}
+    new = [{"id": "a", "when": "w", "expect": "e"},                   # kept as is
+           {"id": "b", "when": "w2", "expect": "e"},                  # rewritten
+           {"id": "c", "status": "retired", "when": "w", "expect": "e"},  # merged away
+           {"id": "m", "when": "w", "expect": "e"}]                   # the merge; d dropped
+    row = lambda c, **k: {"comment": c, "pr": 1, "commit": "x" * 40, "status": "resolved", "tries": [], **k}  # noqa: E731
+    rows = {1: row(1, retained={"hits": "2/2"}), 2: row(2, retained={"hits": "2/2"}), 3: row(3, retained={"hits": "2/2"}), 4: row(4),
+            5: row(5, retained={"hits": "2/2"}, status="covered")}
+    assert state.compress_hit(old, new, rows) == {2, 3}, state.compress_hit(old, new, rows)
+
+
 if __name__ == "__main__":
+    test_compress_hit()
     test_retain_tiers()
     test_vet_tolerates_nit_losses()
     print("ok")

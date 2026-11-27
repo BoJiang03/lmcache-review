@@ -37,6 +37,7 @@ from collections.abc import Callable
 from . import llm
 from .budget import capped_map
 from .config import Config
+from .project import localize_module
 from .schema import cites as finding_rules
 from .annotate import cid_of, norm
 from .settings import get
@@ -2038,3 +2039,5 @@ def distill(out: str, base: str, misses_of: str, comments: list[int | str], effo
     book_path(out).with_suffix(".md").write_text("\n".join(md) + "\n")
     return (f"rules/{out}.jsonl: {len(rules)} entries ({dict(C.Counter(r['kind'] for r in rules))}) from "
             f"{len(cs)} comments ({dict(kinds)}), ${spent:.2f}")
+
+localize_module(globals())  # the prompts above name the project of [project] (project.py)

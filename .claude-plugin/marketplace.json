@@ -1,11 +1,11 @@
 {
   "name": "lmcache-review",
-  "owner": { "name": "LMCache" },
+  "owner": { "name": "BoJiang03" },
   "plugins": [
     {
       "name": "lmreview",
       "source": "./",
-      "description": "AI first-round review of LMCache pull requests (read-only on GitHub; never posts)"
+      "description": "AI pull-request review for any GitHub repository, with rules learned from its own reviewers (the review command only reads GitHub)"
     }
   ]
 }

@@ -19,6 +19,7 @@ from .progress import note
 from .annotate import annotate, point_comments, points
 from .config import Config
 from .settings import get
+from .project import localize_module
 from .reviewer import prompt_template
 from .schema import load_findings
 from .workspace import TOOLS, cached_pr, pr_meta, sample_workspace
@@ -242,3 +243,5 @@ def judge_runs(cfg: Config, reviewer: str, prs: set[int] | None, split: str, max
             note(f"judged #{run['pr']}@{run['commit'][:8]}: {sum(bool(h['matched_ai']) for h in n['human'])}/{len(n['human'])} "
                  f"human comments found (${sc.get('cost', 0):.2f}, total ${cost:.2f} of ${max_cost:.0f})")
     return out, cost
+
+localize_module(globals())  # the prompts above name the project of [project] (project.py)

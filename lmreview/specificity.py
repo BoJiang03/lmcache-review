@@ -16,6 +16,8 @@ import json
 import pathlib
 import re
 
+from .project import NAME
+
 CODE = re.compile(r"`([^`\n]{3,80})`")
 IDENT = re.compile(r"\b(?:[A-Za-z_][A-Za-z0-9]*_[A-Za-z0-9_]+|[a-z]+[A-Z][A-Za-z0-9]+|[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+){1,})\b")
 PRNUM = re.compile(r"(?:#|\bPR\s*)\d{3,5}\b")
@@ -24,7 +26,8 @@ GENERIC = {"self", "None", "True", "False", "dict", "list", "tuple", "str", "int
            "assert", "import", "return", "async", "await", "lambda", "print", "logger", "logging", "typing",
            "Optional", "Union", "TODO", "kwargs", "args", "init", "__init__", "pytest", "torch", "numpy", "vLLM",
            "vllm", "LMCache", "lmcache", "README", "TypeError", "ValueError", "RuntimeError", "KeyError",
-           "NotImplementedError", "Exception", "dataclass", "property", "staticmethod", "classmethod"}
+           "NotImplementedError", "Exception", "dataclass", "property", "staticmethod", "classmethod",
+           NAME, NAME.lower()}
 
 
 def names_in(text: str) -> set[str]:

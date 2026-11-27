@@ -48,6 +48,7 @@ class Config:
     vllm: pathlib.Path = _default("LMREVIEW_VLLM", "vllm", _ROOT / "data" / "vllm", _CACHE / "vllm")
 
 
-PROMPTS = pathlib.Path(__file__).resolve().parent / "prompts"
+# reviewer.md, rulecheck.md, rulepick.md: LMCache's in the package; another project's from its `watch` home
+PROMPTS = pathlib.Path(_setting("LMREVIEW_PROMPTS", "prompts") or pathlib.Path(__file__).resolve().parent / "prompts")
 RULES = pathlib.Path(__file__).resolve().parent / "rules"  # distilled rulebooks, versioned in git
 REPO_URLS = {"repo": f"https://github.com/{os.environ.get('LMREVIEW_GH_REPO', 'LMCache/LMCache')}.git", "vllm": "https://github.com/vllm-project/vllm.git"}

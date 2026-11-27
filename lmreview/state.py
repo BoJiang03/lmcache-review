@@ -501,7 +501,7 @@ def status() -> str:
     if n:
         L.append("size (active entries, words, comments explained; fewer words per comment = more general): "
                  + " | ".join(f"{vname(v)}: " + ", ".join(map(str, book_size(load_book(vname(v)))))
-                              for v in range(max(1, n - 3), n + 1)))
+                              for v in range(max(1, n - 3), n + 1) if book_path(vname(v)).exists()))  # a seeded state starts above v0001
     return "\n".join(L)
 
 
@@ -534,14 +534,33 @@ def clear_candidate() -> None:
     shutil.rmtree(STATE / "candidate", ignore_errors=True)
 
 
-def init(book: str, note: str = "") -> int:
+def init(book: str, note: str = "", seeded_from: str | None = None) -> int:
     """Start the state as v0001 (only when there is no state yet) from rulebook `book`: a .jsonl path (an
-    empty file starts from no entries), or a name under rules/."""
+    empty file starts from no entries), or a name under rules/. `seeded_from` says where the book came from
+    when it is another repository's ("LMCache/LMCache v0036"); book_label shows it."""
     if head():
         raise RuntimeError(f"state already at {vname(head())}")
     p = pathlib.Path(book) if book.endswith(".jsonl") else RULES / f"{book}.jsonl"
     with lock():
-        return new_version([json.loads(l) for l in p.open() if l.strip()], None, by="init", **{"from": str(p)}, note=note)
+        return new_version([json.loads(l) for l in p.open() if l.strip()], None, by="init", **{"from": str(p)},
+                           note=note, **({"seeded_from": seeded_from} if seeded_from else {}))
+
+
+def book_label(name: str | None) -> str:
+    """Whose rulebook `name` is, for people: "<owner>/<repo> vNNNN". Each repository learns its own book
+    and numbers its versions from v0001, so a version number alone does not say which book it is."""
+    from .github import REPO_NAME, REPO_OWNER
+    if not name:
+        return "no rulebook"
+    if not _VER.fullmatch(name):
+        return name  # a rulebook under rules/ or a candidate
+    return f"{REPO_OWNER}/{REPO_NAME} {name}"
+
+
+def book_seed() -> str | None:
+    """The other repository's book this state started from ("LMCache/LMCache v0036"), if any (init --seeded-from)."""
+    first = min((int(p.stem[1:]) for p in (STATE / "history").glob("v*.jsonl")), default=None)
+    return version_meta(first).get("seeded_from") if first else None
 
 
 def discard() -> str:
@@ -966,9 +985,26 @@ def vet_step(max_cost: float | None = None, reps: int | None = None, everything:
             t = rows[i]["tries"][-1]
             note(f"  {'needs_human' if i in out['needs_human'] else 'retry later'} #{rows[i]['pr']}@{rows[i]['commit'][:8]} "
                  f"c{i}: {t['why']}", "drop" if i in out["needs_human"] else "change")
-        return (report + (f"\n\n{comp}" if comp else "") + f"\n\n{'promoted ' + vname(n) if changed else 'no change kept; book stays ' + vname(n)}: "
-                + ", ".join(f"{k} {len(v)}" for k, v in out.items())
-                + ("; failed comments stay to_distill: `lmreview distill` tries again" if out["failed"] else ""))
+        msg = (report + (f"\n\n{comp}" if comp else "") + f"\n\n{'promoted ' + vname(n) if changed else 'no change kept; book stays ' + vname(n)}: "
+               + ", ".join(f"{k} {len(v)}" for k, v in out.items())
+               + ("; failed comments stay to_distill: `lmreview distill` tries again" if out["failed"] else ""))
+        hit = compress_hit(par, kept, rows) if changed and c.get("kind") == "compress" else set()
+    if hit and get("retain", "on"):  # vet checked a sample of them once: production must still catch each every time
+        note(f"compress changed the entries behind {len(hit)} retained points: retain them on {vname(n)}")
+        msg += "\n" + retain_step(max_cost=get("budget", "retain"), keys=hit, cfg=cfg)
+    return msg
+
+
+def compress_hit(old: dict[str, dict], new: list[dict], rows: dict) -> set:
+    """Retained resolved ledger rows whose entries (in the book before a compress, `old` by id) the compress
+    changed: merged, retired, rewritten or trimmed. vet replays only [vet] side_per_entry of each entry's
+    points, once; these are all of them, for retain_step."""
+    txt = lambda r: (r.get("status", "active"), r.get("when"), r.get("expect"))  # noqa: E731
+    now = {r["id"]: r for r in new}
+    changed = {i for i, r in old.items() if r.get("status", "active") == "active" and (i not in now or txt(now[i]) != txt(r))}
+    book = list(old.values())
+    return {r["comment"] for r in rows.values() if r["status"] == "resolved" and r.get("retained")
+            and set(entries_of(r, book)) & changed}
 
 
 def confirm_misses(rv: str, new: list[int | str], max_cost: float, cfg: Config | None = None,

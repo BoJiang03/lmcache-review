@@ -17,11 +17,19 @@ import json
 import pathlib
 import re
 import subprocess
+import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-RAW = ROOT / "data" / "raw" / "pr"
-GIT = ROOT / "data" / "LMCache"
-OUT = ROOT / "data" / "dataset"
+sys.path.insert(0, str(ROOT))
+from lmreview.config import Config  # noqa: E402
+from lmreview.github import REPO_NAME, REPO_OWNER  # noqa: E402
+from lmreview.history import AI_MARK  # noqa: E402
+from lmreview.settings import get  # noqa: E402
+
+RAW = Config().data / "raw" / "pr"
+GIT = Config().repo
+OUT = Config().data / "dataset"
+PR_URL = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/pull"
 MARGIN = 3
 
 AI_BOTS = {"gemini-code-assist", "copilot-pull-request-reviewer", "Copilot", "cursor",
@@ -78,7 +86,8 @@ def is_bot(node: dict) -> bool:
     """True if the author is a bot account."""
     a = node.get("author") or {}
     lg = a.get("login") or ""
-    return a.get("__typename") == "Bot" or lg.endswith("[bot]") or lg in AI_BOTS
+    return (a.get("__typename") == "Bot" or lg.endswith("[bot]") or lg in AI_BOTS
+            or AI_MARK in (node.get("body") or ""))  # posted by `lmreview watch --post`
 
 
 def bot_name(lg: str) -> str:
@@ -87,17 +96,17 @@ def bot_name(lg: str) -> str:
 
 
 def split_of(created: str) -> str:
-    """Time-based split by PR creation date (UTC)."""
+    """Time-based split by PR creation date (UTC); the dates are [dataset] in config.toml."""
     d = created[:10]
-    if d < "2026-09-01":
+    if d < get("dataset", "train_before"):
         return "train"
-    if d < "2026-11-01":
+    if d < get("dataset", "test_before"):
         return "test"
-    return "new"
+    return str(get("dataset", "after"))
 
 
 def git(*args: str) -> subprocess.CompletedProcess:
-    """Run git in the LMCache clone."""
+    """Run git in the repository clone."""
     return subprocess.run(["git", "-C", str(GIT), *args], capture_output=True, text=True)
 
 
@@ -215,7 +224,7 @@ def main() -> None:
                 "pr_author_replied": any(login(r) == author for r in replies),
                 "replies": [{"author": login(r), "body": r["body"][:500]} for r in replies[:5]],
                 "addressed": addressed, "addressed_reason": why,
-                "url": f"https://github.com/LMCache/LMCache/pull/{n}#discussion_r{root['databaseId']}",
+                "url": f"{PR_URL}/{n}#discussion_r{root['databaseId']}",
             })
         # Review summary bodies and PR conversation comments (no line anchor).
         for r in pr["reviews"]["nodes"]:
@@ -227,7 +236,7 @@ def main() -> None:
                     "is_pr_author": lg == author, "created": r.get("submittedAt"),
                     "review_state": r["state"], "commit": (r.get("commit") or {}).get("oid"),
                     "body": r["body"],
-                    "url": f"https://github.com/LMCache/LMCache/pull/{n}#pullrequestreview-{r['databaseId']}",
+                    "url": f"{PR_URL}/{n}#pullrequestreview-{r['databaseId']}",
                 })
         for c in pr["comments"]["nodes"]:
             lg = login(c)
@@ -235,7 +244,7 @@ def main() -> None:
                 "pr": n, "id": c["databaseId"], "kind": "pr_comment", "author": lg,
                 "is_bot": is_bot(c), "bot": bot_name(lg) if is_bot(c) else None,
                 "is_pr_author": lg == author, "created": c["createdAt"], "body": c["body"],
-                "url": f"https://github.com/LMCache/LMCache/pull/{n}#issuecomment-{c['databaseId']}",
+                "url": f"{PR_URL}/{n}#issuecomment-{c['databaseId']}",
             })
 
     (OUT / "prs.jsonl").write_text("".join(json.dumps(r) + "\n" for r in prs_out))

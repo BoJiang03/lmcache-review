@@ -72,14 +72,12 @@ def anchor(loc: Location, lines: dict[tuple[str, str], dict[int, int]]) -> dict 
     return a
 
 
-def found_by(f: Finding, parallel: int) -> str:
-    """Which agent raised `f` in a review with a rule check (-rc): ids are "1.*" (main review) and
-    "2.*" (rule check); a finding both raised has support 2."""
-    if parallel < 2:
-        return ""
-    if (f.support or 1) >= 2:
-        return "main review and rule check"
-    return "rule check" if f.id.startswith("2.") else "main review"
+def basis(f: Finding) -> str:
+    """What a finding rests on, for the author: the team rules it follows, or the reviewer's own judgement.
+    (Which agent raised it is not said: the main review is given the rules too, so it can raise a rule's
+    finding, and the rule check only raises them.)"""
+    rs = f.rules or ([f.rule] if f.rule else [])
+    return ("team rule " + ", ".join(f"`{r}`" for r in rs)) if rs else "general review"
 
 
 def _link(repo: str, commit: str, loc: Location) -> str:
@@ -88,17 +86,16 @@ def _link(repo: str, commit: str, loc: Location) -> str:
     return f"[`{where}`](https://github.com/{repo}/blob/{commit}/{loc.path}{frag})"
 
 
-def finding_text(f: Finding, rules: dict[str, dict], repo: str, commit: str, parallel: int, heading: str,
+def finding_text(f: Finding, rules: dict[str, dict], repo: str, commit: str, heading: str,
                  at: Location | None = None) -> str:
     """The markdown of one finding (an inline comment, or a section of the summary); `at`: the location the
     inline comment is on (every other location is linked)."""
-    by = found_by(f, parallel)
-    out = [f"{heading}**[{f.severity}] {f.title}**" + (f" · <sub>found by {by}</sub>" if by else ""), "", f.body]
+    out = [f"{heading}**[{f.severity}] {f.title}** · <sub>{basis(f)}</sub>", "", f.body]
     if f.suggestion:
         out += ["", f"**Suggestion:** {f.suggestion}"]
     for rid in f.rules or ([f.rule] if f.rule else []):
         x = rules.get(rid)
-        out += ["", f"**Team rule** `{rid}`" + (f": when {x.get('when') or x.get('rule', '')}" if x else "")]
+        out += ["", f"**Team rule** `{rid}`" + (f" applies when: {x.get('when') or x.get('rule', '')}" if x else "")]
     where = [l for l in f.locations if l.role != "related" and l is not at]
     rel = [l for l in f.locations if l.role == "related"]
     if where:
@@ -119,7 +116,7 @@ def build(r: dict, fs: list[Finding], diff: str, rules: dict[str, dict], repo: s
     Returns:
         {"commit_id", "event": "COMMENT", "body", "comments": [{path, line, side, [start_line, start_side], body}]}
     """
-    commit, n = r["commit"], r.get("parallel") or 1
+    commit = r["commit"]
     lines = commentable(diff) if inline else {}
     fs = sorted(fs, key=lambda f: SEVERITIES.index(f.severity))
     comments, rest = [], []
@@ -127,7 +124,7 @@ def build(r: dict, fs: list[Finding], diff: str, rules: dict[str, dict], repo: s
         p = f.primary()
         a = anchor(p, lines) if p and f.scope == "line" else None
         if a:
-            comments.append(a | {"body": AI_MARK + "\n" + finding_text(f, rules, repo, commit, n, "", p)})
+            comments.append(a | {"body": AI_MARK + "\n" + finding_text(f, rules, repo, commit, "", p)})
         else:
             rest.append(f)
     counts = ", ".join(f"{k} {s}" for s in SEVERITIES if (k := sum(f.severity == s for f in fs)))
@@ -139,9 +136,9 @@ def build(r: dict, fs: list[Finding], diff: str, rules: dict[str, dict], repo: s
         body.append(f"**{len(fs)} findings**: {counts}." + (f" {len(comments)} are inline comments on the diff." if comments else ""))
         if rest:
             body += ["", "### Not tied to a line of the diff" if comments else "### Findings"]
-            body += ["\n" + finding_text(f, rules, repo, commit, n, "") for f in rest]
+            body += ["\n" + finding_text(f, rules, repo, commit, "") for f in rest]
     body += ["", "<sub>An AI first-round review: it can be wrong, so reply on a comment that is, or resolve it. "
-             + ("Each finding says which agent raised it: the main review (a full review), the rule check (the team "
-                "rules, one by one), or both. " if n > 1 else "")
+             + "Each finding says what it rests on: a team rule (learned from this team's past reviews) or "
+               "general review (the reviewer's own judgement). "
              + f"Reviewer {r.get('reviewer', '')} · ${float(r.get('cost') or 0):.2f}</sub>"]
     return {"commit_id": commit, "event": "COMMENT", "body": "\n".join(body), "comments": comments}

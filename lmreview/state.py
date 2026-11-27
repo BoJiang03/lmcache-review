@@ -547,17 +547,20 @@ def init(book: str, note: str = "", seeded_from: str | None = None) -> int:
 
 
 def book_label(name: str | None) -> str:
-    """Whose rulebook `name` is, for people: "<owner>/<repo> vNNNN", plus "(seeded from ...)" when this
-    state started from another repository's book. Each repository learns its own book and numbers its
-    versions from v0001, so a version number alone does not say which book it is."""
+    """Whose rulebook `name` is, for people: "<owner>/<repo> vNNNN". Each repository learns its own book
+    and numbers its versions from v0001, so a version number alone does not say which book it is."""
     from .github import REPO_NAME, REPO_OWNER
     if not name:
         return "no rulebook"
     if not _VER.fullmatch(name):
         return name  # a rulebook under rules/ or a candidate
+    return f"{REPO_OWNER}/{REPO_NAME} {name}"
+
+
+def book_seed() -> str | None:
+    """The other repository's book this state started from ("LMCache/LMCache v0036"), if any (init --seeded-from)."""
     first = min((int(p.stem[1:]) for p in (STATE / "history").glob("v*.jsonl")), default=None)
-    seed = version_meta(first).get("seeded_from") if first else None
-    return f"{REPO_OWNER}/{REPO_NAME} {name}" + (f" (seeded from {seed})" if seed else "")
+    return version_meta(first).get("seeded_from") if first else None
 
 
 def discard() -> str:

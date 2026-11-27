@@ -177,9 +177,11 @@ def build(r: dict, fs: list[Finding], diff: str, rules: dict[str, dict], repo: s
                                  + finding_text(f, rules, repo, commit, "", p, ids)})
         else:
             rest.append(f)
+    # where the book came from is ours to know (local review files), not the author's; older runs had it in the label
+    label = re.sub(r"\s*\(seeded from [^)]*\)", "", r.get("rules_label") or "") or "no rulebook"
     counts = ", ".join(f"{k} {s}" for s in SEVERITIES if (k := sum(f.severity == s for f in fs)))
     body = [AI_MARK, "## AI review", "",
-            f"Commit `{commit[:10]}`, checked against the team rules of **{r.get('rules_label') or 'no rulebook'}**.", ""]
+            f"Commit `{commit[:10]}`, checked against the team rules of **{label}**.", ""]
     if not fs:
         body.append("No findings.")
     else:

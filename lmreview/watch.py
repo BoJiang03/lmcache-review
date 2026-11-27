@@ -152,12 +152,36 @@ def env_for(home: pathlib.Path, repo: str) -> dict[str, str]:
 
 
 def book_url(home: pathlib.Path, book_repo: str) -> str:
-    """Where this home's rulebook versions are published: <url>/<vNNNN>.md."""
-    return f"https://github.com/{book_repo}/blob/{BOOK_BRANCH}/{home.name}"
+    """Where this home's rulebook versions are published: <url>/<vNNNN>.md (<owner>/<name>/ of the repository
+    reviewed, on BOOK_BRANCH)."""
+    return f"https://github.com/{book_repo}/blob/{BOOK_BRANCH}/{load(home)['repo']}"
+
+
+BOOK_README = """# Team review rules
+
+The rules an AI reviewer (lmreview) checks pull requests against, one book per repository:
+`<owner>/<repo>/vNNNN.md`. Each rule was learned from that team's own review comments, which are listed
+under it. A version is written once and never changed, so a review's links keep pointing at the rules it used.
+
+This branch holds only these pages; the reviewer's code is on the default branch.
+"""
+
+
+def _orphan_branch(repo: str, api) -> None:
+    """Create BOOK_BRANCH in `repo` as an orphan branch holding only BOOK_README (no code, no shared history)."""
+    def post(path: str, body: dict) -> dict:
+        p = subprocess.run(["gh", "api", "-X", "POST", f"repos/{repo}/{path}", "--input", "-"], input=json.dumps(body),
+                           capture_output=True, text=True)
+        if p.returncode:
+            raise RuntimeError(f"cannot create branch {BOOK_BRANCH} in {repo}: {p.stderr.strip()[:200]}")
+        return json.loads(p.stdout)
+    tree = post("git/trees", {"tree": [{"path": "README.md", "mode": "100644", "type": "blob", "content": BOOK_README}]})
+    commit = post("git/commits", {"message": "rulebooks: published team review rules", "tree": tree["sha"], "parents": []})
+    post("git/refs", {"ref": f"refs/heads/{BOOK_BRANCH}", "sha": commit["sha"]})
 
 
 def publish_book(home: pathlib.Path, w: dict) -> str:
-    """Publish the book in use of `home` to [book_repo] (branch BOOK_BRANCH, <home name>/<vNNNN>.md) if it is
+    """Publish the book in use of `home` to [book_repo] (branch BOOK_BRANCH, <owner>/<name>/<vNNNN>.md) if it is
     not there yet: a version's page is written once and never changed, so a review's links keep pointing at
     the rules it used. Returns what was done."""
     import base64
@@ -165,19 +189,15 @@ def publish_book(home: pathlib.Path, w: dict) -> str:
     if not repo:
         return ""
     v = f"v{json.loads((home / 'state' / 'HEAD.json').read_text())['version']:04d}"
-    path = f"{home.name}/{v}.md"
+    path = f"{w['repo']}/{v}.md"
     if path in w.setdefault("published", []):
         return ""
     api = lambda *a: subprocess.run(["gh", "api", *a], capture_output=True, text=True)  # noqa: E731
     if api(f"repos/{repo}/contents/{path}?ref={BOOK_BRANCH}").returncode == 0:  # published by an earlier run
         w["published"].append(path)
         return ""
-    if api(f"repos/{repo}/git/ref/heads/{BOOK_BRANCH}").returncode:  # first publish: the branch, from the default one
-        base = json.loads(api(f"repos/{repo}").stdout)["default_branch"]
-        sha = json.loads(api(f"repos/{repo}/git/ref/heads/{base}").stdout)["object"]["sha"]
-        p = api("-X", "POST", f"repos/{repo}/git/refs", "-f", f"ref=refs/heads/{BOOK_BRANCH}", "-f", f"sha={sha}")
-        if p.returncode:
-            raise RuntimeError(f"cannot create branch {BOOK_BRANCH} in {repo}: {p.stderr.strip()[:200]}")
+    if api(f"repos/{repo}/git/ref/heads/{BOOK_BRANCH}").returncode:  # first publish: an orphan branch of rulebooks only
+        _orphan_branch(repo, api)
     code = ("import sys; from lmreview.provenance import public_book; from lmreview.state import book_label; "
             "print(public_book(sys.argv[1], book_label(sys.argv[1])))")
     md = subprocess.run([sys.executable, "-c", code, v], env=env_for(home, w["repo"]), capture_output=True, text=True,

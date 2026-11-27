@@ -199,7 +199,8 @@ def add(repo: str, since: str | None = None, book: str | None = None, backfill: 
         repo: owner/name, readable by the `gh` login.
         since: date (YYYY-MM-DD) from which PRs are collected; default today. Their samples are learned
             only with `backfill` (default: only samples reviewed from now on).
-        book: rulebook .jsonl to start from (default: no entries).
+        book: rulebook .jsonl to start from. Default: with the LMCache prompts, the book in use of this
+            lmreview's own state (the LMCache team's rules); with any other prompts, no entries.
         prompts: "lmcache" (lmreview/prompts/, written for LMCache), "generic" (lmreview/prompts/generic/,
             for any project), or a directory with the three prompt files; "auto": lmcache for a repository
             of the LMCache organization, else generic. Other than lmcache, they are rendered into
@@ -231,11 +232,18 @@ def add(repo: str, since: str | None = None, book: str | None = None, backfill: 
         render_prompts(src, home / "prompts", name, about)
     (home / "config.toml").write_text(overlay(branch, since, (name, about) if src else None,
                                               home / "prompts" if src else None))
-    empty = home / "empty-book.jsonl"
+    note = f"lmreview watch add {repo}"
+    if book is None and src is None:  # the LMCache prompts: start from the LMCache team's book in use
+        from . import state
+        n = state.head()
+        if n:
+            book = str(home / f"seed-{state.vname(n)}.jsonl")
+            shutil.copy(state.book_path(state.vname(n)), book)
+            note += f"; seeded from {state.STATE} {state.vname(n)}"
     if book is None:
-        empty.write_text("")
-    code, out = lmreview(home, repo, ["init", str(pathlib.Path(book).resolve()) if book else str(empty),
-                                      "--note", f"lmreview watch add {repo}"], "init")
+        book = str(home / "empty-book.jsonl")
+        pathlib.Path(book).write_text("")
+    code, out = lmreview(home, repo, ["init", str(pathlib.Path(book).resolve()), "--note", note], "init")
     if code:
         raise RuntimeError(f"init failed:\n{out}")
     w = {"repo": info["nameWithOwner"], "branch": branch, "since": since, "prompts": prompts,

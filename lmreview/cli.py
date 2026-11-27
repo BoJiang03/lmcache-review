@@ -113,8 +113,8 @@ def main(argv: list[str] | None = None) -> None:
     i = sub.add_parser("init", help="start the state as v0001 from a rulebook .jsonl (an empty file: no entries)")
     i.add_argument("book")
     i.add_argument("--note", default="")
-    i.add_argument("--version", type=int, help="number of the first version (default 1): a book copied from another "
-                   "state keeps its number")
+    i.add_argument("--seeded-from", help="where the book comes from, when it is another repository's "
+                   "(e.g. 'LMCache/LMCache v0036'); shown with the reviewer")
 
     d = sub.add_parser("distill", help="ledger to_distill comments -> candidate book (paid)")
     d.add_argument("--compress", action="store_true", help="run even with nothing to_distill, "
@@ -182,7 +182,7 @@ def main(argv: list[str] | None = None) -> None:
         elif a.cmd == "discard":
             print(state.discard())
         else:
-            print(f"book in use: {state.vname(state.init(a.book, a.note, a.version))}")
+            print(f"book in use: {state.vname(state.init(a.book, a.note, a.seeded_from))}")
     elif a.cmd == "retain":
         if a.covered and not a.reviewer:
             sys.exit("retain --covered needs --reviewer with the main review: a rule check alone cannot find covered points")

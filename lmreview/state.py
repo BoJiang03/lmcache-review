@@ -170,14 +170,9 @@ def book_markdown(rules: list[dict], name: str) -> str:
     return "\n".join(L) + "\n"
 
 
-def new_version(rules: list[dict], parent: int | None, number: int | None = None, **meta: object) -> int:
-    """Write `rules` as the next version (or as `number`, only for the first version of a state) and make
-    it the book in use. Returns its number."""
+def new_version(rules: list[dict], parent: int | None, **meta: object) -> int:
+    """Write `rules` as the next version and make it the book in use. Returns its number."""
     n = max([int(p.stem[1:]) for p in (STATE / "history").glob("v*.jsonl")] or [0]) + 1
-    if number is not None:
-        if n != 1 or number < 1:
-            raise ValueError(f"a version number can be chosen only for the first version of a state (next is {vname(n)})")
-        n = number
     _write(STATE / "history" / f"{vname(n)}.jsonl", _jsonl(rules))
     made_with = {k: settings()[k] for k in ("review", "judge", "annotate", "distill", "vet")}
     _write(_meta(STATE / "history" / f"{vname(n)}.jsonl"), json.dumps({"version": n, "parent": parent, "date": _now(),
@@ -539,16 +534,30 @@ def clear_candidate() -> None:
     shutil.rmtree(STATE / "candidate", ignore_errors=True)
 
 
-def init(book: str, note: str = "", version: int | None = None) -> int:
-    """Start the state as v0001, or as `version` (a book copied from another state keeps its number), only
-    when there is no state yet, from rulebook `book`: a .jsonl path (an empty file starts from no entries),
-    or a name under rules/."""
+def init(book: str, note: str = "", seeded_from: str | None = None) -> int:
+    """Start the state as v0001 (only when there is no state yet) from rulebook `book`: a .jsonl path (an
+    empty file starts from no entries), or a name under rules/. `seeded_from` says where the book came from
+    when it is another repository's ("LMCache/LMCache v0036"); book_label shows it."""
     if head():
         raise RuntimeError(f"state already at {vname(head())}")
     p = pathlib.Path(book) if book.endswith(".jsonl") else RULES / f"{book}.jsonl"
     with lock():
-        return new_version([json.loads(l) for l in p.open() if l.strip()], None, version, by="init",
-                           **{"from": str(p)}, note=note)
+        return new_version([json.loads(l) for l in p.open() if l.strip()], None, by="init", **{"from": str(p)},
+                           note=note, **({"seeded_from": seeded_from} if seeded_from else {}))
+
+
+def book_label(name: str | None) -> str:
+    """Whose rulebook `name` is, for people: "<owner>/<repo> vNNNN", plus "(seeded from ...)" when this
+    state started from another repository's book. Each repository learns its own book and numbers its
+    versions from v0001, so a version number alone does not say which book it is."""
+    from .github import REPO_NAME, REPO_OWNER
+    if not name:
+        return "no rulebook"
+    if not _VER.fullmatch(name):
+        return name  # a rulebook under rules/ or a candidate
+    first = min((int(p.stem[1:]) for p in (STATE / "history").glob("v*.jsonl")), default=None)
+    seed = version_meta(first).get("seeded_from") if first else None
+    return f"{REPO_OWNER}/{REPO_NAME} {name}" + (f" (seeded from {seed})" if seed else "")
 
 
 def discard() -> str:

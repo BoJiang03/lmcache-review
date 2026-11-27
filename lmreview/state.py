@@ -170,9 +170,14 @@ def book_markdown(rules: list[dict], name: str) -> str:
     return "\n".join(L) + "\n"
 
 
-def new_version(rules: list[dict], parent: int | None, **meta: object) -> int:
-    """Write `rules` as the next version and make it the book in use. Returns its number."""
+def new_version(rules: list[dict], parent: int | None, number: int | None = None, **meta: object) -> int:
+    """Write `rules` as the next version (or as `number`, only for the first version of a state) and make
+    it the book in use. Returns its number."""
     n = max([int(p.stem[1:]) for p in (STATE / "history").glob("v*.jsonl")] or [0]) + 1
+    if number is not None:
+        if n != 1 or number < 1:
+            raise ValueError(f"a version number can be chosen only for the first version of a state (next is {vname(n)})")
+        n = number
     _write(STATE / "history" / f"{vname(n)}.jsonl", _jsonl(rules))
     made_with = {k: settings()[k] for k in ("review", "judge", "annotate", "distill", "vet")}
     _write(_meta(STATE / "history" / f"{vname(n)}.jsonl"), json.dumps({"version": n, "parent": parent, "date": _now(),
@@ -501,7 +506,7 @@ def status() -> str:
     if n:
         L.append("size (active entries, words, comments explained; fewer words per comment = more general): "
                  + " | ".join(f"{vname(v)}: " + ", ".join(map(str, book_size(load_book(vname(v)))))
-                              for v in range(max(1, n - 3), n + 1)))
+                              for v in range(max(1, n - 3), n + 1) if book_path(vname(v)).exists()))  # a seeded state starts above v0001
     return "\n".join(L)
 
 
@@ -534,14 +539,16 @@ def clear_candidate() -> None:
     shutil.rmtree(STATE / "candidate", ignore_errors=True)
 
 
-def init(book: str, note: str = "") -> int:
-    """Start the state as v0001 (only when there is no state yet) from rulebook `book`: a .jsonl path (an
-    empty file starts from no entries), or a name under rules/."""
+def init(book: str, note: str = "", version: int | None = None) -> int:
+    """Start the state as v0001, or as `version` (a book copied from another state keeps its number), only
+    when there is no state yet, from rulebook `book`: a .jsonl path (an empty file starts from no entries),
+    or a name under rules/."""
     if head():
         raise RuntimeError(f"state already at {vname(head())}")
     p = pathlib.Path(book) if book.endswith(".jsonl") else RULES / f"{book}.jsonl"
     with lock():
-        return new_version([json.loads(l) for l in p.open() if l.strip()], None, by="init", **{"from": str(p)}, note=note)
+        return new_version([json.loads(l) for l in p.open() if l.strip()], None, version, by="init",
+                           **{"from": str(p)}, note=note)
 
 
 def discard() -> str:

@@ -1,4 +1,5 @@
-"""lmreview: AI first-round PR review for LMCache, as a library and a CLI.
+"""lmreview: AI pull-request review for any GitHub repository, with rules learned from its own reviewers,
+as a library and a CLI (this checkout's own repository is LMCache/LMCache; others via `lmreview watch`).
 
     from lmreview import review_pr, to_markdown
     print(to_markdown(review_pr(5876)))

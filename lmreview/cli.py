@@ -11,7 +11,7 @@
 
 A reviewer is named <prompt>[+<book>][@<effort>][-rc|-ro]; the default is the current prompt
 (prompts/reviewer.md) with the book in use. Paid commands stop starting new LLM calls once
---max-cost is reached (0 = print the plan). Nothing is posted to GitHub.
+--max-cost is reached (0 = print the plan). Only `watch` with --post writes to GitHub.
 """
 
 from __future__ import annotations
@@ -26,6 +26,33 @@ from .settings import get
 EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 
 
+def _review_target(a: argparse.Namespace, argv: list[str] | None) -> int:
+    """The PR number of `review`. When the PR (a link, or --repo) belongs to another repository than this
+    state's, rerun the command in that repository's `watch` home (its own book, prompts and clone) and exit."""
+    import os
+    import re
+    import subprocess
+    from . import github
+    m = re.fullmatch(r"(?:https?://)?github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)(?:[/?#].*)?", a.pr.strip())
+    if not m and not a.pr.isdigit():
+        sys.exit(f"not a PR number or link: {a.pr}")
+    repo, n = (m[1], int(m[2])) if m else (a.repo, int(a.pr))
+    repo = repo or a.repo
+    here = f"{github.REPO_OWNER}/{github.REPO_NAME}"
+    if not repo or repo.lower() == here.lower():
+        return n
+    from . import watch
+    home = watch.home_of(repo)
+    if not (home / "watch.json").exists():
+        sys.exit(f"{repo} has no lmreview state yet: run `lmreview watch add {repo}` first (free; it sets up its "
+                 f"own rulebook, prompts and clone), then review again")
+    rest = list(argv if argv is not None else sys.argv[1:])
+    rest = [x for i, x in enumerate(rest) if x != a.pr and x != "--repo" and (i == 0 or rest[i - 1] != "--repo")
+            and not x.startswith("--repo=")]
+    rest.insert(rest.index("review") + 1, str(n))
+    sys.exit(subprocess.run([sys.executable, "-m", "lmreview", *rest], env=watch.env_for(home, watch.load(home)["repo"])).returncode)
+
+
 def main(argv: list[str] | None = None) -> None:
     """Parse arguments and dispatch to the library."""
     ap = argparse.ArgumentParser(prog="lmreview", description=__doc__,
@@ -36,7 +63,10 @@ def main(argv: list[str] | None = None) -> None:
         "--since", help="ISO date/time; default: last sync")
 
     r = sub.add_parser("review", help="review one PR now (paid)")
-    r.add_argument("pr", type=int, help="review this PR as it is now (local output only)")
+    r.add_argument("pr", help="PR number, or its link (https://github.com/OWNER/NAME/pull/N): review it as it is "
+                   "now (local output only)")
+    r.add_argument("--repo", help="OWNER/NAME of the PR (default: the link's, else this state's repository); a "
+                   "repository other than this state's must have been added with `lmreview watch add`")
     r.add_argument("--commit", help="with a PR: review this commit instead of the head")
     r.add_argument("--format", default="md", choices=["md", "json"])
     r.add_argument("--reviewer", default=DEFAULT_REVIEWER)
@@ -176,6 +206,7 @@ def main(argv: list[str] | None = None) -> None:
         from .sync import sync
         print(sync(a.since))
     elif a.cmd == "review":
+        a.pr = _review_target(a, argv)
         from .reviewer import review_pr, to_markdown
         out = review_pr(a.pr, a.commit, a.reviewer)
         md = to_markdown(out)

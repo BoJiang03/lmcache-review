@@ -12,8 +12,6 @@ It started with LMCache, so this checkout's defaults
 (`lmreview/config.toml`, `lmreview/state/`) are LMCache's, and any other repository gets its own with
 `lmreview watch add`.
 
-Proposal: https://claude.ai/artifact/TtFYk2eZWjUi13YxCnf9tt
-
 ## Quick start
 
 Needs `claude` (logged in; reviews bill your account), `gh` (`gh auth login`), `git` and Python 3.10+.

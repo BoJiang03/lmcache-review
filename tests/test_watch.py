@@ -323,7 +323,7 @@ def test_book_links() -> None:
     assert "[**o/r v0002**](https://b/o__r/v0002.md)" in p["body"]
     assert p["comments"][0]["body"].count("[`Ab-1`](https://b/o__r/v0002.md#ab-1)") == 2  # the label and the rule's text
     home, _ = new_home(book_repo="me/pub")
-    assert watch.env_for(home, "o/r")["LMREVIEW_BOOK_URL"] == f"https://github.com/me/pub/blob/rulebooks/{home.name}"
+    assert watch.env_for(home, "o/r")["LMREVIEW_BOOK_URL"] == "https://github.com/me/pub/blob/rulebooks/o/r"
     home2, _ = new_home()
     assert "LMREVIEW_BOOK_URL" not in watch.env_for(home2, "o/r")
 

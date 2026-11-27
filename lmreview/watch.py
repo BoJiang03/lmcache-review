@@ -347,6 +347,58 @@ def post_review(repo: str, n: int, out: pathlib.Path) -> tuple[str | None, str]:
     return None, why
 
 
+RETRACTED = "*This AI review was retracted.*"
+
+
+def retract(repo: str, n: int, review_id: int | None = None) -> str:
+    """Take back the AI reviews on PR `n` (or just `review_id`). GitHub does not delete a submitted review, so:
+    delete its inline comments, replace its summary with one line, and minimize it as outdated. Only
+    reviews carrying history.AI_MARK are touched."""
+    from .history import AI_MARK
+    api = lambda *a: subprocess.run(["gh", "api", *a], capture_output=True, text=True)  # noqa: E731
+    p = api("--paginate", f"repos/{repo}/pulls/{n}/reviews")
+    if p.returncode:
+        raise RuntimeError(p.stderr.strip())
+    reviews = [r for r in json.loads(p.stdout) if AI_MARK in (r.get("body") or "")
+               and (review_id is None or r["id"] == review_id) and RETRACTED not in r["body"]]
+    if not reviews:
+        return f"#{n}: no AI review to retract"
+    comments = json.loads(api("--paginate", f"repos/{repo}/pulls/{n}/comments").stdout or "[]")
+    out = []
+    for r in reviews:
+        mine = [c for c in comments if c.get("pull_request_review_id") == r["id"] and AI_MARK in (c.get("body") or "")]
+        bad = [c["id"] for c in mine if api("-X", "DELETE", f"repos/{repo}/pulls/comments/{c['id']}").returncode]
+        api("-X", "PUT", f"repos/{repo}/pulls/{n}/reviews/{r['id']}", "-f", f"body={AI_MARK}\n{RETRACTED}")
+        m = api("graphql", "-f", "query=mutation($id: ID!) { minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) "
+                "{ minimizedComment { isMinimized } } }", "-f", f"id={r['node_id']}")
+        out.append(f"#{n} review {r['id']}: {len(mine) - len(bad)}/{len(mine)} inline comments deleted, summary replaced, "
+                   + ("minimized" if m.returncode == 0 else f"not minimized ({m.stderr.strip()[:100]})"))
+    return "\n".join(out)
+
+
+def repost(repo: str, n: int) -> str:
+    """Post the saved review of PR `n`'s current head again, rendered as the code renders it now (no new review run)."""
+    home = home_of(repo)
+    w = load(home)
+    rec = w["reviewed"].get(str(n)) or {}
+    if not rec.get("ok"):
+        raise RuntimeError(f"#{n} has no saved review")
+    out = home / "reviews" / f"{n}-{rec['commit'][:8]}"
+    code = ("import json, pathlib, sys; from lmreview.reviewer import github_review; o = sys.argv[1]; "
+            "r = json.load(open(o + '.json')); "
+            "[pathlib.Path(o + s).write_text(json.dumps(github_review(r, i), indent=1)) "
+            "for s, i in (('.ghreview.json', True), ('.ghreview-flat.json', False))]")
+    p = subprocess.run([sys.executable, "-c", code, str(out)], env=env_for(home, w["repo"]), capture_output=True, text=True)
+    if p.returncode:
+        raise RuntimeError(p.stderr.strip()[-500:])
+    url, why = post_review(w["repo"], n, out)
+    if not url:
+        raise RuntimeError(f"post failed: {why}")
+    rec["posted"] = url
+    save(home, w)
+    return f"#{n}: posted {url}"
+
+
 def _jsonl(p: pathlib.Path) -> list[dict]:
     return [json.loads(l) for l in p.open() if l.strip()] if p.exists() else []
 

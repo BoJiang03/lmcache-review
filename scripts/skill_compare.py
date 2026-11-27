@@ -48,7 +48,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from lmreview import llm  # noqa: E402
 from lmreview.config import Config  # noqa: E402
-from lmreview.reviewer import drop_repeats, reviewer_context, run_reviewer  # noqa: E402
+from lmreview.reviewer import drop_repeats, parse_reviewer, reviewer_context, run_reviewer  # noqa: E402
 from lmreview.runs import run_models  # noqa: E402
 from lmreview.schema import load_findings  # noqa: E402
 from lmreview.score import WANT, load_gold, score_one  # noqa: E402
@@ -450,7 +450,7 @@ def blind(run: dict, seed: int = 0) -> tuple[dict, dict]:
         out.append({"id": f"F{n}", "severity": "minor", "title": f.title, "body": f.body,
                     **({"path": loc.path, "line": loc.start} if loc else {})})
         mp[f"F{n}"] = f.id
-    judged = {"pr": run["pr"], "commit": run["commit"], "version": REVIEWER.split("+")[0],
+    judged = {"pr": run["pr"], "commit": run["commit"], "version": parse_reviewer(REVIEWER)[0],
               "findings": out if run.get("findings") is not None else None}
     return judged, mp
 

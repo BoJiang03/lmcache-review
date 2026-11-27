@@ -966,9 +966,26 @@ def vet_step(max_cost: float | None = None, reps: int | None = None, everything:
             t = rows[i]["tries"][-1]
             note(f"  {'needs_human' if i in out['needs_human'] else 'retry later'} #{rows[i]['pr']}@{rows[i]['commit'][:8]} "
                  f"c{i}: {t['why']}", "drop" if i in out["needs_human"] else "change")
-        return (report + (f"\n\n{comp}" if comp else "") + f"\n\n{'promoted ' + vname(n) if changed else 'no change kept; book stays ' + vname(n)}: "
-                + ", ".join(f"{k} {len(v)}" for k, v in out.items())
-                + ("; failed comments stay to_distill: `lmreview distill` tries again" if out["failed"] else ""))
+        msg = (report + (f"\n\n{comp}" if comp else "") + f"\n\n{'promoted ' + vname(n) if changed else 'no change kept; book stays ' + vname(n)}: "
+               + ", ".join(f"{k} {len(v)}" for k, v in out.items())
+               + ("; failed comments stay to_distill: `lmreview distill` tries again" if out["failed"] else ""))
+        hit = compress_hit(par, kept, rows) if changed and c.get("kind") == "compress" else set()
+    if hit and get("retain", "on"):  # vet checked a sample of them once: production must still catch each every time
+        note(f"compress changed the entries behind {len(hit)} retained points: retain them on {vname(n)}")
+        msg += "\n" + retain_step(max_cost=get("budget", "retain"), keys=hit, cfg=cfg)
+    return msg
+
+
+def compress_hit(old: dict[str, dict], new: list[dict], rows: dict) -> set:
+    """Retained resolved ledger rows whose entries (in the book before a compress, `old` by id) the compress
+    changed: merged, retired, rewritten or trimmed. vet replays only [vet] side_per_entry of each entry's
+    points, once; these are all of them, for retain_step."""
+    txt = lambda r: (r.get("status", "active"), r.get("when"), r.get("expect"))  # noqa: E731
+    now = {r["id"]: r for r in new}
+    changed = {i for i, r in old.items() if r.get("status", "active") == "active" and (i not in now or txt(now[i]) != txt(r))}
+    book = list(old.values())
+    return {r["comment"] for r in rows.values() if r["status"] == "resolved" and r.get("retained")
+            and set(entries_of(r, book)) & changed}
 
 
 def confirm_misses(rv: str, new: list[int | str], max_cost: float, cfg: Config | None = None,

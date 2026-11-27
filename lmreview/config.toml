@@ -51,7 +51,8 @@ reps = 1               # runs per replayed case and book
 # "Learned" means the production reviewer catches it every time (2026-11-26): `lmreview retain` (and round,
 # after each judge and vet) re-runs the rule check of the current prompt and book (-ro, see state.retain_reviewer)
 # on the samples of covered / resolved points `reps` times, judges against every point, and sends a point
-# caught in fewer than all runs back to to_distill.
+# caught in fewer than all runs back to to_distill. After a compress passes vet, every retained point behind an
+# entry it changed is retained again (vet replays only side_per_entry of them, once).
 on = true
 reps = 2
 

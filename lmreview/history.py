@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from .asof import as_of
 
-# Marks a review `lmreview watch --post` put on a PR: it is the AI's, not the team's, so it is left out of
-# the discussion the agents see and of the human comments learned from (src/derive.py is_bot).
+# Marks what `lmreview watch --post` puts on a PR (a review's summary and each of its inline comments): it is
+# the AI's, not the team's, so it is left out of the discussion the agents see and of the human comments
+# learned from (src/derive.py is_bot).
 AI_MARK = "<!-- lmreview: AI review -->"
 
 
@@ -28,13 +29,13 @@ def format_history(raw: dict, before: str | None = None) -> str:
     ev = []
     for t in raw["reviewThreads"]["nodes"]:
         cs = [c for c in t["comments"]["nodes"] if ok(c["createdAt"])]
-        if cs:
+        if cs and AI_MARK not in (cs[0].get("body") or ""):  # a thread on an AI comment: left out with it
             root = cs[0]
             lines = [f"- `{root['path']}` line {root.get('originalLine')} — thread:"]
             lines += [f"  - {_who(c)}: {c['body'][:1200]}" for c in cs]
             ev.append((root["createdAt"], "\n".join(lines)))
     for r in raw["reviews"]["nodes"]:
-        if r.get("submittedAt") and ok(r["submittedAt"]) and (r.get("body") or "").strip():
+        if r.get("submittedAt") and ok(r["submittedAt"]) and (r.get("body") or "").strip() and AI_MARK not in r["body"]:
             ev.append((r["submittedAt"], f"- review by {_who(r)} ({r['state']}): {r['body'][:1500]}"))
     for c in raw["comments"]["nodes"]:
         if ok(c["createdAt"]) and AI_MARK not in (c.get("body") or ""):

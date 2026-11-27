@@ -475,6 +475,17 @@ def review_pr(pr: int, commit: str | None = None, reviewer: str = DEFAULT_REVIEW
             "rules_label": book_label(parse_reviewer((out.get("reviewer") or reviewer).split("#")[0])[1]), **out}
 
 
+def github_review(r: dict, inline: bool = True, cfg: Config | None = None) -> dict:
+    """review_pr's result `r` as a GitHub review payload (ghreview.build): a summary and inline comments."""
+    from . import ghreview
+    cfg = cfg or Config()
+    book = parse_reviewer(r["reviewer"].split("#")[0])[1] if r.get("reviewer") else None
+    rules = {x["id"]: x for x in load_rules(book)} if book else {}
+    diff = subprocess.run(["git", "-C", str(cfg.repo), "diff", "-U3", "-M", "--no-color", r["base"], r["commit"]],
+                          capture_output=True, text=True, check=True).stdout
+    return ghreview.build(r, load_findings(r) or [], diff, rules, r.get("repo") or f"{github.REPO_OWNER}/{github.REPO_NAME}", inline)
+
+
 def to_markdown(r: dict) -> str:
     """Render a review: blocker/major in full, minor/nit folded; each item shows scope and places."""
     head = [f"# AI review of #{r['pr']}: {r.get('title', '')}", "",

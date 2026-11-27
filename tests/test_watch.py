@@ -171,6 +171,82 @@ def test_book_label() -> None:
         out.stdout + out.stderr
 
 
+DIFF = """diff --git a/a.py b/a.py
+--- a/a.py
++++ b/a.py
+@@ -10,4 +10,5 @@ def f():
+ ctx10
+-old11
++new11
++new12
+ ctx13
+ ctx14
+@@ -40,2 +41,3 @@ def g():
+ ctx41
++new42
+ ctx43
+diff --git a/old.py b/new.py
+similarity index 90%
+rename from old.py
+rename to new.py
+--- a/old.py
++++ b/new.py
+@@ -1,1 +1,1 @@
+-x
++y
+"""
+
+
+def test_ghreview() -> None:
+    from lmreview import ghreview
+    from lmreview.history import AI_MARK
+    from lmreview.schema import parse_findings
+    lines = ghreview.commentable(DIFF)
+    assert sorted(lines[("a.py", "RIGHT")]) == [10, 11, 12, 13, 14, 41, 42, 43]
+    assert sorted(lines[("a.py", "LEFT")]) == [10, 11, 12, 13, 40, 41]
+    assert lines[("new.py", "RIGHT")] == {1: 3} and lines[("old.py", "LEFT")] == {1: 3}
+    L = lambda **k: ghreview.Location(**{"path": "a.py", **k})  # noqa: E731
+    assert ghreview.anchor(L(start=11, end=13), lines) == {"path": "a.py", "line": 13, "side": "RIGHT",
+                                                           "start_line": 11, "start_side": "RIGHT"}
+    assert ghreview.anchor(L(start=12, end=42), lines)["start_line"] == 41  # one hunk: the last one hit
+    assert ghreview.anchor(L(start=20, end=30), lines) is None              # outside the diff
+    assert ghreview.anchor(L(start=11, side="old"), lines) == {"path": "a.py", "line": 11, "side": "LEFT"}
+    fs = parse_findings([
+        {"id": "1.f1", "severity": "minor", "scope": "line", "title": "in diff", "body": "b",
+         "locations": [{"path": "a.py", "start": 12, "end": 12}, {"path": "b.py", "start": 3, "role": "related"}]},
+        {"id": "2.r1", "severity": "major", "scope": "line", "title": "outside", "body": "b", "rule": "x1",
+         "locations": [{"path": "a.py", "start": 90}]},
+        {"id": "1.f2", "severity": "nit", "scope": "pr", "title": "whole pr", "body": "b", "locations": []}])
+    r = {"commit": "c" * 40, "reviewer": "p+v0001@medium-rc", "cost": 1.0, "parallel": 2, "rules_label": "o/r v0001"}
+    out = ghreview.build(r, fs, DIFF, {"x1": {"when": "W"}}, "o/r")
+    assert [c["line"] for c in out["comments"]] == [12] and out["event"] == "COMMENT" and out["commit_id"] == "c" * 40
+    assert all(x.startswith(AI_MARK) for x in [out["body"]] + [c["body"] for c in out["comments"]])
+    assert "outside" in out["body"] and "whole pr" in out["body"] and "in diff" not in out["body"]
+    assert "found by rule check" in out["body"] and "`x1`: when W" in out["body"] and "o/r v0001" in out["body"]
+    assert "blob/" + "c" * 40 + "/b.py#L3" in out["comments"][0]["body"]
+    assert ghreview.build(r, fs, DIFF, {}, "o/r", inline=False)["comments"] == []
+
+
+def test_post_review_falls_back() -> None:
+    home, _ = new_home()
+    out = home / "reviews" / "1-abc"
+    out.parent.mkdir()
+    for name in (".ghreview.json", ".ghreview-flat.json"):
+        pathlib.Path(str(out) + name).write_text("{}")
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd[-1])
+        ok = cmd[-1].endswith("flat.json")
+        return subprocess.CompletedProcess(cmd, 0 if ok else 1, '{"html_url": "U"}' if ok else "", "" if ok else "422 line")
+    real, watch.subprocess.run = watch.subprocess.run, fake_run
+    try:
+        assert watch.post_review("o/r", 1, out) == ("U", "422 line")
+    finally:
+        watch.subprocess.run = real
+    assert [pathlib.Path(c).name for c in calls] == ["1-abc.ghreview.json", "1-abc.ghreview-flat.json"]
+
+
 def test_env_and_repo_name() -> None:
     home, _ = new_home()
     env = watch.env_for(home, "o/r")
@@ -185,11 +261,13 @@ def test_env_and_repo_name() -> None:
 
 def test_history_skips_posted_reviews() -> None:
     from lmreview.history import AI_MARK, format_history
-    raw = {"reviewThreads": {"nodes": []}, "reviews": {"nodes": []},
+    ai = {"author": {"login": "bo"}, "createdAt": "2026-11-21T00:00:00Z", "body": AI_MARK + "\nAI", "path": "a.py"}
+    raw = {"reviewThreads": {"nodes": [{"comments": {"nodes": [ai, {**ai, "body": "reply"}]}}]},
+           "reviews": {"nodes": [{**ai, "submittedAt": ai["createdAt"], "state": "COMMENTED"}]},
            "comments": {"nodes": [{"author": {"login": "bo"}, "createdAt": "2026-11-21T00:00:00Z", "body": AI_MARK + "\nAI"},
                                   {"author": {"login": "al"}, "createdAt": "2026-11-22T00:00:00Z", "body": "human"}]}}
     h = format_history(raw)
-    assert "human" in h and "AI" not in h, h
+    assert "human" in h and "AI" not in h and "reply" not in h, h
 
 
 if __name__ == "__main__":

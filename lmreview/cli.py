@@ -79,6 +79,14 @@ def main(argv: list[str] | None = None) -> None:
     wst.add_argument("repos", nargs="*")
     wst.add_argument("--interval", type=int, default=600, help="seconds between cycles (default 600)")
     ws.add_parser("stop", help="stop the background watcher")
+    wt = ws.add_parser("retract", help="take back the AI reviews on a PR: delete their inline comments, "
+                                       "replace the summary, minimize the review (GitHub cannot delete a submitted review)")
+    wt.add_argument("repo")
+    wt.add_argument("pr", type=int)
+    wt.add_argument("--review", type=int, help="only this review id (default: every AI review on the PR)")
+    wp = ws.add_parser("repost", help="post the saved review of a PR's head again, in the current format (no new review)")
+    wp.add_argument("repo")
+    wp.add_argument("pr", type=int)
     ws.add_parser("status", help="the background watcher, watched repositories and their progress (free)")
 
     sub.add_parser("status", help="book in use, candidate, ledger counts (free)")
@@ -153,6 +161,10 @@ def main(argv: list[str] | None = None) -> None:
             print(watch.start(a.repos or None, a.interval))
         elif a.action == "stop":
             print(watch.stop())
+        elif a.action == "retract":
+            print(watch.retract(a.repo, a.pr, a.review))
+        elif a.action == "repost":
+            print(watch.repost(a.repo, a.pr))
         else:
             print(watch.status())
     elif a.cmd == "sync":

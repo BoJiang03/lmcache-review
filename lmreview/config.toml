@@ -73,7 +73,8 @@ distill = 1000.0
 retain = 1000.0        # production re-reviews of what a round learned (state.retain_step)
 vet = 1000.0
 
-[project]  # the project under review (lmreview/project.py: the prompts' mentions of LMCache become these)
+[project]  # the project under review; these defaults are this checkout's own, LMCache. A watched repository's
+           # home sets its own (lmreview/project.py: the built-in prompts' mentions of LMCache become these)
 name = "LMCache"
 about = "a KV-cache layer for LLM inference engines such as vLLM"   # one line; "" = none
 # files the rule check greps for where names from the diff are defined and used (SYMBOLS)

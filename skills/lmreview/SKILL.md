@@ -1,9 +1,9 @@
 ---
 name: lmreview
-description: AI first-round review of an LMCache pull request. Use when the user asks to review an LMCache PR (a PR number or a github.com/LMCache/LMCache/pull/<n> link), e.g. "lmreview 5876", "review LMCache PR 5876", "帮我 review 一下 5876".
+description: AI review of a GitHub pull request with lmreview, which reviews with the rules learned from that repository's own reviewers. Use when the user asks lmreview to review a PR (a github.com/<owner>/<repo>/pull/<n> link, or a PR number), e.g. "lmreview https://github.com/LMCache/LMCache/pull/5876", "lmreview 5876", "帮我 review 一下 5876".
 ---
 
-# lmreview: AI first-round review of an LMCache PR
+# lmreview: AI review of a pull request
 
 The plugin bundles the `lmreview` Python package (standard library only, no pip install).
 The plugin root is two levels above this skill's base directory (`<base>/../..`); `${CLAUDE_PLUGIN_ROOT}` names the same folder when it is set.
@@ -17,18 +17,22 @@ Run, and stop with a clear message if any fails:
 - `gh auth status` (GitHub read access; lmreview only reads).
 - `git --version`.
 
-On first use lmreview clones LMCache (and vLLM when needed) into `~/.cache/lmreview/` (blobless, about 20 s and 330 MB). Tell the user once.
+lmreview reviews each repository with its own rules. A bare PR number means the plugin's own repository
+(LMCache/LMCache); a link names its repository. A repository other than that one must be set up once with
+`python3 -m lmreview watch add <owner>/<repo>` (free: its clone, prompts and rulebook); if the review stops
+with "has no lmreview state yet", tell the user and offer to run it. On first use lmreview clones the
+repository (blobless; LMCache: about 20 s and 330 MB). Tell the user once.
 
 ## 2. Run the review
 
-Take the PR number from the user's request (a link → its number). Optional: a commit (`--commit <sha>`).
+Take the PR from the user's request: pass a link as it is, or a number. Optional: a commit (`--commit <sha>`).
 
 ```bash
 ROOT="${CLAUDE_PLUGIN_ROOT:-<base>/../..}"
-PYTHONPATH="$ROOT" python3 -m lmreview review <PR> --format json > <scratch>/lmreview-<PR>.json
+PYTHONPATH="$ROOT" python3 -m lmreview review <PR number or link> --format json > <scratch>/lmreview-<n>.json
 ```
 
-- A review takes 10–20 minutes and costs about $3–4 (it runs a rule check next to the review and reads the vLLM source; the first run clones vLLM). Run it in the background and tell the user it is running; do not poll.
+- A review takes 5–15 minutes and costs about $0.70 (median; more for large PRs). Run it in the background and tell the user it is running; do not poll.
 - Use `--format md` instead of json if the user just wants the raw report.
 - Do not pass `--reviewer` unless the user asks; the default is the current recommended reviewer.
 
@@ -42,5 +46,5 @@ From the JSON output:
 
 ## 4. Never post on your own
 
-lmreview never writes to GitHub, and neither does this skill on its own initiative.
+`lmreview review` never writes to GitHub, and neither does this skill on its own initiative.
 If the user wants comments on the PR, draft them, show the exact text and target lines, and post only after the user explicitly says to post (e.g. `gh pr review` / `gh api`). Approval to post one batch does not cover the next.

@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from .asof import as_of
 
+# Marks a review `lmreview watch --post` put on a PR: it is the AI's, not the team's, so it is left out of
+# the discussion the agents see and of the human comments learned from (src/derive.py is_bot).
+AI_MARK = "<!-- lmreview: AI review -->"
+
 
 def _who(node: dict) -> str:
     return (node.get("author") or {}).get("login") or "(deleted)"
@@ -33,6 +37,6 @@ def format_history(raw: dict, before: str | None = None) -> str:
         if r.get("submittedAt") and ok(r["submittedAt"]) and (r.get("body") or "").strip():
             ev.append((r["submittedAt"], f"- review by {_who(r)} ({r['state']}): {r['body'][:1500]}"))
     for c in raw["comments"]["nodes"]:
-        if ok(c["createdAt"]):
+        if ok(c["createdAt"]) and AI_MARK not in (c.get("body") or ""):
             ev.append((c["createdAt"], f"- PR comment by {_who(c)}: {c['body'][:1500]}"))
     return "\n".join(x for _, x in sorted(ev))

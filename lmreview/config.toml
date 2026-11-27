@@ -73,6 +73,19 @@ distill = 1000.0
 retain = 1000.0        # production re-reviews of what a round learned (state.retain_step)
 vet = 1000.0
 
+[project]  # the project under review (lmreview/project.py: the prompts' mentions of LMCache become these)
+name = "LMCache"
+about = "a KV-cache layer for LLM inference engines such as vLLM"   # one line; "" = none
+# files the rule check greps for where names from the diff are defined and used (SYMBOLS)
+source_globs = ["*.py", "*.pyi", "*.c", "*.cc", "*.cpp", "*.cu", "*.cuh", "*.h", "*.hpp", "*.md", "*.rst", "*.toml", "*.yaml"]
+
+[dataset]  # what `lmreview sync` collects and how PRs are split (by PR creation date, UTC)
+start = "2026-05-01"         # PRs created before this are not collected
+branch = "dev"               # the repository's main branch (origin/<branch>: "what had landed" at a time)
+train_before = "2026-09-01"  # created before: train (learned from)
+test_before = "2026-11-01"   # then, before this: test (held out)
+after = "new"                # created on/after test_before: this split ("train" to learn from new PRs, as `watch` homes do)
+
 # Paths. "" = automatic: a checkout uses its data/ dir, an installed copy ~/.cache/lmreview/.
 # The env vars LMREVIEW_REPO / _DATA / _VLLM / _SANDBOX / _STATE win over these.
 [paths]
@@ -81,6 +94,8 @@ data = ""
 vllm = ""
 state = ""                                 # "" = lmreview/state/ in the package
 sandbox = "/var/tmp/lmreview-{uid}/sandbox"  # agent workspaces; outside $HOME and /tmp (see llm.py)
+prompts = ""                               # reviewer.md / rulecheck.md / rulepick.md dir; "" = lmreview/prompts
+watch = ""                                 # `lmreview watch` homes, one per repository; "" = ~/.cache/lmreview/watch
 
 [compress]
 stages = ["trim", "merge"]  # passes of a round's compress, in order (each: full pass + vet, then repairs)

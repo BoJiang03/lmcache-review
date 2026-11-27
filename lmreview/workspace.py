@@ -23,6 +23,7 @@ from collections.abc import Iterator
 from .asof import as_of
 from .config import REPO_URLS, Config
 from .history import format_history
+from .settings import get
 
 TOOLS = "Read,Grep,Glob"
 
@@ -116,7 +117,7 @@ def sample_workspace(cfg: Config, s: dict, tag: str, context: tuple[str, ...] = 
 
     Yields (path, base). `tag` separates concurrent users of one sample ("review", "judge").
     """
-    dev_then = git(cfg.repo, "rev-list", "-1", f"--before={s['time']}", "origin/dev").strip()
+    dev_then = git(cfg.repo, "rev-list", "-1", f"--before={s['time']}", f"origin/{get('dataset', 'branch')}").strip()
     base = git(cfg.repo, "merge-base", dev_then, s["commit"]).strip()
     name = f"{s['pr']}-{s['commit'][:8]}-{tag}-{uuid.uuid4().hex[:6]}"  # unique: parallel runs may share a sample
     with build(cfg, name, s["commit"], base, s["history"], context, s["time"], dev_then) as wt:

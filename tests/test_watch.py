@@ -222,7 +222,8 @@ def test_ghreview() -> None:
     assert [c["line"] for c in out["comments"]] == [12] and out["event"] == "COMMENT" and out["commit_id"] == "c" * 40
     assert all(x.startswith(AI_MARK) for x in [out["body"]] + [c["body"] for c in out["comments"]])
     assert "outside" in out["body"] and "whole pr" in out["body"] and "in diff" not in out["body"]
-    assert "found by rule check" in out["body"] and "`x1`: when W" in out["body"] and "o/r v0001" in out["body"]
+    assert "<sub>team rule `x1`</sub>" in out["body"] and "`x1` applies when: W" in out["body"] and "o/r v0001" in out["body"]
+    assert "<sub>general review</sub>" in out["comments"][0]["body"] and "found by" not in out["body"]
     assert "blob/" + "c" * 40 + "/b.py#L3" in out["comments"][0]["body"]
     assert ghreview.build(r, fs, DIFF, {}, "o/r", inline=False)["comments"] == []
 

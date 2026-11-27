@@ -408,14 +408,19 @@ def learn(home: pathlib.Path, w: dict, samples: list[dict]) -> str:
     return f"learned {len(keys)} sample(s): {' '.join(keys)}; ${spent:.2f}" + (f"; book {book[-1]}" if book else "")
 
 
-def cycle(home: pathlib.Path, dry_run: bool = False, now: dt.datetime | None = None) -> str:
+def cycle(home: pathlib.Path, dry_run: bool = False, now: dt.datetime | None = None, only: set[int] | None = None) -> str:
     """One review + learn pass over the repository of `home`. `dry_run`: only list what would be done
-    (sync still runs: it is free and changes only the local dataset)."""
+    (sync still runs: it is free and changes only the local dataset). `only`: review just these PRs, again
+    even if their head was reviewed already."""
     w = load(home)
     s, repo, lines = w["settings"], w["repo"], []
     with lock(home):
         if s["review"]:
             prs = open_prs(repo)
+            if only:
+                prs = [p for p in prs if p["number"] in only]
+                for p in prs:
+                    w["reviewed"].pop(str(p["number"]), None)
             todo = to_review(w, prs)
             drafts = sum(p["isDraft"] for p in prs) if not s["drafts"] else 0
             lines.append(f"review: {len(prs)} open PRs ({drafts} drafts, {sum(map(is_bot, prs))} by bots: skipped), "
@@ -450,8 +455,10 @@ def cycle(home: pathlib.Path, dry_run: bool = False, now: dt.datetime | None = N
     return f"[{_iso(_now())}] {repo}" + (" (dry run)" if dry_run else "") + "\n" + "\n".join(lines)
 
 
-def run(repos: list[str] | None = None, once: bool = False, interval: int = 600, dry_run: bool = False) -> None:
-    """Cycle over `repos` (default: every watched one) every `interval` seconds; `once`: one cycle."""
+def run(repos: list[str] | None = None, once: bool = False, interval: int = 600, dry_run: bool = False,
+        only: set[int] | None = None) -> None:
+    """Cycle over `repos` (default: every watched one) every `interval` seconds; `once`: one cycle; `only`:
+    one cycle that reviews just these PRs."""
     bad = preflight()
     if bad:
         raise RuntimeError("cannot watch: " + "; ".join(bad))
@@ -461,10 +468,10 @@ def run(repos: list[str] | None = None, once: bool = False, interval: int = 600,
             raise RuntimeError(f"nothing watched under {root()}: `lmreview watch add OWNER/NAME` first")
         for h in hs:
             try:
-                print(cycle(h, dry_run), flush=True)
+                print(cycle(h, dry_run, only=only), flush=True)
             except Exception as e:  # one repository failing does not stop the others
                 print(f"[{_iso(_now())}] {h.name}: cycle FAILED: {e}", flush=True)
-        if once or dry_run:
+        if once or dry_run or only:
             return
         time.sleep(interval)
 

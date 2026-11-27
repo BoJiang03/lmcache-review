@@ -72,6 +72,7 @@ def main(argv: list[str] | None = None) -> None:
     wr.add_argument("repos", nargs="*")
     wr.add_argument("--once", action="store_true", help="one cycle, then exit")
     wr.add_argument("--interval", type=int, default=600, help="seconds between cycles (default 600)")
+    wr.add_argument("--prs", type=int, nargs="+", help="one cycle that reviews just these PRs (again, if reviewed)")
     wr.add_argument("--dry-run", action="store_true", help="list what would be reviewed and learned; no LLM calls, "
                     "nothing posted (sync still updates the local dataset)")
     wst = ws.add_parser("start", help="run the watcher in the background, detached from the terminal (log: <watch root>/watch.log)")
@@ -147,7 +148,7 @@ def main(argv: list[str] | None = None) -> None:
         elif a.action == "set":
             print(watch.set_(a.repo, **opts))
         elif a.action == "run":
-            watch.run(a.repos or None, a.once, a.interval, a.dry_run)
+            watch.run(a.repos or None, a.once, a.interval, a.dry_run, set(a.prs or []) or None)
         elif a.action == "start":
             print(watch.start(a.repos or None, a.interval))
         elif a.action == "stop":

@@ -60,7 +60,10 @@ SOURCE_GLOBS = ["*.py", "*.pyi", "*.c", "*.cc", "*.cpp", "*.cu", "*.cuh", "*.h",
                 "*.m", "*.sh", "*.sql", "*.proto", "*.md", "*.rst", "*.toml", "*.yaml", "*.yml", "*.json"]
 DEFAULTS = {"review": True, "learn": True, "post": False, "drafts": False, "settle_hours": 24.0,
             "max_reviews": 5, "max_learn": 3, "round_cost": None,
-            "review_since": None}  # ISO time: open PRs last updated before it are not reviewed (a backlog)
+            "review_since": None,  # ISO time: open PRs last updated before it are not reviewed (a backlog)
+            "book_repo": None}     # owner/name of a public repository to publish the rulebook to (branch BOOK_BRANCH),
+                                   # so a posted review links its rules; None: not published, not linked
+BOOK_BRANCH = "rulebooks"
 MAX_FAILS = 3  # review attempts on one head before it is skipped until the PR is pushed again
 
 OPEN_Q = """
@@ -140,7 +143,51 @@ def env_for(home: pathlib.Path, repo: str) -> dict[str, str]:
     env.update(LMREVIEW_GH_REPO=repo, LMREVIEW_REPO=str(home / "repo"), LMREVIEW_DATA=str(home / "data"),
                LMREVIEW_STATE=str(home / "state"), LMREVIEW_CONFIG=str(home / "config.toml"),
                PYTHONPATH=str(PKG_ROOT) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""))
+    w = load(home) if (home / "watch.json").exists() else {"settings": {}}
+    if w["settings"].get("book_repo"):
+        env["LMREVIEW_BOOK_URL"] = book_url(home, w["settings"]["book_repo"])
+    else:
+        env.pop("LMREVIEW_BOOK_URL", None)
     return env
+
+
+def book_url(home: pathlib.Path, book_repo: str) -> str:
+    """Where this home's rulebook versions are published: <url>/<vNNNN>.md."""
+    return f"https://github.com/{book_repo}/blob/{BOOK_BRANCH}/{home.name}"
+
+
+def publish_book(home: pathlib.Path, w: dict) -> str:
+    """Publish the book in use of `home` to [book_repo] (branch BOOK_BRANCH, <home name>/<vNNNN>.md) if it is
+    not there yet: a version's page is written once and never changed, so a review's links keep pointing at
+    the rules it used. Returns what was done."""
+    import base64
+    repo = w["settings"].get("book_repo")
+    if not repo:
+        return ""
+    v = f"v{json.loads((home / 'state' / 'HEAD.json').read_text())['version']:04d}"
+    path = f"{home.name}/{v}.md"
+    if path in w.setdefault("published", []):
+        return ""
+    api = lambda *a: subprocess.run(["gh", "api", *a], capture_output=True, text=True)  # noqa: E731
+    if api(f"repos/{repo}/contents/{path}?ref={BOOK_BRANCH}").returncode == 0:  # published by an earlier run
+        w["published"].append(path)
+        return ""
+    if api(f"repos/{repo}/git/ref/heads/{BOOK_BRANCH}").returncode:  # first publish: the branch, from the default one
+        base = json.loads(api(f"repos/{repo}").stdout)["default_branch"]
+        sha = json.loads(api(f"repos/{repo}/git/ref/heads/{base}").stdout)["object"]["sha"]
+        p = api("-X", "POST", f"repos/{repo}/git/refs", "-f", f"ref=refs/heads/{BOOK_BRANCH}", "-f", f"sha={sha}")
+        if p.returncode:
+            raise RuntimeError(f"cannot create branch {BOOK_BRANCH} in {repo}: {p.stderr.strip()[:200]}")
+    code = ("import sys; from lmreview.provenance import public_book; from lmreview.state import book_label; "
+            "print(public_book(sys.argv[1], book_label(sys.argv[1])))")
+    md = subprocess.run([sys.executable, "-c", code, v], env=env_for(home, w["repo"]), capture_output=True, text=True,
+                        check=True).stdout
+    p = api("-X", "PUT", f"repos/{repo}/contents/{path}", "-f", f"message=rulebook {w['repo']} {v}",
+            "-f", f"branch={BOOK_BRANCH}", "-f", f"content={base64.b64encode(md.encode()).decode()}")
+    if p.returncode:
+        raise RuntimeError(f"cannot publish {path} to {repo}: {p.stderr.strip()[:200]}")
+    w["published"].append(path)
+    return f"published {book_url(home, repo)}/{v}.md"
 
 
 def lmreview(home: pathlib.Path, repo: str, args: list[str], log: str) -> tuple[int, str]:
@@ -325,6 +372,9 @@ def review_one(home: pathlib.Path, w: dict, pr: dict, post: bool) -> str:
     w["spent"]["review"] += rec["cost"]
     line = f"#{n} {c[:8]}: {rec['findings']} findings, ${rec['cost']:.2f} -> {out}.md"
     if post:
+        published = publish_book(home, w)  # before the review that links it
+        if published:
+            line += f"; {published}"
         rec["posted"], why = post_review(w["repo"], n, out)
         line += f"; posted {rec['posted']}" if rec["posted"] else f"; post FAILED: {why}"
     w["reviewed"][str(n)] = rec
@@ -430,6 +480,7 @@ def repost(repo: str, n: int) -> str:
     if not rec.get("ok"):
         raise RuntimeError(f"#{n} has no saved review")
     out = home / "reviews" / f"{n}-{rec['commit'][:8]}"
+    published = publish_book(home, w)
     code = ("import json, pathlib, sys; from lmreview.reviewer import github_review; o = sys.argv[1]; "
             "r = json.load(open(o + '.json')); "
             "[pathlib.Path(o + s).write_text(json.dumps(github_review(r, i), indent=1)) "
@@ -442,7 +493,7 @@ def repost(repo: str, n: int) -> str:
         raise RuntimeError(f"post failed: {why}")
     rec["posted"] = url
     save(home, w)
-    return f"#{n}: posted {url}"
+    return (f"{published}\n" if published else "") + f"#{n}: posted {url}"
 
 
 def _jsonl(p: pathlib.Path) -> list[dict]:

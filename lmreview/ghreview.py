@@ -100,12 +100,17 @@ def anchor(loc: Location, lines: dict[tuple[str, str], dict[int, int]]) -> dict 
     return a
 
 
-def basis(f: Finding) -> str:
+def rule_ref(rid: str, book_url: str | None) -> str:
+    """A rule id, linked to its section of the published rulebook when there is one."""
+    return f"[`{rid}`]({book_url}#{rid.lower()})" if book_url else f"`{rid}`"
+
+
+def basis(f: Finding, book_url: str | None = None) -> str:
     """What a finding rests on, for the author: the team rules it follows, or the reviewer's own judgement.
     (Which agent raised it is not said: the main review is given the rules too, so it can raise a rule's
     finding, and the rule check only raises them.)"""
     rs = f.rules or ([f.rule] if f.rule else [])
-    return ("team rule " + ", ".join(f"`{r}`" for r in rs)) if rs else "general review"
+    return ("team rule " + ", ".join(rule_ref(r, book_url) for r in rs)) if rs else "general review"
 
 
 def _link(repo: str, commit: str, loc: Location) -> str:
@@ -115,10 +120,10 @@ def _link(repo: str, commit: str, loc: Location) -> str:
 
 
 def finding_text(f: Finding, rules: dict[str, dict], repo: str, commit: str, heading: str,
-                 at: Location | None = None, ids: set[str] = frozenset()) -> str:
+                 at: Location | None = None, ids: set[str] = frozenset(), book_url: str | None = None) -> str:
     """The markdown of one finding (an inline comment, or a section of the summary); `at`: the location the
     inline comment is on (every other location is linked); `ids`: the review's finding ids (see mark_refs)."""
-    out = [f"{heading}**[{f.severity}] {f.title}** · <sub>{basis(f)}</sub>", "", mark_refs(f.body, f, ids)]
+    out = [f"{heading}**[{f.severity}] {f.title}** · <sub>{basis(f, book_url)}</sub>", "", mark_refs(f.body, f, ids)]
     where = [l for l in f.locations if l.role != "related" and l is not at]
     if where and not at:  # a finding in the summary: where it is stays in view
         out += ["", "**Where:** " + ", ".join(_link(repo, commit, l) for l in where)]
@@ -131,7 +136,7 @@ def finding_text(f: Finding, rules: dict[str, dict], repo: str, commit: str, hea
     rids = f.rules or ([f.rule] if f.rule else [])
     for rid in rids:
         x = rules.get(rid)
-        more += ["", f"**Team rule** `{rid}`" + (f" applies when: {x.get('when') or x.get('rule', '')}" if x else "")]
+        more += ["", f"**Team rule** {rule_ref(rid, book_url)}" + (f" applies when: {x.get('when') or x.get('rule', '')}" if x else "")]
         src = (x or {}).get("_sources") or []
         if src:
             more += ["", "Learned from these team review comments:"]
@@ -151,13 +156,15 @@ def finding_text(f: Finding, rules: dict[str, dict], repo: str, commit: str, hea
     return "\n".join(out)
 
 
-def build(r: dict, fs: list[Finding], diff: str, rules: dict[str, dict], repo: str, inline: bool = True) -> dict:
+def build(r: dict, fs: list[Finding], diff: str, rules: dict[str, dict], repo: str, inline: bool = True,
+          book_url: str | None = None) -> dict:
     """The review payload for a run `r` of review_pr with findings `fs`.
 
     Args:
         diff: `git diff -U3 <base> <commit>`, to tell which findings can be inline.
         rules: the rulebook's entries by id, to show the rules findings cite.
         inline: False puts every finding in the summary (when GitHub refuses the inline comments).
+        book_url: the published page of the rulebook used (watch.publish_book), to link it and its rules.
 
     Returns:
         {"commit_id", "event": "COMMENT", "body", "comments": [{path, line, side, [start_line, start_side], body}],
@@ -174,21 +181,22 @@ def build(r: dict, fs: list[Finding], diff: str, rules: dict[str, dict], repo: s
         a = anchor(p, lines) if p and f.scope == "line" else None
         if a:
             comments.append(a | {"body": AI_MARK + "\n" + FINDING_MARK.format(f.id) + "\n"
-                                 + finding_text(f, rules, repo, commit, "", p, ids)})
+                                 + finding_text(f, rules, repo, commit, "", p, ids, book_url)})
         else:
             rest.append(f)
     # where the book came from is ours to know (local review files), not the author's; older runs had it in the label
     label = re.sub(r"\s*\(seeded from [^)]*\)", "", r.get("rules_label") or "") or "no rulebook"
     counts = ", ".join(f"{k} {s}" for s in SEVERITIES if (k := sum(f.severity == s for f in fs)))
     body = [AI_MARK, "## AI review", "",
-            f"Commit `{commit[:10]}`, checked against the team rules of **{label}**.", ""]
+            f"Commit `{commit[:10]}`, checked against the team rules of " + (f"[**{label}**]({book_url})" if book_url
+                                                                         else f"**{label}**") + ".", ""]
     if not fs:
         body.append("No findings.")
     else:
         body.append(f"**{len(fs)} findings**: {counts}." + (f" {len(comments)} are inline comments on the diff." if comments else ""))
         if rest:
             body += ["", "### Not tied to a line of the diff" if comments else "### Findings"]
-            body += ["\n" + finding_text(f, rules, repo, commit, "", None, ids) for f in rest]
+            body += ["\n" + finding_text(f, rules, repo, commit, "", None, ids, book_url) for f in rest]
     body += ["", "<sub>An AI review: it can be wrong, so reply on a comment that is, or resolve it. "
              + "Each finding says what it rests on: a team rule (learned from this team's past reviews) or "
                "general review (the reviewer's own judgement). "

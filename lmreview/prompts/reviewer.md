@@ -1,5 +1,6 @@
-<!-- context: vllm -->
+<!-- context: vllm, dev -->
 <!-- rules: nowhy -->
+<!-- rules: checkonly -->
 You are reviewing pull request #{number} of LMCache (a KV-cache layer for LLM inference engines such as vLLM).
 
 Your working directory holds the repository as of the PR's head commit. The PR's changes are in
@@ -11,6 +12,9 @@ layering rule documented there (name the doc). `docs/coding_standards.md`, if pr
 project's coding rules.
 `_context/vllm/` holds the vLLM source this PR runs against (see `_context/README.md`); it is not
 part of the PR. Open it only to check a specific vLLM call or assumption the diff makes.
+`_context/dev_since_base.md` lists what landed on the base branch after this PR forked, in the files
+the PR touches, with its diff. Read it: report where the PR conflicts with, duplicates or is made obsolete
+by those changes, where its fix no longer applies, and where a bug it fixes or keeps is still on the base.
 Read the diff first, in as few reads as you can (large ranges, up to 2000 lines per read). Read code outside the diff only to confirm or rule out a specific problem you
 suspect, not to survey; stop once you can judge every changed hunk. Do not modify any files.
 Every turn re-reads the whole conversation, so batch your reads: when you know several files,

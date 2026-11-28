@@ -71,7 +71,8 @@ def prompt_template(version: str) -> tuple[str, tuple[str, ...]]:
     """Prompt text of `version` and the extra workspace context it declares.
 
     A prompt may start with directive lines that are not sent to the model:
-    `<!-- context: vllm -->` (extra workspace context) and `<!-- rules: nowhy -->` (see rule_why).
+    `<!-- context: vllm -->` (extra workspace context), `<!-- rules: nowhy -->` (see rule_why) and
+    `<!-- rules: checkonly -->` (see rules_in_main).
     """
     text, ctx = prompt_path(version).read_text(), ()
     while m := re.match(r"<!--\s*(context|rules):\s*([\w, .-]*?)\s*-->\n", text):
@@ -88,6 +89,17 @@ def rule_why(version: str) -> bool:
     reviewer acts on when + expect; leaving it out shortens every review's rule list (2026-11-25).
     """
     return not re.search(r"^<!--\s*rules:\s*nowhy\s*-->$", prompt_path(version).read_text(), re.M)
+
+
+def rules_in_main(version: str, reviewer: str) -> bool:
+    """Whether the main review gets the rulebook section. Not when prompt `version` declares
+    `<!-- rules: checkonly -->` and `reviewer` runs the rule check (-rc): the rule check alone owns the rules.
+
+    On test3 (82 samples, 2026-11-28) the main review without rules plus the rule check kept major+ and most of
+    the minor/nit gain of rules in both (minor 50% vs 54%) at 21% lower cost.
+    """
+    text = prompt_path(version).read_text()
+    return not (rulecheck_of(reviewer) and re.search(r"^<!--\s*rules:\s*checkonly\s*-->$", text, re.M))
 
 
 def reviewer_context(reviewer: str) -> tuple[str, ...]:
@@ -217,7 +229,7 @@ def run_reviewer(wt: pathlib.Path, raw: dict, reviewer: str = DEFAULT_REVIEWER,
         if not ruleonly_of(reviewer):
             raise ValueError("only= is for rule-only (-ro) reviewers")
         use = [r for r in use if r["id"] in only]
-    if rules:
+    if rules and rules_in_main(version, reviewer):
         sec = rules_section(load_rules(rules), changed_paths(wt), rule_why(version))
         prompt = prompt.replace("\nFinish with one JSON block", sec + "\nFinish with one JSON block", 1) \
             if "\nFinish with one JSON block" in prompt else prompt + sec

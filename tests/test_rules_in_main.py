@@ -12,10 +12,10 @@ def test_main_keeps_rules_without_rule_check():
     assert rules_in_main(pid, f"{pid}+v0043@medium")
 
 
-def test_directives_not_sent_and_dev_context_declared():
+def test_directives_not_sent():
     text, ctx = prompt_template(prompt_id())
     assert "<!--" not in text.split("\n", 1)[0]
-    assert ctx == ("vllm", "dev")
+    assert ctx == ("vllm",)
 
 
 if __name__ == "__main__":

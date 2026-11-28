@@ -1,8 +1,8 @@
-# Rulebook v0041
+# Rulebook v0043
 
-74 active entries, 5307 words (when + expect; the reviewer sees these, not why or examples). Generated from book.jsonl; do not edit.
+76 active entries, 5514 words (when + expect; the reviewer sees these, not why or examples). Generated from book.jsonl; do not edit.
 
-## Principle (61)
+## Principle (62)
 
 ### cx05k1-005
 
@@ -622,7 +622,17 @@ This applies to private helpers too.
 
 <sub>v1 · minor severity · area distributed · 1 comments from 1 PRs</sub>
 
-## Knowledge (13)
+### v0043c1-002
+
+**When** A change adds, or adds a safeguard to, one pending or in-flight container whose entries are removed elsewhere (another thread, a callback, an error path). Other containers in the same component, possibly untouched by the diff, are filled and drained the same way.
+
+**Expect** Raise a separate point naming each such other container and stating that it has the same silent-growth risk. Ask for the same safeguard on it (size observability, a bound or expiry, removal on every completion and error path). Accept deferring this to a follow-up issue.
+
+*Why (record only)*: A leak pattern found in one container usually recurs in its siblings. Reviewing only the touched container leaves the others unmonitored.
+
+<sub>v1 · minor severity · area distributed · 1 comments from 1 PRs</sub>
+
+## Knowledge (14)
 
 ### v0011c1-003
 
@@ -756,6 +766,16 @@ This applies to private helpers too.
 *Why (record only)*: Direct method assignment fails the repository's mypy CQ check.
 
 <sub>v1 · minor severity · area tests · 1 comments from 1 PRs</sub>
+
+### v0042c1-001
+
+**When** A PR adds or changes code, tests or docs used only by LMCache's in-process (non-MP) mode, with no MP-mode counterpart. This covers a fix, feature, unit test or deployment guide.
+
+**Expect** In-process mode is deprecated. New implementation work there is not accepted, and MP mode is the recommended default. Raise it as a PR-level point. Ask to port the work to MP mode, rewrite docs for MP mode, and drop new tests of in-process-only code. A PR entirely in that scope should be closed or redirected to MP, migration/removal or docs work. Do not flag code shared with MP mode. In-process code: lmcache/inprocess/, LMCacheConnectorV1, in-process GPU connectors, cache engine, storage backends, lookup clients, layerwise loading. MP code: lmcache/v1/multiprocess/, lmcache_mp_connector.py, vllm_multi_process_adapter.py.
+
+*Why (record only)*: Maintainers no longer accept new work on in-process mode, whatever its technical correctness, and recommend MP mode for production.
+
+<sub>v1 · blocker severity · area overall,tests · 8 comments from 7 PRs</sub>
 
 ## Retired (65)
 

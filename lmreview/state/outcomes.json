@@ -357,7 +357,8 @@
    "pdba46ca9+v0037@medium-rc 3404@f7608113 2.r15",
    "pdba46ca9+v0039@medium-rc 3404@48348ee7 1.f16",
    "pdba46ca9+v0039@medium-rc 3404@48348ee7 2.r10",
-   "pdba46ca9+v0039@medium-rc 3480@b4bbad37 1.f5"
+   "pdba46ca9+v0039@medium-rc 3480@b4bbad37 1.f5",
+   "pdba46ca9+v0041@medium-rc 3937@e5be9daf 1.f6"
   ]
  },
  "cx07k1-010": {
@@ -1996,7 +1997,9 @@
    "pdba46ca9+v0039@medium-rc 3278@adadcefe 2.r2",
    "pdba46ca9+v0039@medium-rc 3404@48348ee7 2.r7",
    "pdba46ca9+v0039@medium-rc 3480@b4bbad37 1.f2",
-   "pdba46ca9+v0039@medium-rc 4072@5793b439 1.f3"
+   "pdba46ca9+v0039@medium-rc 4072@5793b439 1.f3",
+   "pdba46ca9+v0041@medium-rc 3937@e5be9daf 1.f4",
+   "pdba46ca9+v0041@medium-rc 3937@e5be9daf 2.r2"
   ]
  },
  "v0012c3-004": {
@@ -2477,7 +2480,8 @@
   "helpful": [
    "pdba46ca9+v0033@medium-rc 4027@2ecfb934 1.f2",
    "pdba46ca9+v0039@medium-rc 3389@24031589 1.f2",
-   "pdba46ca9+v0039@medium-rc 4022@3c16a292 2.r6"
+   "pdba46ca9+v0039@medium-rc 4022@3c16a292 2.r6",
+   "pdba46ca9+v0041@medium-rc 3937@e5be9daf 1.f3"
   ]
  },
  "v0033c1-008": {
@@ -2521,7 +2525,8 @@
    "pdba46ca9+v0037@medium-rc 3404@f7608113 1.f5",
    "pdba46ca9+v0039@medium-rc 3278@adadcefe 1.f2",
    "pdba46ca9+v0039@medium-rc 3404@48348ee7 1.f4",
-   "pdba46ca9+v0039@medium-rc 3480@b4bbad37 1.f1"
+   "pdba46ca9+v0039@medium-rc 3480@b4bbad37 1.f1",
+   "pdba46ca9+v0041@medium-rc 3937@e5be9daf 1.f1"
   ]
  },
  "v0034c1-006": {
@@ -2616,5 +2621,17 @@
   "helpful": [
    "pdba46ca9+v0039@medium-rc 4022@3c16a292 2.r15"
   ]
+ },
+ "v0039c1-002": {
+  "harmful": [],
+  "helpful": [
+   "pdba46ca9+v0041@medium-rc 3937@e5be9daf 2.r3"
+  ]
+ },
+ "v0040c1-002": {
+  "harmful": [
+   "pdba46ca9+v0041@medium-rc 3937@e5be9daf 2.r5"
+  ],
+  "helpful": []
  }
 }
